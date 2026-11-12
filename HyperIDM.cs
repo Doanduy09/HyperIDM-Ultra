@@ -30,9 +30,148 @@ namespace HyperIDM
         [DllImport("user32.dll")]
         private static extern bool SetProcessDPIAware();
 
+        [DllImport("kernel32.dll")]
+        private static extern uint GetCurrentThreadId();
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetThreadDesktop(uint dwThreadId);
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        private static extern bool GetUserObjectInformation(IntPtr hObj, int nIndex, StringBuilder pvInfo, int nLength, out int lpnLengthNeeded);
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern IntPtr OpenDesktop(string lpszDesktop, uint dwFlags, bool fInherit, uint dwDesiredAccess);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool SetThreadDesktop(IntPtr hDesktop);
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        private struct STARTUPINFO
+        {
+            public int cb;
+            public string lpReserved;
+            public string lpDesktop;
+            public string lpTitle;
+            public int dwX;
+            public int dwY;
+            public int dwXSize;
+            public int dwYSize;
+            public int dwXCountChars;
+            public int dwYCountChars;
+            public int dwFillAttribute;
+            public int dwFlags;
+            public short wShowWindow;
+            public short cbReserved2;
+            public IntPtr lpReserved2;
+            public IntPtr hStdInput;
+            public IntPtr hStdOutput;
+            public IntPtr hStdError;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct PROCESS_INFORMATION
+        {
+            public IntPtr hProcess;
+            public IntPtr hThread;
+            public int dwProcessId;
+            public int dwThreadId;
+        }
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern bool CreateProcessW(
+            string lpApplicationName,
+            StringBuilder lpCommandLine,
+            IntPtr lpProcessAttributes,
+            IntPtr lpThreadAttributes,
+            bool bInheritHandles,
+            uint dwCreationFlags,
+            IntPtr lpEnvironment,
+            string lpCurrentDirectory,
+            ref STARTUPINFO lpStartupInfo,
+            out PROCESS_INFORMATION lpProcessInformation);
+
+        [DllImport("kernel32.dll")]
+        private static extern bool CloseHandle(IntPtr hObject);
+
+        private static bool RespawnOnInteractiveDesktopIfNeeded(string[] args)
+        {
+            try
+            {
+                if (args != null)
+                {
+                    for (int i = 0; i < args.Length; i++)
+                    {
+                        if (string.Equals(args[i], "--on-default-desktop", StringComparison.OrdinalIgnoreCase))
+                        {
+                            return false;
+                        }
+                    }
+                }
+
+                IntPtr hDesk = GetThreadDesktop(GetCurrentThreadId());
+                StringBuilder sb = new StringBuilder(256);
+                int needed;
+                if (hObjToName(hDesk, sb, out needed))
+                {
+                    string deskName = sb.ToString();
+                    if (!string.IsNullOrEmpty(deskName) &&
+                        !string.Equals(deskName, "Default", StringComparison.OrdinalIgnoreCase))
+                    {
+                        string exePath = Process.GetCurrentProcess().MainModule.FileName;
+                        StringBuilder cmd = new StringBuilder();
+                        cmd.Append('"').Append(exePath).Append("\" --on-default-desktop");
+                        if (args != null)
+                        {
+                            for (int i = 0; i < args.Length; i++)
+                            {
+                                if (!string.IsNullOrEmpty(args[i]))
+                                {
+                                    cmd.Append(" \"").Append(args[i].Replace("\"", "\\\"")).Append('"');
+                                }
+                            }
+                        }
+
+                        STARTUPINFO si = new STARTUPINFO();
+                        si.cb = Marshal.SizeOf(typeof(STARTUPINFO));
+                        si.lpDesktop = "winsta0\\default";
+                        PROCESS_INFORMATION pi;
+                        if (CreateProcessW(
+                            null,
+                            cmd,
+                            IntPtr.Zero,
+                            IntPtr.Zero,
+                            false,
+                            0,
+                            IntPtr.Zero,
+                            AppDomain.CurrentDomain.BaseDirectory,
+                            ref si,
+                            out pi))
+                        {
+                            if (pi.hProcess != IntPtr.Zero) CloseHandle(pi.hProcess);
+                            if (pi.hThread != IntPtr.Zero) CloseHandle(pi.hThread);
+                            return true;
+                        }
+
+                        IntPtr hDef = OpenDesktop("Default", 0, false, 0x01FF);
+                        if (hDef != IntPtr.Zero) SetThreadDesktop(hDef);
+                    }
+                }
+            }
+            catch { }
+            return false;
+        }
+
+        private static bool hObjToName(IntPtr hObj, StringBuilder sb, out int needed)
+        {
+            needed = 0;
+            if (hObj == IntPtr.Zero) return false;
+            return GetUserObjectInformation(hObj, 2, sb, sb.Capacity * 2, out needed);
+        }
+
         [STAThread]
         private static void Main(string[] args)
         {
+            if (RespawnOnInteractiveDesktopIfNeeded(args)) return;
             try { SetProcessDPIAware(); } catch { }
             ServicePointManager.Expect100Continue = false;
             ServicePointManager.DefaultConnectionLimit = 32;
@@ -562,14 +701,12 @@ namespace HyperIDM
             {
                 if (!startMinimized)
                 {
-                    this.MainForm = mainForm;
                     ShowMainForm();
                 }
                 ShowDownloadDialog(initialUrl, null, null, null, "Liên kết khởi chạy");
             }
             else if (!startMinimized)
             {
-                this.MainForm = mainForm;
                 ShowMainForm();
             }
         }
@@ -2039,7 +2176,7 @@ namespace HyperIDM
 
             FormClosing += delegate(object s, FormClosingEventArgs e)
             {
-                if (!agent.IsExiting && e.CloseReason == CloseReason.UserClosing)
+                if (!agent.IsExiting)
                 {
                     e.Cancel = true;
                     Hide();
