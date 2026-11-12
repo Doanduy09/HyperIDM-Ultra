@@ -1,0 +1,308 @@
+const http = require('http');
+const fs = require('fs');
+const fsp = require('fs').promises;
+const path = require('path');
+const { spawn } = require('child_process');
+const { DownloadJob } = require('./engine');
+
+const PORT = parseInt(process.env.HYPER_IDM_PORT || '17890', 10);
+const PUBLIC_DIR = path.join(__dirname, 'public');
+const HISTORY_FILE = path.join(__dirname, 'jobs-history.json');
+const DEFAULT_SAVE_DIR = path.join(process.env.USERPROFILE || 'C:\\Users\\admin', 'Downloads', 'HyperIDM');
+
+const jobs = new Map();
+const sseClients = new Set();
+
+// Pre-allocated 1MB zero-copy slice for ultra-fast local engine loopback benchmark
+const BENCHMARK_CHUNK = Buffer.alloc(1024 * 1024, 0x48); // 'H'
+
+async function loadHistory() {
+  try {
+    await fsp.mkdir(DEFAULT_SAVE_DIR, { recursive: true });
+    if (!fs.existsSync(HISTORY_FILE)) return;
+    const raw = await fsp.readFile(HISTORY_FILE, 'utf8');
+    const list = JSON.parse(raw);
+    if (!Array.isArray(list)) return;
+    for (const item of list) {
+      const job = new DownloadJob({
+        id: item.id,
+        url: item.url,
+        saveDir: item.saveDir || DEFAULT_SAVE_DIR,
+        fileName: item.fileName,
+        maxConnections: item.maxConnections || 32
+      });
+      job.finalUrl = item.finalUrl || item.url;
+      job.filePath = item.filePath || path.join(job.saveDir, job.fileName || '');
+      job.stateFilePath = `${job.filePath}.hyper.json`;
+      job.status = item.status === 'downloading' || item.status === 'probing' ? 'paused' : (item.status || 'paused');
+      job.totalBytes = item.totalBytes || 0;
+      job.downloadedBytes = item.downloadedBytes || 0;
+      job.acceptRanges = Boolean(item.acceptRanges);
+      job.peakSpeedBps = item.peakSpeedBps || 0;
+      job.elapsedMs = item.elapsedMs || 0;
+      job.stealCount = item.stealCount || 0;
+      job.recycleCount = item.recycleCount || 0;
+      job.segments = Array.isArray(item.segments) ? item.segments : [];
+      attachJobEvents(job);
+      jobs.set(job.id, job);
+    }
+  } catch {}
+}
+
+let saveDebounce = null;
+function scheduleSaveHistory() {
+  if (saveDebounce) return;
+  saveDebounce = setTimeout(async () => {
+    saveDebounce = null;
+    try {
+      const serialized = Array.from(jobs.values()).map(j => j.toJSON());
+      await fsp.writeFile(HISTORY_FILE, JSON.stringify(serialized, null, 2), 'utf8');
+    } catch {}
+  }, 800);
+}
+
+function broadcastState() {
+  const payload = JSON.stringify({
+    type: 'snapshot',
+    timestamp: Date.now(),
+    defaultSaveDir: DEFAULT_SAVE_DIR,
+    jobs: Array.from(jobs.values()).map(j => j.toJSON())
+  });
+  for (const res of sseClients) {
+    try {
+      res.write(`data: ${payload}\n\n`);
+    } catch {
+      sseClients.delete(res);
+    }
+  }
+}
+
+function attachJobEvents(job) {
+  job.on('update', () => {
+    broadcastState();
+    scheduleSaveHistory();
+  });
+  job.on('completed', () => {
+    broadcastState();
+    scheduleSaveHistory();
+  });
+}
+
+function readJsonBody(req) {
+  return new Promise((resolve, reject) => {
+    let body = '';
+    req.on('data', chunk => {
+      body += chunk.toString();
+      if (body.length > 1024 * 1024) {
+        reject(new Error('Payload too large'));
+      }
+    });
+    req.on('end', () => {
+      if (!body) return resolve({});
+      try {
+        resolve(JSON.parse(body));
+      } catch (e) {
+        reject(e);
+      }
+    });
+    req.on('error', reject);
+  });
+}
+
+function sendJson(res, status, data) {
+  res.writeHead(status, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type'
+  });
+  res.end(JSON.stringify(data));
+}
+
+const server = http.createServer(async (req, res) => {
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204, {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type'
+    });
+    return res.end();
+  }
+
+  const parsedUrl = new URL(req.url, `http://127.0.0.1:${PORT}`);
+  const pathname = parsedUrl.pathname;
+
+  // Built-in HTTP 206 Range Server for Multi-Gigabit Engine Stress Benchmarking
+  if (pathname.startsWith('/benchmark-payload/')) {
+    const match = /\/benchmark-payload\/(\d+)MB\.bin$/i.exec(pathname);
+    const sizeMB = match ? Math.min(2048, Math.max(10, parseInt(match[1], 10))) : 256;
+    const totalBytes = sizeMB * 1024 * 1024;
+
+    const rangeHeader = req.headers['range'];
+    let start = 0;
+    let end = totalBytes - 1;
+    let statusCode = 200;
+
+    if (rangeHeader && rangeHeader.startsWith('bytes=')) {
+      const parts = rangeHeader.replace('bytes=', '').split('-');
+      start = parseInt(parts[0], 10) || 0;
+      end = parts[1] ? parseInt(parts[1], 10) : (totalBytes - 1);
+      if (end >= totalBytes) end = totalBytes - 1;
+      statusCode = 206;
+    }
+
+    const contentLength = Math.max(0, end - start + 1);
+    const headers = {
+      'Content-Type': 'application/octet-stream',
+      'Content-Length': String(contentLength),
+      'Accept-Ranges': 'bytes',
+      'Server': 'HyperIDM-StressTest-Node/26',
+      'ETag': `"hyper-bench-${sizeMB}mb"`
+    };
+    if (statusCode === 206) {
+      headers['Content-Range'] = `bytes ${start}-${end}/${totalBytes}`;
+    }
+
+    res.writeHead(statusCode, headers);
+    let remaining = contentLength;
+
+    function pump() {
+      let ok = true;
+      while (remaining > 0 && ok) {
+        const toSend = Math.min(remaining, BENCHMARK_CHUNK.length);
+        const slice = toSend === BENCHMARK_CHUNK.length ? BENCHMARK_CHUNK : BENCHMARK_CHUNK.subarray(0, toSend);
+        remaining -= toSend;
+        if (remaining === 0) {
+          res.end(slice);
+        } else {
+          ok = res.write(slice);
+        }
+      }
+      if (remaining > 0) {
+        res.once('drain', pump);
+      }
+    }
+    pump();
+    return;
+  }
+
+  // Real-time SSE Telemetry Endpoint
+  if (pathname === '/api/events' && req.method === 'GET') {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'Access-Control-Allow-Origin': '*'
+    });
+    sseClients.add(res);
+    res.write(`data: ${JSON.stringify({
+      type: 'snapshot',
+      timestamp: Date.now(),
+      defaultSaveDir: DEFAULT_SAVE_DIR,
+      jobs: Array.from(jobs.values()).map(j => j.toJSON())
+    })}\n\n`);
+    req.on('close', () => sseClients.delete(res));
+    return;
+  }
+
+  if (pathname === '/api/jobs' && req.method === 'GET') {
+    return sendJson(res, 200, {
+      defaultSaveDir: DEFAULT_SAVE_DIR,
+      jobs: Array.from(jobs.values()).map(j => j.toJSON())
+    });
+  }
+
+  if (pathname === '/api/jobs' && req.method === 'POST') {
+    try {
+      const body = await readJsonBody(req);
+      if (!body.url || typeof body.url !== 'string') {
+        return sendJson(res, 400, { error: 'URL không hợp lệ' });
+      }
+      const job = new DownloadJob({
+        url: body.url.trim(),
+        saveDir: body.saveDir || DEFAULT_SAVE_DIR,
+        fileName: body.fileName || '',
+        maxConnections: body.maxConnections || 32,
+        headers: body.headers || {}
+      });
+      attachJobEvents(job);
+      jobs.set(job.id, job);
+      job.start();
+      return sendJson(res, 201, job.toJSON());
+    } catch (e) {
+      return sendJson(res, 500, { error: e.message });
+    }
+  }
+
+  const actionMatch = /^\/api\/jobs\/([^/]+)\/(pause|resume|open-folder|open-file)$/.exec(pathname);
+  if (actionMatch && req.method === 'POST') {
+    const [, id, action] = actionMatch;
+    const job = jobs.get(id);
+    if (!job) return sendJson(res, 404, { error: 'Không tìm thấy tác vụ tải' });
+
+    if (action === 'pause') {
+      await job.pause();
+      return sendJson(res, 200, job.toJSON());
+    }
+    if (action === 'resume') {
+      job.start();
+      return sendJson(res, 200, job.toJSON());
+    }
+    if (action === 'open-folder') {
+      if (job.filePath && fs.existsSync(job.filePath)) {
+        spawn('explorer.exe', [`/select,${job.filePath}`], { detached: true, stdio: 'ignore' }).unref();
+      } else if (job.saveDir && fs.existsSync(job.saveDir)) {
+        spawn('explorer.exe', [job.saveDir], { detached: true, stdio: 'ignore' }).unref();
+      }
+      return sendJson(res, 200, { ok: true });
+    }
+    if (action === 'open-file') {
+      if (job.filePath && fs.existsSync(job.filePath)) {
+        spawn('cmd.exe', ['/c', 'start', '', job.filePath], { detached: true, stdio: 'ignore' }).unref();
+      }
+      return sendJson(res, 200, { ok: true });
+    }
+  }
+
+  const deleteMatch = /^\/api\/jobs\/([^/]+)$/.exec(pathname);
+  if (deleteMatch && req.method === 'DELETE') {
+    const id = deleteMatch[1];
+    const job = jobs.get(id);
+    if (!job) return sendJson(res, 404, { error: 'Không tìm thấy tác vụ tải' });
+    const deleteFile = parsedUrl.searchParams.get('deleteFile') === 'true';
+    await job.cancel(deleteFile);
+    jobs.delete(id);
+    broadcastState();
+    scheduleSaveHistory();
+    return sendJson(res, 200, { ok: true });
+  }
+
+  // Serve Static UI
+  let filePath = pathname === '/' ? path.join(PUBLIC_DIR, 'index.html') : path.join(PUBLIC_DIR, pathname);
+  if (!filePath.startsWith(PUBLIC_DIR)) {
+    res.writeHead(403);
+    return res.end('Forbidden');
+  }
+
+  if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+    const ext = path.extname(filePath).toLowerCase();
+    const mimeMap = {
+      '.html': 'text/html; charset=utf-8',
+      '.js': 'application/javascript; charset=utf-8',
+      '.css': 'text/css; charset=utf-8',
+      '.svg': 'image/svg+xml',
+      '.json': 'application/json'
+    };
+    res.writeHead(200, { 'Content-Type': mimeMap[ext] || 'application/octet-stream' });
+    fs.createReadStream(filePath).pipe(res);
+  } else {
+    res.writeHead(404);
+    res.end('Not Found');
+  }
+});
+
+loadHistory().then(() => {
+  server.listen(PORT, '127.0.0.1', () => {
+    console.log(`[HyperIDM Ultra 64-Bit Engine] Listening on http://127.0.0.1:${PORT}`);
+  });
+});

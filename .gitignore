@@ -1,0 +1,10 @@
+node_modules/
+bin/ffmpeg.exe
+jobs-history.json
+*.hyper.json
+*.tmp
+*.bin
+*.ipsw
+*.mp4
+
+bin/yt-dlp.exe
