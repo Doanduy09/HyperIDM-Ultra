@@ -51,6 +51,8 @@ namespace HyperIDM
 
                 Application.EnableVisualStyles();
                 Application.SetCompatibleTextRenderingDefault(false);
+                Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
+                Application.ThreadException += delegate { };
 
                 using (TrayAgentContext context = new TrayAgentContext(initialUrl, startMinimized))
                 {
@@ -432,6 +434,16 @@ namespace HyperIDM
         private readonly HashSet<string> activeDialogUrls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, IdmProgressForm> progressForms = new Dictionary<string, IdmProgressForm>(StringComparer.Ordinal);
         private readonly Dictionary<string, string> idmKnownKeys = new Dictionary<string, string>(StringComparer.Ordinal);
+        private readonly Queue<MethodInvoker> uiQueue = new Queue<MethodInvoker>();
+
+        internal void RunOnUiThread(MethodInvoker action)
+        {
+            if (action == null || isExiting) return;
+            lock (uiQueue)
+            {
+                uiQueue.Enqueue(action);
+            }
+        }
 
         private MainIdmForm mainForm;
 
@@ -780,7 +792,7 @@ namespace HyperIDM
         {
             try
             {
-                uiHost.BeginInvoke(new MethodInvoker(delegate
+                RunOnUiThread(new MethodInvoker(delegate
                 {
                     if (isExiting) return;
                     if (msg == "SHOW_MAIN")
@@ -803,6 +815,17 @@ namespace HyperIDM
         private void MonitorTimer_Tick(object sender, EventArgs e)
         {
             if (isExiting) return;
+
+            while (true)
+            {
+                MethodInvoker act = null;
+                lock (uiQueue)
+                {
+                    if (uiQueue.Count > 0) act = uiQueue.Dequeue();
+                }
+                if (act == null) break;
+                try { act(); } catch { }
+            }
 
             if (clipboardEnabled)
             {
@@ -1088,7 +1111,7 @@ namespace HyperIDM
                         List<InterceptItem> items = ParseInterceptQueue(json);
                         if (items.Count == 0) return;
 
-                        uiHost.BeginInvoke(new MethodInvoker(delegate
+                        RunOnUiThread(new MethodInvoker(delegate
                         {
                             if (isExiting) return;
                             for (int i = 0; i < items.Count; i++)
@@ -1383,7 +1406,7 @@ namespace HyperIDM
                     string jobId = GetDictString(resp, "id");
                     string respName = GetDictString(resp, "fileName") ?? fileName ?? IdmFormat.GuessFileName(url);
 
-                    uiHost.BeginInvoke(new MethodInvoker(delegate
+                    RunOnUiThread(new MethodInvoker(delegate
                     {
                         RefreshMainFormNow();
                         if (!string.IsNullOrEmpty(jobId) && autoShowProgress)
@@ -1394,7 +1417,7 @@ namespace HyperIDM
                 }
                 catch (Exception ex)
                 {
-                    uiHost.BeginInvoke(new MethodInvoker(delegate
+                    RunOnUiThread(new MethodInvoker(delegate
                     {
                         ShowBalloon("HyperIDM Ultra — Lỗi khởi tạo", ex.Message, ToolTipIcon.Error);
                     }));
@@ -1416,7 +1439,7 @@ namespace HyperIDM
                 }
                 catch { }
 
-                uiHost.BeginInvoke(new MethodInvoker(delegate
+                RunOnUiThread(new MethodInvoker(delegate
                 {
                     if (isExiting) return;
                     RefreshMainFormNow();
@@ -2498,23 +2521,26 @@ namespace HyperIDM
 
                 try
                 {
-                    if (!IsDisposed && IsHandleCreated)
+                    if (!IsDisposed)
                     {
-                        BeginInvoke(new MethodInvoker(delegate
+                        agent.RunOnUiThread(new MethodInvoker(delegate
                         {
                             if (IsDisposed || agent.IsExiting) return;
-                            if (snapshot != null)
+                            try
                             {
-                                lastJobs = snapshot.Jobs;
-                                RenderJobsGrid(lastJobs);
-                                UpdateStatusSummary(snapshot);
+                                if (snapshot != null)
+                                {
+                                    lastJobs = snapshot.Jobs;
+                                    RenderJobsGrid(lastJobs);
+                                    UpdateStatusSummary(snapshot);
+                                }
+                                else
+                                {
+                                    lblStatusEngine.Text = "○ Engine đang khởi động (127.0.0.1:17890)...";
+                                    lblStatusEngine.ForeColor = Color.FromArgb(217, 119, 6);
+                                }
                             }
-                            else
-                            {
-                                lblStatusEngine.Text = "○ Engine đang khởi động (127.0.0.1:17890)...";
-                                lblStatusEngine.ForeColor = Color.FromArgb(217, 119, 6);
-                                if (!string.IsNullOrEmpty(err)) { }
-                            }
+                            catch { }
                         }));
                     }
                 }
