@@ -672,6 +672,30 @@ const server = http.createServer(async (req, res) => {
     return sendJson(res, 200, { ok: true, removedCount });
   }
 
+  // Batch Delete Multiple Selected Jobs
+  if (pathname === '/api/jobs/batch-delete' && req.method === 'POST') {
+    try {
+      const body = await readJsonBody(req);
+      const rawIds = Array.isArray(body.ids) ? body.ids : [];
+      const uniqueIds = Array.from(new Set(rawIds.map(x => String(x || '').trim()).filter(Boolean))).slice(0, 2000);
+      const deleteFile = Boolean(body.deleteFile);
+      let deletedCount = 0;
+      for (const id of uniqueIds) {
+        const job = jobs.get(id);
+        if (!job) continue;
+        batchQueue.remove(job);
+        await job.cancel(deleteFile);
+        jobs.delete(id);
+        deletedCount++;
+      }
+      broadcastState();
+      scheduleSaveHistory();
+      return sendJson(res, 200, { ok: true, deletedCount });
+    } catch (e) {
+      return sendJson(res, 400, { error: e.message });
+    }
+  }
+
   const actionMatch = /^\/api\/jobs\/([^/]+)\/(pause|resume|open-folder|open-file|refresh-url|antivirus-scan)$/.exec(pathname);
   if (actionMatch && req.method === 'POST') {
     const id = decodeURIComponent(actionMatch[1]);

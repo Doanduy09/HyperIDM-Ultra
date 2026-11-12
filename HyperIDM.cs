@@ -2251,6 +2251,14 @@ namespace HyperIDM
 
         private string currentFilterTag = "all";
         private List<JobSnapshot> lastJobs = new List<JobSnapshot>();
+        private readonly HashSet<string> checkedJobIds = new HashSet<string>(StringComparer.Ordinal);
+        private readonly HashSet<string> pendingDeleteIds = new HashSet<string>(StringComparer.Ordinal);
+        private int lastTotalCount = 0;
+        private int lastActiveCount = 0;
+        private long lastTotalSpeed = 0;
+        private long lastGlobalLimitBps = 0;
+        private ToolStripMenuItem menuCtxDeleteList;
+        private ToolStripMenuItem menuCtxDeleteDisk;
 
         public MainIdmForm(TrayAgentContext ownerAgent)
         {
@@ -2337,8 +2345,11 @@ namespace HyperIDM
             mFile.DropDownItems.Add(new ToolStripSeparator());
             mFile.DropDownItems.Add("Tải tiếp", null, delegate { ResumeSelectedJob(); });
             mFile.DropDownItems.Add("Dừng tải", null, delegate { PauseSelectedJob(); });
-            mFile.DropDownItems.Add("Xóa khỏi danh sách", null, delegate { DeleteSelectedJob(false); });
-            mFile.DropDownItems.Add("Xóa kèm tệp trên ổ đĩa", null, delegate { DeleteSelectedJob(true); });
+            mFile.DropDownItems.Add(new ToolStripSeparator());
+            mFile.DropDownItems.Add("Chọn tất cả (Ctrl+A)", null, delegate { SelectAllFilteredJobs(); });
+            mFile.DropDownItems.Add("Bỏ chọn tất cả", null, delegate { ClearAllSelectionAndChecks(); });
+            mFile.DropDownItems.Add("Xóa các mục đã chọn khỏi danh sách", null, delegate { DeleteSelectedJob(false); });
+            mFile.DropDownItems.Add("Xóa các mục đã chọn kèm tệp trên ổ đĩa", null, delegate { DeleteSelectedJob(true); });
 
             ToolStripMenuItem mDownload = new ToolStripMenuItem("Tải xuống");
             mDownload.DropDownItems.Add("Bắt đầu tải toàn bộ hàng đợi", null, delegate { StartAllQueuedJobs(); });
@@ -2560,7 +2571,7 @@ namespace HyperIDM
             gridJobs.GridColor = Color.FromArgb(234, 234, 234);
             gridJobs.RowHeadersVisible = false;
             gridJobs.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
-            gridJobs.MultiSelect = false;
+            gridJobs.MultiSelect = true;
             gridJobs.ReadOnly = true;
             gridJobs.AllowUserToAddRows = false;
             gridJobs.AllowUserToDeleteRows = false;
@@ -2583,21 +2594,61 @@ namespace HyperIDM
             gridJobs.DefaultCellStyle.SelectionForeColor = Color.White;
             gridJobs.DefaultCellStyle.Font = new Font("Segoe UI", 8.75f, FontStyle.Regular);
 
-            gridJobs.Columns.Add(CreateCol("colName", "Tên tệp ▲", 205, DataGridViewContentAlignment.MiddleLeft));
-            gridJobs.Columns.Add(CreateCol("colQueue", "Kiểu chờ tải", 92, DataGridViewContentAlignment.MiddleLeft));
-            gridJobs.Columns.Add(CreateCol("colSize", "Kích thước", 86, DataGridViewContentAlignment.MiddleRight));
-            gridJobs.Columns.Add(CreateCol("colStatus", "Trạng thái", 100, DataGridViewContentAlignment.MiddleLeft));
-            gridJobs.Columns.Add(CreateCol("colEta", "Thời gian còn lại", 98, DataGridViewContentAlignment.MiddleLeft));
-            gridJobs.Columns.Add(CreateCol("colSpeed", "Tốc độ truyền", 92, DataGridViewContentAlignment.MiddleRight));
-            gridJobs.Columns.Add(CreateCol("colLastTry", "Thử tải lần cuối", 125, DataGridViewContentAlignment.MiddleLeft));
+            DataGridViewTextBoxColumn chkCol = CreateCol("colCheck", "☐", 30, DataGridViewContentAlignment.MiddleCenter);
+            chkCol.Resizable = DataGridViewTriState.False;
+            gridJobs.Columns.Add(chkCol);
+            gridJobs.Columns.Add(CreateCol("colName", "Tên tệp ▲", 200, DataGridViewContentAlignment.MiddleLeft));
+            gridJobs.Columns.Add(CreateCol("colQueue", "Kiểu chờ tải", 90, DataGridViewContentAlignment.MiddleLeft));
+            gridJobs.Columns.Add(CreateCol("colSize", "Kích thước", 84, DataGridViewContentAlignment.MiddleRight));
+            gridJobs.Columns.Add(CreateCol("colStatus", "Trạng thái", 98, DataGridViewContentAlignment.MiddleLeft));
+            gridJobs.Columns.Add(CreateCol("colEta", "Thời gian còn lại", 94, DataGridViewContentAlignment.MiddleLeft));
+            gridJobs.Columns.Add(CreateCol("colSpeed", "Tốc độ truyền", 90, DataGridViewContentAlignment.MiddleRight));
+            gridJobs.Columns.Add(CreateCol("colLastTry", "Thử tải lần cuối", 122, DataGridViewContentAlignment.MiddleLeft));
             DataGridViewTextBoxColumn descCol = CreateCol("colDesc", "Mô tả", 150, DataGridViewContentAlignment.MiddleLeft);
             descCol.AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
             descCol.MinimumWidth = 120;
             gridJobs.Columns.Add(descCol);
 
+            gridJobs.CellClick += delegate(object s, DataGridViewCellEventArgs e)
+            {
+                if (e.RowIndex >= 0 && e.ColumnIndex == 0)
+                {
+                    JobSnapshot j = gridJobs.Rows[e.RowIndex].Tag as JobSnapshot;
+                    if (j != null)
+                    {
+                        if (!checkedJobIds.Remove(j.Id)) checkedJobIds.Add(j.Id);
+                        SetCellIfChanged(gridJobs.Rows[e.RowIndex].Cells[0], checkedJobIds.Contains(j.Id) ? "☑" : "☐");
+                        UpdateCheckHeaderGlyph();
+                        RefreshStatusSummaryText();
+                    }
+                }
+            };
+            gridJobs.ColumnHeaderMouseClick += delegate(object s, DataGridViewCellMouseEventArgs e)
+            {
+                if (e.ColumnIndex == 0 && gridJobs.Rows.Count > 0)
+                {
+                    bool allChecked = true;
+                    for (int i = 0; i < gridJobs.Rows.Count; i++)
+                    {
+                        JobSnapshot j = gridJobs.Rows[i].Tag as JobSnapshot;
+                        if (j != null && !checkedJobIds.Contains(j.Id)) { allChecked = false; break; }
+                    }
+                    for (int i = 0; i < gridJobs.Rows.Count; i++)
+                    {
+                        JobSnapshot j = gridJobs.Rows[i].Tag as JobSnapshot;
+                        if (j == null) continue;
+                        if (allChecked) checkedJobIds.Remove(j.Id);
+                        else checkedJobIds.Add(j.Id);
+                        SetCellIfChanged(gridJobs.Rows[i].Cells[0], checkedJobIds.Contains(j.Id) ? "☑" : "☐");
+                    }
+                    UpdateCheckHeaderGlyph();
+                    RefreshStatusSummaryText();
+                }
+            };
+            gridJobs.SelectionChanged += delegate { RefreshStatusSummaryText(); };
             gridJobs.CellDoubleClick += delegate(object s, DataGridViewCellEventArgs e)
             {
-                if (e.RowIndex >= 0) HandleRowDoubleClick(e.RowIndex);
+                if (e.RowIndex >= 0 && e.ColumnIndex > 0) HandleRowDoubleClick(e.RowIndex);
             };
             gridJobs.MouseDown += delegate(object s, MouseEventArgs e)
             {
@@ -2606,15 +2657,38 @@ namespace HyperIDM
                     DataGridView.HitTestInfo hit = gridJobs.HitTest(e.X, e.Y);
                     if (hit.RowIndex >= 0)
                     {
-                        gridJobs.ClearSelection();
-                        gridJobs.Rows[hit.RowIndex].Selected = true;
+                        // Preserve multi-selection when right-clicking inside an already selected row
+                        if (!gridJobs.Rows[hit.RowIndex].Selected)
+                        {
+                            gridJobs.ClearSelection();
+                            gridJobs.Rows[hit.RowIndex].Selected = true;
+                        }
                         rowContextMenu.Show(gridJobs, e.Location);
                     }
                 }
             };
             gridJobs.KeyDown += delegate(object s, KeyEventArgs e)
             {
-                if (e.KeyCode == Keys.Delete) DeleteSelectedJob(false);
+                if (e.KeyCode == Keys.Delete)
+                {
+                    DeleteSelectedJob(e.Shift);
+                    e.Handled = true;
+                }
+                else if (e.Control && e.KeyCode == Keys.A)
+                {
+                    SelectAllFilteredJobs();
+                    e.Handled = true;
+                }
+                else if (e.KeyCode == Keys.Space && gridJobs.SelectedRows.Count > 0)
+                {
+                    ToggleCheckedForSelectedRows();
+                    e.Handled = true;
+                }
+                else if (e.KeyCode == Keys.Escape && checkedJobIds.Count > 0)
+                {
+                    ClearAllSelectionAndChecks();
+                    e.Handled = true;
+                }
                 else if (e.KeyCode == Keys.F5) TriggerImmediateRefresh();
                 else if (e.KeyCode == Keys.Enter && gridJobs.SelectedRows.Count > 0)
                 {
@@ -2733,8 +2807,26 @@ namespace HyperIDM
                     try { Clipboard.SetText(job.Url); } catch { }
                 }
             });
-            rowContextMenu.Items.Add("Xóa khỏi danh sách", null, delegate { DeleteSelectedJob(false); });
-            rowContextMenu.Items.Add("Xóa kèm tệp trên ổ đĩa", null, delegate { DeleteSelectedJob(true); });
+            rowContextMenu.Items.Add("Chọn tất cả (Ctrl+A)", null, delegate { SelectAllFilteredJobs(); });
+            rowContextMenu.Items.Add("Bỏ chọn tất cả", null, delegate { ClearAllSelectionAndChecks(); });
+            menuCtxDeleteList = new ToolStripMenuItem("Xóa khỏi danh sách", null, delegate { DeleteSelectedJob(false); });
+            menuCtxDeleteDisk = new ToolStripMenuItem("Xóa kèm tệp trên ổ đĩa", null, delegate { DeleteSelectedJob(true); });
+            rowContextMenu.Items.Add(menuCtxDeleteList);
+            rowContextMenu.Items.Add(menuCtxDeleteDisk);
+            rowContextMenu.Opening += delegate
+            {
+                int cnt = GetTargetJobs().Count;
+                if (cnt > 1)
+                {
+                    menuCtxDeleteList.Text = string.Format("Xóa {0} mục đã chọn khỏi danh sách (Del)", cnt);
+                    menuCtxDeleteDisk.Text = string.Format("Xóa {0} mục đã chọn kèm tệp trên ổ đĩa (Shift+Del)", cnt);
+                }
+                else
+                {
+                    menuCtxDeleteList.Text = "Xóa khỏi danh sách (Del)";
+                    menuCtxDeleteDisk.Text = "Xóa kèm tệp trên ổ đĩa (Shift+Del)";
+                }
+            };
         }
 
         private void BuildQuickTestMenu()
@@ -2823,10 +2915,73 @@ namespace HyperIDM
             lblStatusEngine.Text = "● Engine: 127.0.0.1:17890 (Sẵn sàng)";
             lblStatusEngine.ForeColor = Color.FromArgb(5, 150, 105);
 
-            string speedStr = totalSpeed > 0 ? (" • Tổng tốc độ: " + IdmFormat.FormatSpeed(totalSpeed, false)) : "";
-            string limitStr = snap.GlobalLimitBps > 0 ? (" • Giới hạn: " + IdmFormat.FormatSpeed(snap.GlobalLimitBps, false)) : "";
-            lblStatusSummary.Text = string.Format("Tổng: {0} tệp ({1} đang tải){2}{3}", snap.Jobs.Count, activeCount, speedStr, limitStr);
+            lastTotalCount = snap.Jobs.Count;
+            lastActiveCount = activeCount;
+            lastTotalSpeed = totalSpeed;
+            lastGlobalLimitBps = snap.GlobalLimitBps;
+            RefreshStatusSummaryText();
             agent.UpdateFloatingDropBox(totalSpeed, activeCount);
+        }
+
+        private void RefreshStatusSummaryText()
+        {
+            if (lblStatusSummary == null) return;
+            string speedStr = lastTotalSpeed > 0 ? (" • Tổng tốc độ: " + IdmFormat.FormatSpeed(lastTotalSpeed, false)) : "";
+            string limitStr = lastGlobalLimitBps > 0 ? (" • Giới hạn: " + IdmFormat.FormatSpeed(lastGlobalLimitBps, false)) : "";
+            int selCount = GetTargetJobs().Count;
+            string selStr = selCount > 1 ? string.Format(" • Đã chọn: {0} mục", selCount) : "";
+            lblStatusSummary.Text = string.Format("Tổng: {0} tệp ({1} đang tải){2}{3}{4}", lastTotalCount, lastActiveCount, selStr, speedStr, limitStr);
+        }
+
+        private void UpdateCheckHeaderGlyph()
+        {
+            if (gridJobs == null || gridJobs.Columns.Count == 0) return;
+            bool allChecked = gridJobs.Rows.Count > 0;
+            for (int i = 0; i < gridJobs.Rows.Count; i++)
+            {
+                JobSnapshot j = gridJobs.Rows[i].Tag as JobSnapshot;
+                if (j == null || !checkedJobIds.Contains(j.Id)) { allChecked = false; break; }
+            }
+            gridJobs.Columns[0].HeaderText = allChecked ? "☑" : "☐";
+        }
+
+        private void SelectAllFilteredJobs()
+        {
+            for (int i = 0; i < gridJobs.Rows.Count; i++)
+            {
+                gridJobs.Rows[i].Selected = true;
+                JobSnapshot j = gridJobs.Rows[i].Tag as JobSnapshot;
+                if (j != null) checkedJobIds.Add(j.Id);
+                SetCellIfChanged(gridJobs.Rows[i].Cells[0], "☑");
+            }
+            UpdateCheckHeaderGlyph();
+            RefreshStatusSummaryText();
+        }
+
+        private void ClearAllSelectionAndChecks()
+        {
+            checkedJobIds.Clear();
+            gridJobs.ClearSelection();
+            for (int i = 0; i < gridJobs.Rows.Count; i++)
+            {
+                SetCellIfChanged(gridJobs.Rows[i].Cells[0], "☐");
+            }
+            UpdateCheckHeaderGlyph();
+            RefreshStatusSummaryText();
+        }
+
+        private void ToggleCheckedForSelectedRows()
+        {
+            for (int i = 0; i < gridJobs.SelectedRows.Count; i++)
+            {
+                DataGridViewRow r = gridJobs.SelectedRows[i];
+                JobSnapshot j = r.Tag as JobSnapshot;
+                if (j == null) continue;
+                if (!checkedJobIds.Remove(j.Id)) checkedJobIds.Add(j.Id);
+                SetCellIfChanged(r.Cells[0], checkedJobIds.Contains(j.Id) ? "☑" : "☐");
+            }
+            UpdateCheckHeaderGlyph();
+            RefreshStatusSummaryText();
         }
 
         private List<JobSnapshot> FilterJobs(List<JobSnapshot> jobs)
@@ -2835,6 +2990,7 @@ namespace HyperIDM
             for (int i = 0; i < jobs.Count; i++)
             {
                 JobSnapshot j = jobs[i];
+                if (pendingDeleteIds.Contains(j.Id)) continue;
                 string st = (j.Status ?? "").ToLowerInvariant();
                 if (currentFilterTag == "all")
                 {
@@ -2871,11 +3027,11 @@ namespace HyperIDM
         private void RenderJobsGrid(List<JobSnapshot> allJobs)
         {
             List<JobSnapshot> filtered = FilterJobs(allJobs);
-            string selectedId = null;
-            if (gridJobs.SelectedRows.Count > 0)
+            HashSet<string> selectedIds = new HashSet<string>(StringComparer.Ordinal);
+            for (int i = 0; i < gridJobs.SelectedRows.Count; i++)
             {
-                JobSnapshot selJob = gridJobs.SelectedRows[0].Tag as JobSnapshot;
-                if (selJob != null) selectedId = selJob.Id;
+                JobSnapshot selJob = gridJobs.SelectedRows[i].Tag as JobSnapshot;
+                if (selJob != null) selectedIds.Add(selJob.Id);
             }
             int firstVisible = gridJobs.FirstDisplayedScrollingRowIndex;
 
@@ -2889,7 +3045,7 @@ namespace HyperIDM
                 gridJobs.Rows.Add();
             }
 
-            int rowToSelect = -1;
+            bool restoredAnySelection = false;
             for (int i = 0; i < filtered.Count; i++)
             {
                 JobSnapshot j = filtered[i];
@@ -2904,30 +3060,28 @@ namespace HyperIDM
                 string lastTry = !string.IsNullOrEmpty(j.LastTryTime) ? j.LastTryTime : DateTime.Now.ToString("dd/MM/yyyy HH:mm");
                 string desc = BuildDescription(j);
 
-                SetCellIfChanged(row.Cells[0], j.FileName);
-                SetCellIfChanged(row.Cells[1], queueType);
-                SetCellIfChanged(row.Cells[2], sizeStr);
-                SetCellIfChanged(row.Cells[3], statusStr);
-                SetCellIfChanged(row.Cells[4], etaStr);
-                SetCellIfChanged(row.Cells[5], speedStr);
-                SetCellIfChanged(row.Cells[6], lastTry);
-                SetCellIfChanged(row.Cells[7], desc);
+                SetCellIfChanged(row.Cells[0], checkedJobIds.Contains(j.Id) ? "☑" : "☐");
+                SetCellIfChanged(row.Cells[1], j.FileName);
+                SetCellIfChanged(row.Cells[2], queueType);
+                SetCellIfChanged(row.Cells[3], sizeStr);
+                SetCellIfChanged(row.Cells[4], statusStr);
+                SetCellIfChanged(row.Cells[5], etaStr);
+                SetCellIfChanged(row.Cells[6], speedStr);
+                SetCellIfChanged(row.Cells[7], lastTry);
+                SetCellIfChanged(row.Cells[8], desc);
 
-                if (selectedId != null && j.Id == selectedId) rowToSelect = i;
+                bool shouldSelect = selectedIds.Contains(j.Id);
+                if (row.Selected != shouldSelect) row.Selected = shouldSelect;
+                if (shouldSelect) restoredAnySelection = true;
             }
 
-            if (rowToSelect >= 0 && gridJobs.Rows.Count > rowToSelect)
-            {
-                if (!gridJobs.Rows[rowToSelect].Selected)
-                {
-                    gridJobs.ClearSelection();
-                    gridJobs.Rows[rowToSelect].Selected = true;
-                }
-            }
-            else if (gridJobs.Rows.Count > 0 && gridJobs.SelectedRows.Count == 0)
+            if (!restoredAnySelection && gridJobs.Rows.Count > 0 && gridJobs.SelectedRows.Count == 0 && checkedJobIds.Count == 0)
             {
                 gridJobs.Rows[0].Selected = true;
             }
+
+            UpdateCheckHeaderGlyph();
+            RefreshStatusSummaryText();
 
             if (firstVisible >= 0 && firstVisible < gridJobs.Rows.Count)
             {
@@ -2976,8 +3130,38 @@ namespace HyperIDM
 
         private JobSnapshot GetSelectedJob()
         {
-            if (gridJobs.SelectedRows.Count == 0) return null;
-            return gridJobs.SelectedRows[0].Tag as JobSnapshot;
+            if (gridJobs.SelectedRows.Count > 0) return gridJobs.SelectedRows[0].Tag as JobSnapshot;
+            List<JobSnapshot> targets = GetTargetJobs();
+            return targets.Count > 0 ? targets[0] : null;
+        }
+
+        private List<JobSnapshot> GetTargetJobs()
+        {
+            List<JobSnapshot> list = new List<JobSnapshot>();
+            HashSet<string> seen = new HashSet<string>(StringComparer.Ordinal);
+            if (checkedJobIds.Count > 0)
+            {
+                for (int i = 0; i < gridJobs.Rows.Count; i++)
+                {
+                    JobSnapshot j = gridJobs.Rows[i].Tag as JobSnapshot;
+                    if (j != null && checkedJobIds.Contains(j.Id) && seen.Add(j.Id))
+                    {
+                        list.Add(j);
+                    }
+                }
+            }
+            if (list.Count == 0 && gridJobs.SelectedRows.Count > 0)
+            {
+                for (int i = 0; i < gridJobs.SelectedRows.Count; i++)
+                {
+                    JobSnapshot j = gridJobs.SelectedRows[i].Tag as JobSnapshot;
+                    if (j != null && seen.Add(j.Id))
+                    {
+                        list.Add(j);
+                    }
+                }
+            }
+            return list;
         }
 
         private void HandleRowDoubleClick(int rowIndex)
@@ -3030,14 +3214,30 @@ namespace HyperIDM
 
         private void ResumeSelectedJob()
         {
-            JobSnapshot job = GetSelectedJob();
-            if (job == null) return;
-            if (string.Equals(job.Status, "completed", StringComparison.OrdinalIgnoreCase))
+            List<JobSnapshot> targets = GetTargetJobs();
+            if (targets.Count == 0) return;
+            if (targets.Count == 1)
             {
-                TrayAgentContext.OpenFolderSelectFile(job.FilePath, job.SaveDir);
+                JobSnapshot job = targets[0];
+                if (string.Equals(job.Status, "completed", StringComparison.OrdinalIgnoreCase))
+                {
+                    TrayAgentContext.OpenFolderSelectFile(job.FilePath, job.SaveDir);
+                    return;
+                }
+                ResumeJobAndOpenProgress(job);
                 return;
             }
-            ResumeJobAndOpenProgress(job);
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                for (int i = 0; i < targets.Count; i++)
+                {
+                    if (!string.Equals(targets[i].Status, "completed", StringComparison.OrdinalIgnoreCase))
+                    {
+                        try { TrayAgentContext.HttpRequest("POST", Program.AppUrl + "/api/jobs/" + Uri.EscapeDataString(targets[i].Id) + "/resume", "{}", 2500); } catch { }
+                    }
+                }
+                TriggerImmediateRefresh();
+            });
         }
 
         private void ResumeJobAndOpenProgress(JobSnapshot job)
@@ -3056,33 +3256,68 @@ namespace HyperIDM
 
         private void PauseSelectedJob()
         {
-            JobSnapshot job = GetSelectedJob();
-            if (job == null) return;
+            List<JobSnapshot> targets = GetTargetJobs();
+            if (targets.Count == 0) return;
             ThreadPool.QueueUserWorkItem(delegate
             {
-                try
+                for (int i = 0; i < targets.Count; i++)
                 {
-                    TrayAgentContext.HttpRequest("POST", Program.AppUrl + "/api/jobs/" + Uri.EscapeDataString(job.Id) + "/pause", "{}", 3000);
+                    try
+                    {
+                        TrayAgentContext.HttpRequest("POST", Program.AppUrl + "/api/jobs/" + Uri.EscapeDataString(targets[i].Id) + "/pause", "{}", 3000);
+                    }
+                    catch { }
                 }
-                catch { }
                 TriggerImmediateRefresh();
             });
         }
 
         private void DeleteSelectedJob(bool deleteFile)
         {
-            JobSnapshot job = GetSelectedJob();
-            if (job == null) return;
+            List<JobSnapshot> targets = GetTargetJobs();
+            if (targets.Count == 0) return;
+
+            if (targets.Count > 1 || deleteFile)
+            {
+                string msg = deleteFile
+                    ? string.Format("Bạn có chắc chắn muốn XÓA {0} tệp đã chọn khỏi danh sách VÀ XÓA VĨNH VIỄN tệp trên ổ đĩa?", targets.Count)
+                    : string.Format("Bạn có chắc chắn muốn xóa {0} mục đã chọn khỏi danh sách Duytai?", targets.Count);
+                if (MessageBox.Show(this, msg, "Xác nhận xóa nhiều tệp — Duytai", MessageBoxButtons.YesNo,
+                    deleteFile ? MessageBoxIcon.Warning : MessageBoxIcon.Question) != DialogResult.Yes)
+                {
+                    return;
+                }
+            }
+
+            List<string> ids = new List<string>(targets.Count);
+            for (int i = 0; i < targets.Count; i++)
+            {
+                string id = targets[i].Id;
+                ids.Add(id);
+                checkedJobIds.Remove(id);
+                pendingDeleteIds.Add(id);
+            }
+            RenderJobsGrid(lastJobs);
 
             ThreadPool.QueueUserWorkItem(delegate
             {
                 try
                 {
-                    string url = Program.AppUrl + "/api/jobs/" + Uri.EscapeDataString(job.Id) + (deleteFile ? "?deleteFile=true" : "");
-                    TrayAgentContext.HttpRequest("DELETE", url, null, 3000);
+                    JavaScriptSerializer js = new JavaScriptSerializer();
+                    Dictionary<string, object> payload = new Dictionary<string, object>();
+                    payload["ids"] = ids.ToArray();
+                    payload["deleteFile"] = deleteFile;
+                    TrayAgentContext.HttpRequest("POST", Program.AppUrl + "/api/jobs/batch-delete", js.Serialize(payload), 15000);
                 }
                 catch { }
-                TriggerImmediateRefresh();
+                finally
+                {
+                    agent.RunOnUiThread(new MethodInvoker(delegate
+                    {
+                        for (int i = 0; i < ids.Count; i++) pendingDeleteIds.Remove(ids[i]);
+                        TriggerImmediateRefresh();
+                    }));
+                }
             });
         }
 

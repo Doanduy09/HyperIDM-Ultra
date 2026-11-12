@@ -1348,7 +1348,8 @@
         <table class="idm-datagrid">
           <thead>
             <tr>
-              <th style="width: 24%;">Tên tệp</th>
+              <th style="width: 32px; text-align:center;"><input type="checkbox" id="chkSelectAllRows" onchange="toggleSelectAllRows(this.checked)" title="Chọn / Bỏ chọn tất cả" /></th>
+              <th style="width: 22%;">Tên tệp</th>
               <th style="width: 9%;">Thể loại</th>
               <th style="width: 8%;">Kích thước</th>
               <th style="width: 17%;">Trạng thái</th>
@@ -1666,6 +1667,9 @@
     let currentJobs = [];
     let defaultSaveDir = '';
     let selectedJobId = null;
+    const selectedJobIds = new Set();
+    let lastFilteredIds = [];
+    let lastAnchorId = null;
     let activeDialogJobId = null;
     let currentCategory = 'all';
     let autoCaptureEnabled = true;
@@ -1833,9 +1837,46 @@
       renderGrid();
     }
 
-    function selectRow(jobId) {
+    function selectRow(jobId, ev) {
+      if (ev && ev.shiftKey && lastAnchorId && lastFilteredIds.includes(lastAnchorId)) {
+        const a = lastFilteredIds.indexOf(lastAnchorId);
+        const b = lastFilteredIds.indexOf(jobId);
+        if (a !== -1 && b !== -1) {
+          if (!ev.ctrlKey) selectedJobIds.clear();
+          for (let i = Math.min(a, b); i <= Math.max(a, b); i++) selectedJobIds.add(lastFilteredIds[i]);
+        }
+      } else if (ev && (ev.ctrlKey || ev.metaKey)) {
+        if (selectedJobIds.has(jobId)) selectedJobIds.delete(jobId);
+        else selectedJobIds.add(jobId);
+        lastAnchorId = jobId;
+      } else {
+        selectedJobIds.clear();
+        selectedJobIds.add(jobId);
+        lastAnchorId = jobId;
+      }
       selectedJobId = jobId;
       renderGrid();
+    }
+
+    function toggleRowCheckbox(jobId, checked) {
+      if (checked) selectedJobIds.add(jobId);
+      else selectedJobIds.delete(jobId);
+      selectedJobId = jobId;
+      lastAnchorId = jobId;
+      renderGrid();
+    }
+
+    function toggleSelectAllRows(checked) {
+      if (checked) lastFilteredIds.forEach(id => selectedJobIds.add(id));
+      else selectedJobIds.clear();
+      renderGrid();
+    }
+
+    function getTargetJobIds() {
+      const validIds = new Set(currentJobs.map(j => j.id));
+      const list = Array.from(selectedJobIds).filter(id => validIds.has(id));
+      if (list.length > 0) return list;
+      return selectedJobId && validIds.has(selectedJobId) ? [selectedJobId] : [];
     }
 
     function onRowDoubleClick(jobId) {
@@ -1853,6 +1894,11 @@
         if (q && !String(j.fileName || '').toLowerCase().includes(q) && !String(j.url || '').toLowerCase().includes(q)) return false;
         return true;
       });
+      lastFilteredIds = filtered.map(j => j.id);
+      const chkAll = document.getElementById('chkSelectAllRows');
+      if (chkAll) {
+        chkAll.checked = filtered.length > 0 && filtered.every(j => selectedJobIds.has(j.id));
+      }
 
       if (!selectedJobId && filtered.length > 0) {
         selectedJobId = filtered[0].id;
@@ -1879,7 +1925,8 @@
       tbody.innerHTML = filtered.map(job => {
         const cat = inferJobCategory(job);
         const ico = getFileIconSpec(job.fileName, cat);
-        const isSel = job.id === selectedJobId ? 'selected' : '';
+        const isChecked = selectedJobIds.has(job.id);
+        const isSel = (isChecked || job.id === selectedJobId) ? 'selected' : '';
         const prog = Number(job.progress || 0).toFixed(1);
         const segs = job.segments || [];
         const activeSegs = segs.filter(s => s.status === 'downloading').length;
@@ -1897,7 +1944,8 @@
         const lastTry = new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
         return `
-          <tr class="${isSel}" onclick="selectRow('${job.id}')" ondblclick="onRowDoubleClick('${job.id}')" title="Nhấn đúp để mở Cửa sổ Tiến trình Tải xuống chi tiết kiểu IDM">
+          <tr class="${isSel}" onclick="selectRow('${job.id}', event)" ondblclick="onRowDoubleClick('${job.id}')" title="Giữ Ctrl/Shift hoặc tích ô vuông để chọn nhiều tệp • Nhấn đúp để mở tiến trình">
+            <td style="text-align:center;" onclick="event.stopPropagation()"><input type="checkbox" ${isChecked ? 'checked' : ''} onchange="toggleRowCheckbox('${job.id}', this.checked)" /></td>
             <td>
               <div class="file-cell">
                 <span class="ext-icon ${ico.cls}">${ico.text}</span>
@@ -2208,16 +2256,41 @@
     async function deleteJob(id, deleteFile = false) {
       await fetch(`/api/jobs/${id}?deleteFile=${deleteFile}`, { method: 'DELETE' });
       if (selectedJobId === id) selectedJobId = null;
+      selectedJobIds.delete(id);
       if (activeDialogJobId === id) closeProgressDialog();
     }
 
+    async function batchDeleteJobs(ids, deleteFile = false) {
+      if (!ids || ids.length === 0) return;
+      if (ids.length > 1 || deleteFile) {
+        const msg = deleteFile
+          ? `Xóa ${ids.length} tệp đã chọn VÀ xóa vĩnh viễn trên ổ đĩa?`
+          : `Xóa ${ids.length} mục đã chọn khỏi danh sách Duytai?`;
+        if (!confirm(msg)) return;
+      }
+      await fetch('/api/jobs/batch-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids, deleteFile })
+      });
+      ids.forEach(id => {
+        selectedJobIds.delete(id);
+        if (selectedJobId === id) selectedJobId = null;
+        if (activeDialogJobId === id) closeProgressDialog();
+      });
+    }
+
     async function toolbarAction(action) {
-      if (!selectedJobId && currentJobs.length > 0) selectedJobId = currentJobs[0].id;
-      if (!selectedJobId) return;
+      const targets = getTargetJobIds();
+      if (targets.length === 0 && currentJobs.length > 0) {
+        selectedJobId = currentJobs[0].id;
+        targets.push(selectedJobId);
+      }
+      if (targets.length === 0) return;
       if (action === 'delete') {
-        await deleteJob(selectedJobId, false);
+        await batchDeleteJobs(targets, false);
       } else {
-        await jobAction(selectedJobId, action);
+        await Promise.all(targets.map(id => jobAction(id, action)));
       }
     }
 
@@ -2334,11 +2407,19 @@
       document.getElementById('compareModalBackdrop').classList.add('open');
     }
 
-    // Keyboard shortcuts (Ctrl+N, Delete, Escape)
+    // Keyboard shortcuts (Ctrl+N, Ctrl+A, Delete, Escape)
     window.addEventListener('keydown', (e) => {
+      const tag = (e.target && e.target.tagName) ? e.target.tagName.toUpperCase() : '';
+      const isEditing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
       if (e.ctrlKey && e.key.toLowerCase() === 'n') {
         e.preventDefault();
         openAddUrlModal();
+      } else if (!isEditing && e.ctrlKey && e.key.toLowerCase() === 'a') {
+        e.preventDefault();
+        toggleSelectAllRows(true);
+      } else if (!isEditing && e.key === 'Delete') {
+        e.preventDefault();
+        batchDeleteJobs(getTargetJobIds(), e.shiftKey);
       } else if (e.key === 'Escape') {
         closeProgressDialog();
         ['addUrlModalBackdrop', 'batchModalBackdrop', 'optionsModalBackdrop', 'compareModalBackdrop'].forEach(closeModal);
