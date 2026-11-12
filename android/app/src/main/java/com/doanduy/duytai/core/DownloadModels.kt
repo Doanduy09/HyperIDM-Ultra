@@ -45,6 +45,7 @@ data class DownloadJobState(
     val recycleCount: Int,
     val sha256: String = "",
     val publicPath: String = "",
+    val publicUri: String = "",
     val error: String? = null
 ) {
     val progressPercent: Int

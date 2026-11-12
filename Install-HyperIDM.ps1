@@ -97,8 +97,12 @@ Write-Host "[3/6] Compiling Native 64-Bit Windows System Tray Executable (Duytai
 Stop-Process -Name "Duytai", "HyperIDM", "IDMan" -Force -ErrorAction SilentlyContinue
 Start-Sleep -Milliseconds 300
 $csc = "$env:SystemRoot\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
+$icoFlag = if (Test-Path "$installDir\assets\Duytai.ico") { "/win32icon:$installDir\assets\Duytai.ico" } elseif (Test-Path "$sourceDir\assets\Duytai.ico") { "/win32icon:$sourceDir\assets\Duytai.ico" } else { $null }
 if (Test-Path $csc) {
-    & $csc /nologo /target:winexe /platform:x64 /optimize+ /r:System.Windows.Forms.dll /r:System.Drawing.dll /r:System.Core.dll /r:System.Web.Extensions.dll "/out:$installDir\Duytai.exe" "$installDir\HyperIDM.cs"
+    $cscArgs = @("/nologo", "/target:winexe", "/platform:x64", "/optimize+", "/r:System.Windows.Forms.dll", "/r:System.Drawing.dll", "/r:System.Core.dll", "/r:System.Web.Extensions.dll")
+    if ($icoFlag) { $cscArgs += $icoFlag }
+    $cscArgs += @("/out:$installDir\Duytai.exe", "$installDir\HyperIDM.cs")
+    & $csc @cscArgs
     Copy-Item -Path "$installDir\Duytai.exe" -Destination "$installDir\HyperIDM.exe" -Force
 } elseif (Test-Path "$sourceDir\Duytai.exe") {
     Copy-Item -Path "$sourceDir\Duytai.exe" -Destination "$installDir\Duytai.exe" -Force

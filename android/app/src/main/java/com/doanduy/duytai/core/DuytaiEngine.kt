@@ -9,6 +9,8 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -42,6 +44,7 @@ class DuytaiEngine(
 ) {
     private val dispatcher = Executors.newFixedThreadPool(workerThreads).asCoroutineDispatcher()
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
+    private val jobSlots = Semaphore(3)
     private val jobs = ConcurrentHashMap<String, ManagedJob>()
 
     private val _jobList = MutableStateFlow<List<DownloadJobState>>(emptyList())
@@ -71,6 +74,7 @@ class DuytaiEngine(
         @Volatile var peakSpeedBps: Long = 0L
         @Volatile var sha256: String = ""
         @Volatile var publicPath: String = ""
+        @Volatile var publicUri: String = ""
         @Volatile var error: String? = null
         @Volatile var rateLimitUntil: Long = 0L
 
@@ -102,6 +106,7 @@ class DuytaiEngine(
             recycleCount = counters.recycleCount.get(),
             sha256 = sha256,
             publicPath = publicPath,
+            publicUri = publicUri,
             error = error
         )
     }
@@ -175,53 +180,55 @@ class DuytaiEngine(
     }
 
     private suspend fun executeJob(job: ManagedJob) {
-        try {
-            if (isIpswUrl(job.rawUrl)) {
-                resolveIpswUrl(job)
+        jobSlots.withPermit {
+            try {
+                if (isIpswUrl(job.rawUrl)) {
+                    resolveIpswUrl(job)
+                }
+                probeUrl(job)
+                discoverEdgeIps(job)
+
+                job.category = FormatCatalog.categorize(job.fileName, job.resolvedUrl)
+                val catDir = File(stagingRoot, job.category).apply { mkdirs() }
+                val target = File(catDir, job.fileName)
+                job.stagingFile = target
+                job.stateJournalFile = File(catDir, "${job.fileName}.hyper.json")
+
+                val loadedJournal = tryLoadStateJournal(job)
+                if (!loadedJournal) {
+                    initSegments(job)
+                }
+                openPreallocatedChannel(job, target)
+
+                job.status = JobStatus.DOWNLOADING
+                emitStates()
+
+                runWorkersLoop(job)
+
+                if (job.pausedOrStopped.get()) return@withPermit
+
+                closeFileHandles(job)
+                job.sha256 = computeSha256(target)
+                job.publicPath = exportToPublicDownloads(target, job.fileName, job.category)
+                job.stateJournalFile?.delete()
+                job.speedBps = 0L
+                job.status = JobStatus.COMPLETED
+                emitStates()
+            } catch (ce: CancellationException) {
+                if (job.status != JobStatus.CANCELED && job.status != JobStatus.PAUSED) {
+                    job.status = JobStatus.PAUSED
+                }
+                saveStateJournal(job)
+                closeFileHandles(job)
+                emitStates()
+            } catch (e: Exception) {
+                job.status = JobStatus.ERROR
+                job.error = e.message ?: e.javaClass.simpleName
+                job.speedBps = 0L
+                saveStateJournal(job)
+                closeFileHandles(job)
+                emitStates()
             }
-            probeUrl(job)
-            discoverEdgeIps(job)
-
-            job.category = FormatCatalog.categorize(job.fileName, job.resolvedUrl)
-            val catDir = File(stagingRoot, job.category).apply { mkdirs() }
-            val target = File(catDir, job.fileName)
-            job.stagingFile = target
-            job.stateJournalFile = File(catDir, "${job.fileName}.hyper.json")
-
-            val loadedJournal = tryLoadStateJournal(job)
-            if (!loadedJournal) {
-                initSegments(job)
-            }
-            openPreallocatedChannel(job, target)
-
-            job.status = JobStatus.DOWNLOADING
-            emitStates()
-
-            runWorkersLoop(job)
-
-            if (job.pausedOrStopped.get()) return
-
-            closeFileHandles(job)
-            job.sha256 = computeSha256(target)
-            job.publicPath = exportToPublicDownloads(target, job.fileName, job.category)
-            job.stateJournalFile?.delete()
-            job.speedBps = 0L
-            job.status = JobStatus.COMPLETED
-            emitStates()
-        } catch (ce: CancellationException) {
-            if (job.status != JobStatus.CANCELED && job.status != JobStatus.PAUSED) {
-                job.status = JobStatus.PAUSED
-            }
-            saveStateJournal(job)
-            closeFileHandles(job)
-            emitStates()
-        } catch (e: Exception) {
-            job.status = JobStatus.ERROR
-            job.error = e.message ?: e.javaClass.simpleName
-            job.speedBps = 0L
-            saveStateJournal(job)
-            closeFileHandles(job)
-            emitStates()
         }
     }
 

@@ -33,7 +33,21 @@ cp -R "$ROOT_DIR/public" "$ROOT_DIR/extension" "$APP_BUNDLE/Contents/Resources/c
 cp "$SCRIPT_DIR/duytai-native-host.sh" "$SCRIPT_DIR/Install-Duytai-macOS.sh" "$APP_BUNDLE/Contents/Resources/"
 chmod +x "$APP_BUNDLE/Contents/Resources/duytai-native-host.sh" "$APP_BUNDLE/Contents/Resources/Install-Duytai-macOS.sh"
 
-echo "[3/4] Writing Info.plist & ad-hoc codesign..."
+echo "[3/4] Generating AppIcon.icns, Info.plist & ad-hoc codesign..."
+ICON_PNG="$ROOT_DIR/assets/duytai-logo-1024.png"
+if [ -f "$ICON_PNG" ]; then
+  ICONSET="$DIST_DIR/AppIcon.iconset"
+  rm -rf "$ICONSET"
+  mkdir -p "$ICONSET"
+  for sz in 16 32 128 256 512; do
+    sips -z $sz $sz "$ICON_PNG" --out "$ICONSET/icon_${sz}x${sz}.png" >/dev/null
+    sz2=$((sz * 2))
+    sips -z $sz2 $sz2 "$ICON_PNG" --out "$ICONSET/icon_${sz}x${sz}@2x.png" >/dev/null
+  done
+  iconutil -c icns "$ICONSET" -o "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
+  rm -rf "$ICONSET"
+fi
+
 cat > "$APP_BUNDLE/Contents/Info.plist" << 'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -41,6 +55,7 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << 'EOF'
 <dict>
   <key>CFBundleDevelopmentRegion</key><string>vi</string>
   <key>CFBundleExecutable</key><string>Duytai</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundleIdentifier</key><string>com.doanduy.duytai</string>
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
   <key>CFBundleName</key><string>Duytai</string>

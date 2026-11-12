@@ -72,7 +72,7 @@ jobs:
           node --check server.js
           node --check idm-features.js
           $csc = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
-          & $csc /nologo /target:winexe /out:Duytai.exe HyperIDM.cs /r:System.Windows.Forms.dll /r:System.Drawing.dll /r:System.Net.Http.dll
+          & $csc /nologo /target:winexe /platform:x64 /optimize+ /win32icon:assets\Duytai.ico /out:Duytai.exe HyperIDM.cs /r:System.Windows.Forms.dll /r:System.Drawing.dll /r:System.Core.dll /r:System.Web.Extensions.dll
       - uses: actions/upload-artifact@v4
         with:
           name: Duytai-Windows

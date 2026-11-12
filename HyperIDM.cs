@@ -727,7 +727,8 @@ namespace HyperIDM
             IntPtr forceHandle = uiHost.Handle;
             if (forceHandle == IntPtr.Zero) { }
 
-            appIcon = CreateIdmGlobeIcon(out iconHandle);
+            try { appIcon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
+            if (appIcon == null) appIcon = CreateIdmGlobeIcon(out iconHandle);
 
             trayMenu = new ContextMenuStrip();
             trayMenu.ShowImageMargin = false;

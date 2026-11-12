@@ -332,23 +332,44 @@ function readJsonBody(req) {
   });
 }
 
-function sendJson(res, status, data) {
+function isTrustedOrigin(origin) {
+  if (!origin) return true;
+  return /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/i.test(origin) ||
+    /^chrome-extension:\/\//i.test(origin) ||
+    /^moz-extension:\/\//i.test(origin);
+}
+
+function getCorsHeaders(req) {
+  const origin = req.headers.origin;
+  const allowed = origin && isTrustedOrigin(origin) ? origin : `http://127.0.0.1:${PORT}`;
+  return {
+    'Access-Control-Allow-Origin': allowed,
+    'Vary': 'Origin',
+    'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, X-Duytai-Source'
+  };
+}
+
+function sendJson(res, status, data, req) {
+  const cors = req ? getCorsHeaders(req) : {
+    'Access-Control-Allow-Origin': `http://127.0.0.1:${PORT}`,
+    'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, X-Duytai-Source'
+  };
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type'
+    ...cors
   });
   res.end(JSON.stringify(data));
 }
 
 const server = http.createServer(async (req, res) => {
+  const origin = req.headers.origin;
+  if (origin && !isTrustedOrigin(origin)) {
+    return sendJson(res, 403, { error: 'Untrusted origin rejected by Duytai Security Guard' }, req);
+  }
   if (req.method === 'OPTIONS') {
-    res.writeHead(204, {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type'
-    });
+    res.writeHead(204, getCorsHeaders(req));
     return res.end();
   }
 
@@ -428,7 +449,7 @@ const server = http.createServer(async (req, res) => {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
       'Connection': 'keep-alive',
-      'Access-Control-Allow-Origin': '*'
+      ...getCorsHeaders(req)
     });
     sseClients.add(res);
     res.write(`data: ${JSON.stringify({

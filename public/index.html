@@ -3,7 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Internet Download Manager — Duytai 64-Bit 6.43 Pro (64-Bit Native Engine)</title>
+  <title>Duytai Downloader v7.4 — Cross-Platform 64/128-Thread Engine</title>
+  <link rel="icon" type="image/png" href="/logo.png" />
   <style>
     :root[data-theme="light"] {
       --bg-window: #f3f5f8;
@@ -1118,8 +1119,9 @@
   <!-- 1. TOP MENU BAR (Chuẩn IDM 6.43) -->
   <div class="idm-menubar">
     <div class="menu-left">
-      <div class="app-icon-badge">
-        <span>⚡ Duytai 6.43 Pro</span>
+      <div class="app-icon-badge" style="display:flex;align-items:center;gap:6px;">
+        <img src="/logo.png" alt="D" style="width:18px;height:18px;border-radius:4px;" />
+        <span>Duytai v7.4 Pro</span>
       </div>
 
       <div class="menu-wrap">
@@ -1167,11 +1169,11 @@
         <button class="menu-item">Trợ giúp</button>
         <div class="menu-dropdown">
           <div class="menu-dd-item" onclick="openOptionsModal()"><span>🧩 Hướng dẫn tích hợp Trình duyệt & Clipboard</span></div>
-          <div class="menu-dd-item" onclick="openCompareModal()"><span>🔬 Giải phẫu Nhị phân IDM 6.43 vs Duytai</span></div>
+          <div class="menu-dd-item" onclick="openCompareModal()"><span>⚙️ Cấu hình & Thông số Kiến trúc Duytai</span></div>
         </div>
       </div>
 
-      <button class="menu-item highlight" onclick="openCompareModal()">⚡ So sánh IDM vs Duytai</button>
+      <button class="menu-item highlight" onclick="openCompareModal()">⚡ Cấu hình Duytai</button>
     </div>
 
     <div class="menu-right">
@@ -1608,50 +1610,50 @@
     </div>
   </div>
 
-  <!-- MODAL: SO SÁNH IDM 6.43 vs HYPERIDM ULTRA -->
+  <!-- MODAL: CẤU HÌNH & KIẾN TRÚC DUYTAI -->
   <div class="modal-backdrop" id="compareModalBackdrop">
     <div class="idm-dialog" style="width: 760px;">
       <div class="dialog-titlebar">
-        <span>⚡ Giải Phẫu Nhị Phân: Duytai 64-Bit vs. Duytai 64-Bit 64-Bit</span>
+        <span>⚡ Cấu hình & Kiến trúc Động cơ Duytai v7.4</span>
         <button class="dialog-close" onclick="closeModal('compareModalBackdrop')">✕</button>
       </div>
       <div class="dialog-body">
         <p style="font-size:12px; color:var(--text-sub); margin-bottom:6px;">
-          Bảng đối chiếu trực tiếp từ PE Header của <code>IDMan.exe (v6.43)</code> và kiến trúc lõi <b>Duytai 64-Bit</b>:
+          Thông số cấu hình kỹ thuật cốt lõi của hệ sinh thái <b>Duytai Downloader</b> (Windows 64-Bit, macOS Universal & Android):
         </p>
         <table class="comp-table">
           <thead>
             <tr>
-              <th>Tiêu chí Kỹ thuật</th>
-              <th>IDM 6.43 Truyền thống</th>
-              <th>Duytai 64-Bit 6.43 Pro</th>
+              <th>Thành phần</th>
+              <th>Thông số Cấu hình</th>
+              <th>Cơ chế Vận hành</th>
             </tr>
           </thead>
           <tbody>
             <tr>
-              <td><b>Kiến trúc Nhị phân</b></td>
-              <td style="color:var(--red);">32-bit x86 (Giới hạn bộ nhớ 2GB)</td>
-              <td style="color:var(--green); font-weight:700;">64-bit x64 Native (Không giới hạn bộ nhớ)</td>
+              <td><b>Kiến trúc Thực thi</b></td>
+              <td>Windows PE32+ x64 / macOS Universal (arm64+x86_64) / Android API 26–35</td>
+              <td style="color:var(--green); font-weight:700;">Native Host siêu nhẹ kết hợp lõi tải đa phân đoạn 64–128 luồng</td>
             </tr>
             <tr>
-              <td><b>Ghi đĩa & Ghép file ở 99%</b></td>
-              <td style="color:var(--red);">Tách N file tạm rồi chép nối lại ở 99% (Đứng máy với file lớn, tốn 2x TBW SSD)</td>
-              <td style="color:var(--green); font-weight:700;">Sparse In-Place Direct Write (Ghi thẳng vào offset file đích, 0ms ghép file ở 100%)</td>
+              <td><b>Ghi Đĩa & Bộ đệm</b></td>
+              <td>Zero-Copy <code>writev</code> / NIO <code>FileChannel</code> + BDP 256KB–2MB</td>
+              <td style="color:var(--green); font-weight:700;">Cấp phát trước & ghi trực tiếp đúng offset byte (0 ms ghép file ở 100%)</td>
             </tr>
             <tr>
-              <td><b>Số luồng & Khởi tạo</b></td>
-              <td style="color:var(--red);">Tối đa 32 luồng, tăng bậc tuần tự chậm</td>
-              <td style="color:var(--green); font-weight:700;">64–128 Luồng Wave-0 Instant Parallel Burst</td>
+              <td><b>Chống Nghẽn & Đuôi Chậm</b></td>
+              <td>Google Tail-at-Scale Hedged Race + Work-Stealing + AIMD 429/503</td>
+              <td style="color:var(--green); font-weight:700;">Tự chia đôi luồng rảnh, đua song song socket đơ & tự phục hồi khi server giới hạn</td>
             </tr>
             <tr>
-              <td><b>Cân bằng tải Đa IP CDN</b></td>
-              <td style="color:var(--red);">Khóa cứng 1 IP duy nhất cho mọi luồng</td>
-              <td style="color:var(--green); font-weight:700;">Multi-IP DNS Pool Round-Robin + Work-Stealing động</td>
+              <td><b>Cân Bằng Tải CDN</b></td>
+              <td>Multi-IP DNS Pool + EWMA Edge Scoring + TLS SNI</td>
+              <td style="color:var(--green); font-weight:700;">Ưu tiên IP biên phản hồi thấp nhất và cách ly IP lỗi</td>
             </tr>
             <tr>
-              <td><b>Chạy ngầm & Tự bắt link</b></td>
-              <td>System Tray + Bắt link Clipboard/Browser</td>
-              <td style="color:var(--green); font-weight:700;">System Tray Native (`Duytai.exe`) + Bắt link Clipboard/Browser + Giải mã trực tiếp IPSW.me & YouTube</td>
+              <td><b>Toàn Vẹn & Tiện Ích</b></td>
+              <td>Journal <code>.hyper.json</code> + SHA-256 + Extension MV3 + 60+ Định dạng</td>
+              <td style="color:var(--green); font-weight:700;">Tạm dừng/tiếp tục không mất byte, xóa hàng loạt, bắt link tức thì</td>
             </tr>
           </tbody>
         </table>

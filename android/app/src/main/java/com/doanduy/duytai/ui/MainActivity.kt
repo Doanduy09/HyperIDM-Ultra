@@ -2,6 +2,7 @@ package com.doanduy.duytai.ui
 
 import android.Manifest
 import android.app.Activity
+import android.app.DownloadManager
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.ComponentName
@@ -326,20 +327,36 @@ class MainActivity : Activity() {
             }
 
             val actionRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-            val toggleBtn = Button(this).apply {
-                text = if (job.status == JobStatus.DOWNLOADING || job.status == JobStatus.PROBING) "Tạm dừng" else "Tiếp tục"
-                isEnabled = job.status != JobStatus.COMPLETED
-                setBackgroundColor(Color.parseColor("#1E293B"))
-                setTextColor(Color.WHITE)
-                setOnClickListener {
-                    if (job.status == JobStatus.DOWNLOADING || job.status == JobStatus.PROBING) {
-                        engineRef?.pause(job.id)
-                    } else {
-                        engineRef?.start(job.id)
+            if (job.status == JobStatus.COMPLETED) {
+                val openBtn = Button(this).apply {
+                    text = "Mở tệp đã tải"
+                    setBackgroundColor(Color.parseColor("#0284C7"))
+                    setTextColor(Color.WHITE)
+                    setOnClickListener {
+                        val viewDownloads = Intent(DownloadManager.ACTION_VIEW_DOWNLOADS).apply {
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        }
+                        runCatching { startActivity(viewDownloads) }.onFailure {
+                            Toast.makeText(this@MainActivity, "Tệp đã lưu tại: ${job.publicPath}", Toast.LENGTH_LONG).show()
+                        }
                     }
                 }
+                actionRow.addView(openBtn)
+            } else {
+                val toggleBtn = Button(this).apply {
+                    text = if (job.status == JobStatus.DOWNLOADING || job.status == JobStatus.PROBING) "Tạm dừng" else "Tiếp tục"
+                    setBackgroundColor(Color.parseColor("#1E293B"))
+                    setTextColor(Color.WHITE)
+                    setOnClickListener {
+                        if (job.status == JobStatus.DOWNLOADING || job.status == JobStatus.PROBING) {
+                            engineRef?.pause(job.id)
+                        } else {
+                            engineRef?.start(job.id)
+                        }
+                    }
+                }
+                actionRow.addView(toggleBtn)
             }
-            actionRow.addView(toggleBtn)
             card.addView(actionRow)
 
             jobsContainer.addView(card, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
