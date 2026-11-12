@@ -9,7 +9,8 @@ const idmFeatures = require('./idm-features');
 const PORT = parseInt(process.env.HYPER_IDM_PORT || '17890', 10);
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const HISTORY_FILE = path.join(__dirname, 'jobs-history.json');
-const DEFAULT_SAVE_DIR = path.join(process.env.USERPROFILE || 'C:\\Users\\admin', 'Downloads', 'HyperIDM');
+const DEFAULT_SAVE_DIR = path.join(process.env.USERPROFILE || 'C:\\Users\\admin', 'Downloads', 'Duytai');
+const LEGACY_SAVE_DIR = path.join(process.env.USERPROFILE || 'C:\\Users\\admin', 'Downloads', 'HyperIDM');
 
 const jobs = new Map();
 const sseClients = new Set();
@@ -189,9 +190,10 @@ async function syncExistingDownloads() {
     await syncIdmRegistryItems();
     const downloadsRoot = path.join(process.env.USERPROFILE || 'C:\\Users\\admin', 'Downloads');
     const existingPaths = new Set(Array.from(jobs.values()).map(j => (j.filePath || '').toLowerCase()));
-    const scanDirs = [downloadsRoot, DEFAULT_SAVE_DIR];
+    const scanDirs = [downloadsRoot, DEFAULT_SAVE_DIR, LEGACY_SAVE_DIR];
     for (const folder of Object.keys(idmFeatures.CATEGORIES || {})) {
       scanDirs.push(path.join(DEFAULT_SAVE_DIR, folder));
+      scanDirs.push(path.join(LEGACY_SAVE_DIR, folder));
       scanDirs.push(path.join(downloadsRoot, folder));
     }
 

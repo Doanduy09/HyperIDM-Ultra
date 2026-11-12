@@ -13,7 +13,7 @@ namespace HyperIDMSetup
         {
             string installDir = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                @"Programs\HyperIDM"
+                @"Programs\Duytai"
             );
             Directory.CreateDirectory(installDir);
 
@@ -74,8 +74,12 @@ namespace HyperIDMSetup
                 if (p != null) p.WaitForExit();
             }
 
-            // 3. Launch installed HyperIDM.exe via Windows Explorer Shell so GUI and System Tray always appear in interactive desktop
-            string installedExe = Path.Combine(installDir, "HyperIDM.exe");
+            // 3. Launch installed Duytai.exe via Windows Explorer Shell so GUI and System Tray always appear in interactive desktop
+            string installedExe = Path.Combine(installDir, "Duytai.exe");
+            if (!File.Exists(installedExe))
+            {
+                installedExe = Path.Combine(installDir, "HyperIDM.exe");
+            }
             if (File.Exists(installedExe))
             {
                 Process.Start(new ProcessStartInfo

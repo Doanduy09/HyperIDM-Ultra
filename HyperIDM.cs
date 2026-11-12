@@ -218,9 +218,11 @@ namespace HyperIDM
                     continue;
                 }
 
-                if (a.StartsWith("hyperidm://", StringComparison.OrdinalIgnoreCase))
+                if (a.StartsWith("duytai://", StringComparison.OrdinalIgnoreCase) ||
+                    a.StartsWith("hyperidm://", StringComparison.OrdinalIgnoreCase))
                 {
-                    string raw = a.Substring("hyperidm://".Length).TrimStart('/');
+                    int prefixLen = a.StartsWith("duytai://", StringComparison.OrdinalIgnoreCase) ? "duytai://".Length : "hyperidm://".Length;
+                    string raw = a.Substring(prefixLen).TrimStart('/');
                     if (raw.StartsWith("download?", StringComparison.OrdinalIgnoreCase))
                     {
                         Match m = Regex.Match(raw, @"(?:^|&)url=([^&]+)", RegexOptions.IgnoreCase);
@@ -617,6 +619,9 @@ namespace HyperIDM
         [DllImport("user32.dll")]
         private static extern bool SetForegroundWindow(IntPtr hWnd);
 
+        [DllImport("user32.dll")]
+        private static extern bool EnableWindow(IntPtr hWnd, bool bEnable);
+
         public TrayAgentContext(string initialUrl, bool startMinimized)
         {
             uiHost = new Control();
@@ -629,7 +634,7 @@ namespace HyperIDM
             trayMenu.ShowImageMargin = false;
             trayMenu.Font = new Font("Segoe UI", 9.25f, FontStyle.Regular);
 
-            ToolStripMenuItem menuOpen = new ToolStripMenuItem("Mở HyperIDM Ultra (Cửa sổ chính)");
+            ToolStripMenuItem menuOpen = new ToolStripMenuItem("Mở Duytai (Cửa sổ chính)");
             menuOpen.Font = new Font(trayMenu.Font, FontStyle.Bold);
             menuOpen.Click += delegate { ShowMainForm(); };
 
@@ -647,10 +652,10 @@ namespace HyperIDM
             ToolStripMenuItem menuPauseAll = new ToolStripMenuItem("Dừng tất cả tác vụ đang tải");
             menuPauseAll.Click += delegate { PauseAllActiveJobsAsync(); };
 
-            ToolStripMenuItem menuOpenFolder = new ToolStripMenuItem("Mở thư mục Tải xuống (Downloads\\HyperIDM)");
+            ToolStripMenuItem menuOpenFolder = new ToolStripMenuItem("Mở thư mục Tải xuống (Downloads\\Duytai)");
             menuOpenFolder.Click += delegate { OpenDownloadsFolder(); };
 
-            ToolStripMenuItem menuExit = new ToolStripMenuItem("Thoát hoàn toàn HyperIDM");
+            ToolStripMenuItem menuExit = new ToolStripMenuItem("Thoát hoàn toàn Duytai");
             menuExit.Click += delegate { ExitApplication(); };
 
             trayMenu.Items.Add(menuOpen);
@@ -666,7 +671,7 @@ namespace HyperIDM
 
             trayIcon = new NotifyIcon();
             trayIcon.Icon = appIcon;
-            trayIcon.Text = "Internet Download Manager 6.43 — HyperIDM Ultra 64-Bit";
+            trayIcon.Text = "Duytai — Trình Tăng Tốc Tải Xuống 64-Bit";
             trayIcon.ContextMenuStrip = trayMenu;
             trayIcon.Visible = true;
             trayIcon.DoubleClick += delegate { ShowMainForm(); };
@@ -766,7 +771,7 @@ namespace HyperIDM
             {
                 trayIcon.ShowBalloonTip(
                     2200,
-                    "HyperIDM Ultra 64-Bit vẫn đang chạy",
+                    "Duytai 64-Bit vẫn đang chạy",
                     "Ứng dụng đang chạy ngầm ở khay hệ thống để tự động bắt mọi link tải.",
                     ToolTipIcon.Info);
             }
@@ -964,6 +969,18 @@ namespace HyperIDM
                 try { act(); } catch { }
             }
 
+            try
+            {
+                foreach (Form f in Application.OpenForms)
+                {
+                    if (f != null && !f.IsDisposed && f.IsHandleCreated)
+                    {
+                        EnableWindow(f.Handle, true);
+                    }
+                }
+            }
+            catch { }
+
             if (clipboardEnabled)
             {
                 CheckClipboard();
@@ -1087,7 +1104,7 @@ namespace HyperIDM
                                         string.IsNullOrEmpty(decodedName) ? null : decodedName,
                                         referer,
                                         hdrs.Count > 0 ? hdrs : null,
-                                        "Bắt tự động từ Chrome/Edge (IDM Registry)");
+                                        "Bắt tự động từ Chrome/Edge");
                                 }
                             }
                         }
@@ -1146,8 +1163,15 @@ namespace HyperIDM
                 {
                     string fallbackDir = Path.Combine(
                         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                        @"Programs\HyperIDM");
+                        @"Programs\Duytai");
                     string fallbackServer = Path.Combine(fallbackDir, "server.js");
+                    if (!File.Exists(fallbackServer))
+                    {
+                        fallbackDir = Path.Combine(
+                            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                            @"Programs\HyperIDM");
+                        fallbackServer = Path.Combine(fallbackDir, "server.js");
+                    }
                     if (File.Exists(fallbackServer))
                     {
                         baseDir = fallbackDir;
@@ -1556,7 +1580,7 @@ namespace HyperIDM
                 {
                     RunOnUiThread(new MethodInvoker(delegate
                     {
-                        ShowBalloon("HyperIDM Ultra — Lỗi khởi tạo", ex.Message, ToolTipIcon.Error);
+                        ShowBalloon("Duytai — Lỗi khởi tạo", ex.Message, ToolTipIcon.Error);
                     }));
                 }
             });
@@ -1581,7 +1605,7 @@ namespace HyperIDM
                     if (isExiting) return;
                     RefreshMainFormNow();
                     ShowBalloon(
-                        "HyperIDM Ultra",
+                        "Duytai",
                         pausedCount > 0 ? string.Format("Đã tạm dừng {0} tác vụ đang tải.", pausedCount) : "Không có tác vụ nào đang tải.",
                         ToolTipIcon.Info);
                 }));
@@ -1635,7 +1659,7 @@ namespace HyperIDM
         internal static string GetBaseDownloadDir()
         {
             string profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            return Path.Combine(Path.Combine(profile, "Downloads"), "HyperIDM");
+            return Path.Combine(Path.Combine(profile, "Downloads"), "Duytai");
         }
 
         internal static string HttpRequest(string method, string url, string jsonBody, int timeoutMs)
@@ -2153,7 +2177,7 @@ namespace HyperIDM
 
         private void InitializeUi()
         {
-            Text = "Internet Download Manager 6.43 — HyperIDM Ultra 64-Bit";
+            Text = "Duytai — Trình Tăng Tốc Tải Xuống 64-Bit (64/128 Luồng)";
             Size = new Size(1020, 620);
             MinimumSize = new Size(880, 500);
             StartPosition = FormStartPosition.CenterScreen;
@@ -2203,12 +2227,12 @@ namespace HyperIDM
             ToolStripMenuItem mTasks = new ToolStripMenuItem("Công việc");
             mTasks.DropDownItems.Add("Thêm tác vụ tải mới (Thêm URL)...", null, delegate { agent.ShowDownloadDialog("", null, null, null, "Thêm URL thủ công"); });
             mTasks.DropDownItems.Add("Nhập danh sách tải hàng loạt / Lập lịch...", null, delegate { OpenBatchDialog(); });
-            mTasks.DropDownItems.Add("Mở thư mục Tải xuống (Downloads\\HyperIDM)", null, delegate { TrayAgentContext.OpenDownloadsFolder(); });
+            mTasks.DropDownItems.Add("Mở thư mục Tải xuống (Downloads\\Duytai)", null, delegate { TrayAgentContext.OpenDownloadsFolder(); });
             mTasks.DropDownItems.Add(new ToolStripSeparator());
             mTasks.DropDownItems.Add("Mở trình duyệt Web UI (127.0.0.1:17890)", null, delegate { Program.OpenWebBrowserFallback(); });
             mTasks.DropDownItems.Add(new ToolStripSeparator());
             mTasks.DropDownItems.Add("Ẩn xuống khay hệ thống", null, delegate { Hide(); });
-            mTasks.DropDownItems.Add("Thoát hoàn toàn HyperIDM", null, delegate { agent.ExitApplication(); });
+            mTasks.DropDownItems.Add("Thoát hoàn toàn Duytai", null, delegate { agent.ExitApplication(); });
 
             ToolStripMenuItem mFile = new ToolStripMenuItem("Tệp tin");
             mFile.DropDownItems.Add("Mở tệp đã tải", null, delegate { OpenSelectedFile(); });
@@ -2262,33 +2286,19 @@ namespace HyperIDM
                 agent.StartQuickDownload("https://nodejs.org/dist/v22.14.0/node-v22.14.0-win-x64.zip", "node-v22.14.0-win-x64.zip", agent.DefaultThreads, "Test Node.js ZIP");
             });
             mHelp.DropDownItems.Add(new ToolStripSeparator());
-            mHelp.DropDownItems.Add("Giới thiệu HyperIDM Ultra 64-Bit", null, delegate
+            mHelp.DropDownItems.Add("Giới thiệu Duytai 64-Bit", null, delegate
             {
-                MessageBox.Show(
-                    this,
-                    "Internet Download Manager 6.43 — HyperIDM Ultra 64-Bit\nEngine: TitanFetch 64/128-Luồng + Sparse Pre-Allocation\nTự động bắt link: Clipboard + Chrome/Edge Extension + Smart IPSW/YouTube.",
-                    "Giới thiệu HyperIDM Ultra",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Information);
+                agent.ShowBalloon(
+                    "Duytai 64-Bit (DOANDUY)",
+                    "Engine: 64/128-Luồng + Sparse Pre-Allocation • Tự động bắt link Clipboard & Trình duyệt.",
+                    ToolTipIcon.Info);
             });
-
-            ToolStripMenuItem mRegister = new ToolStripMenuItem("Đăng ký");
-            mRegister.Click += delegate
-            {
-                MessageBox.Show(
-                    this,
-                    "HyperIDM Ultra 64-Bit Pro Edition\nTrạng thái: Đã kích hoạt Bản quyền Vĩnh viễn (DOANDUY).",
-                    "Đăng ký bản quyền",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Information);
-            };
 
             menuStrip.Items.Add(mTasks);
             menuStrip.Items.Add(mFile);
             menuStrip.Items.Add(mDownload);
             menuStrip.Items.Add(mView);
             menuStrip.Items.Add(mHelp);
-            menuStrip.Items.Add(mRegister);
         }
 
         private void BuildToolbar()
@@ -2949,16 +2959,6 @@ namespace HyperIDM
         {
             JobSnapshot job = GetSelectedJob();
             if (job == null) return;
-            if (deleteFile)
-            {
-                DialogResult dr = MessageBox.Show(
-                    this,
-                    string.Format("Xóa \"{0}\" khỏi danh sách VÀ xóa tệp trên ổ đĩa?", job.FileName),
-                    "Xác nhận xóa tệp",
-                    MessageBoxButtons.YesNo,
-                    MessageBoxIcon.Warning);
-                if (dr != DialogResult.Yes) return;
-            }
 
             ThreadPool.QueueUserWorkItem(delegate
             {
@@ -3024,21 +3024,27 @@ namespace HyperIDM
 
         private void OpenOptionsDialog()
         {
-            using (OptionsForm dlg = new OptionsForm(agent))
+            OptionsForm dlg = new OptionsForm(agent);
+            dlg.TopMost = true;
+            dlg.FormClosed += delegate
             {
-                dlg.ShowDialog(this);
                 UpdateCaptureStatusLabel();
                 TriggerImmediateRefresh();
-            }
+            };
+            dlg.Show();
+            dlg.Activate();
         }
 
         private void OpenBatchDialog()
         {
-            using (BatchSchedulerForm dlg = new BatchSchedulerForm(agent))
+            BatchSchedulerForm dlg = new BatchSchedulerForm(agent);
+            dlg.TopMost = true;
+            dlg.FormClosed += delegate
             {
-                dlg.ShowDialog(this);
                 TriggerImmediateRefresh();
-            }
+            };
+            dlg.Show();
+            dlg.Activate();
         }
 
         protected override void Dispose(bool disposing)
@@ -3190,7 +3196,7 @@ namespace HyperIDM
         private void InitializeUi(string initialFileName, string initialUrl, int threads)
         {
             string fn = string.IsNullOrEmpty(initialFileName) ? "Đang tải..." : initialFileName;
-            Text = string.Format("0,00% của {0} — HyperIDM Ultra ({1} Luồng)", fn, threads > 0 ? threads : 64);
+            Text = string.Format("0,00% của {0} — Duytai ({1} Luồng)", fn, threads > 0 ? threads : 64);
             ClientSize = new Size(585, 470);
             MinimumSize = new Size(520, 420);
             StartPosition = FormStartPosition.CenterScreen;
@@ -3400,11 +3406,11 @@ namespace HyperIDM
                     Interlocked.Exchange(ref pollBusyFlag, 0);
                 }
 
-                if (found != null && !IsDisposed && IsHandleCreated)
+                if (found != null && !IsDisposed)
                 {
                     try
                     {
-                        BeginInvoke(new MethodInvoker(delegate
+                        agent.RunOnUiThread(new MethodInvoker(delegate
                         {
                             if (!IsDisposed) UpdateUi(found);
                         }));
@@ -3427,7 +3433,7 @@ namespace HyperIDM
             }
             else
             {
-                Text = string.Format("{0} của {1} — HyperIDM Ultra ({2} Luồng)", pctStr, job.FileName, job.MaxConnections);
+                Text = string.Format("{0} của {1} — Duytai ({2} Luồng)", pctStr, job.FileName, job.MaxConnections);
             }
 
             lblUrlVal.Text = job.Url ?? "";
@@ -3484,7 +3490,7 @@ namespace HyperIDM
                 pollTimer.Stop();
                 if (chkDoneNotify.Checked)
                 {
-                    agent.ShowBalloon("HyperIDM Ultra — Tải hoàn tất", job.FileName, ToolTipIcon.Info);
+                    agent.ShowBalloon("Duytai — Tải hoàn tất", job.FileName, ToolTipIcon.Info);
                 }
                 if (chkDoneOpenFolder.Checked)
                 {
@@ -3692,7 +3698,7 @@ namespace HyperIDM
 
         private void InitializeUi(string sourceLabel)
         {
-            Text = "Thông tin tệp tải xuống — HyperIDM Ultra 64-Bit";
+            Text = "Thông tin tệp tải xuống — Duytai 64-Bit";
             StartPosition = FormStartPosition.CenterScreen;
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
@@ -3719,14 +3725,14 @@ namespace HyperIDM
             };
 
             Label lblTitle = new Label();
-            lblTitle.Text = "Thông tin tệp tải xuống — HyperIDM Ultra 64-Bit";
+            lblTitle.Text = "Thông tin tệp tải xuống — Duytai 64-Bit";
             lblTitle.Font = new Font("Segoe UI", 11f, FontStyle.Bold);
             lblTitle.ForeColor = Color.FromArgb(0, 120, 215);
             lblTitle.AutoSize = true;
             lblTitle.Location = new Point(18, 8);
 
             Label lblSub = new Label();
-            lblSub.Text = string.IsNullOrEmpty(sourceLabel) ? "TitanFetch 64/128-Luồng Engine" : ("Nguồn: " + sourceLabel + " • TitanFetch Multi-Segment Engine");
+            lblSub.Text = string.IsNullOrEmpty(sourceLabel) ? "Duytai 64/128-Luồng Engine" : ("Nguồn: " + sourceLabel + " • Duytai Multi-Segment Engine");
             lblSub.Font = new Font("Segoe UI", 8.25f, FontStyle.Regular);
             lblSub.ForeColor = Color.FromArgb(100, 116, 139);
             lblSub.AutoSize = true;
@@ -3798,7 +3804,7 @@ namespace HyperIDM
             {
                 using (FolderBrowserDialog fbd = new FolderBrowserDialog())
                 {
-                    fbd.Description = "Chọn thư mục lưu tệp tải xuống HyperIDM Ultra";
+                    fbd.Description = "Chọn thư mục lưu tệp tải xuống Duytai";
                     if (Directory.Exists(txtSaveDir.Text)) fbd.SelectedPath = txtSaveDir.Text;
                     if (fbd.ShowDialog(this) == DialogResult.OK)
                     {
@@ -4028,8 +4034,9 @@ namespace HyperIDM
 
                 try
                 {
-                    BeginInvoke(new MethodInvoker(delegate
+                    agent.RunOnUiThread(new MethodInvoker(delegate
                     {
+                        if (IsDisposed) return;
                         if (errorMsg != null)
                         {
                             SetBusy(false, errorMsg);
@@ -4071,7 +4078,7 @@ namespace HyperIDM
         public OptionsForm(TrayAgentContext ownerAgent)
         {
             agent = ownerAgent;
-            Text = "Tùy chọn — HyperIDM Ultra 64-Bit";
+            Text = "Tùy chọn — Duytai 64-Bit";
             ClientSize = new Size(460, 275);
             StartPosition = FormStartPosition.CenterParent;
             FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -4164,7 +4171,7 @@ namespace HyperIDM
         public BatchSchedulerForm(TrayAgentContext ownerAgent)
         {
             agent = ownerAgent;
-            Text = "Lập lịch & Tải hàng loạt — HyperIDM Ultra";
+            Text = "Lập lịch & Tải hàng loạt — Duytai";
             ClientSize = new Size(560, 360);
             StartPosition = FormStartPosition.CenterParent;
             FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -4250,8 +4257,9 @@ namespace HyperIDM
                 catch { }
                 try
                 {
-                    BeginInvoke(new MethodInvoker(delegate
+                    agent.RunOnUiThread(new MethodInvoker(delegate
                     {
+                        if (IsDisposed) return;
                         agent.RefreshMainFormNow();
                         Close();
                     }));
