@@ -101,7 +101,7 @@ Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Na
 $uninstKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Duytai"
 New-Item -Path $uninstKey -Force | Out-Null
 Set-ItemProperty -Path $uninstKey -Name "DisplayName" -Value "Duytai 64-Bit — Trình Tăng Tốc Tải Xuống" -Force
-Set-ItemProperty -Path $uninstKey -Name "DisplayVersion" -Value "7.0.0" -Force
+Set-ItemProperty -Path $uninstKey -Name "DisplayVersion" -Value "7.1.0" -Force
 Set-ItemProperty -Path $uninstKey -Name "Publisher" -Value "DOANDUY" -Force
 Set-ItemProperty -Path $uninstKey -Name "InstallLocation" -Value $installDir -Force
 Set-ItemProperty -Path $uninstKey -Name "DisplayIcon" -Value "$installDir\Duytai.exe" -Force

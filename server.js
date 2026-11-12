@@ -393,6 +393,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     res.writeHead(statusCode, headers);
+    try { if (res.socket) res.socket.setNoDelay(true); } catch {}
     let remaining = contentLength;
     res.on('close', () => { remaining = 0; });
 
@@ -636,17 +637,25 @@ const server = http.createServer(async (req, res) => {
     try {
       const body = await readJsonBody(req);
       if (!body.url) return sendJson(res, 400, { error: 'Missing url' });
+      const now = Date.now();
+      const dupIdx = interceptQueue.findIndex(x => x.url === body.url && (now - x.timestamp) < 2500);
+      if (dupIdx >= 0) {
+        return sendJson(res, 200, { ok: true, deduplicated: true, item: interceptQueue[dupIdx] });
+      }
       const cat = idmFeatures.categorize({ fileName: body.fileName || '', url: body.url });
       const item = {
-        id: 'int-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
+        id: 'int-' + now + '-' + Math.random().toString(36).slice(2, 6),
         url: body.url,
         fileName: body.fileName || '',
         referrer: body.referrer || '',
+        source: body.source || 'Bắt link từ Trình duyệt',
+        headers: (body.headers && typeof body.headers === 'object') ? body.headers : {},
         category: cat,
         saveDir: path.join(DEFAULT_SAVE_DIR, cat),
-        timestamp: Date.now()
+        timestamp: now
       };
       interceptQueue.push(item);
+      if (interceptQueue.length > 100) interceptQueue.splice(0, interceptQueue.length - 100);
       for (const client of sseClients) {
         try {
           client.write(`data: ${JSON.stringify({ type: 'intercept', item })}\n\n`);
@@ -912,10 +921,40 @@ function startIdmSchedulerDaemon() {
   }, 10000).unref();
 }
 
+function appendErrorLog(tag, err) {
+  try {
+    const msg = `[${new Date().toISOString()}] [${tag}] ${(err && (err.stack || err.message)) || String(err)}\n`;
+    fs.appendFileSync(path.join(__dirname, 'server-error.log'), msg);
+  } catch {}
+}
+
+process.on('uncaughtException', (err) => {
+  appendErrorLog('uncaughtException', err);
+});
+process.on('unhandledRejection', (reason) => {
+  appendErrorLog('unhandledRejection', reason);
+});
+
+async function gracefulShutdown() {
+  try {
+    for (const job of jobs.values()) {
+      if (job.status === 'downloading') {
+        await job.pause().catch(() => {});
+      }
+    }
+    const serialized = Array.from(jobs.values()).map(j => j.toJSON());
+    fs.writeFileSync(HISTORY_FILE, JSON.stringify(serialized), 'utf8');
+  } catch {}
+  try { server.close(); } catch {}
+  process.exit(0);
+}
+process.on('SIGTERM', gracefulShutdown);
+process.on('SIGINT', gracefulShutdown);
+
 loadHistory().then(() => {
   startBrowserSqliteDownloadWatcher();
   startIdmSchedulerDaemon();
   server.listen(PORT, '127.0.0.1', () => {
-    console.log(`[Duytai v7.0 64-Bit Engine] Listening on http://127.0.0.1:${PORT}`);
+    console.log(`[Duytai v7.1 64-Bit Engine] Listening on http://127.0.0.1:${PORT}`);
   });
 });

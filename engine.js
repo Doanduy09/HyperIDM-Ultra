@@ -880,6 +880,10 @@ class DownloadJob extends EventEmitter {
 
     workerEntry.req = req;
 
+    req.on('socket', (sock) => {
+      try { sock.setNoDelay(true); } catch {}
+    });
+
     req.on('error', (err) => {
       settleFailure(err);
     });

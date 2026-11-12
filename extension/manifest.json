@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Duytai Integration Module (64-Bit)",
-  "version": "7.0.0",
-  "description": "Tự động bắt mọi định dạng tệp tải xuống & Video (64/128 luồng) chuyển về Duytai tại 127.0.0.1:17890.",
+  "version": "7.1.0",
+  "description": "Tự động bắt trước mọi định dạng tệp tải xuống & Video (64/128 luồng) chuyển về Duytai tại 127.0.0.1:17890 — không hiện Đã hủy trên trình duyệt.",
   "minimum_chrome_version": "102",
   "permissions": ["downloads", "contextMenus", "cookies", "storage", "notifications"],
   "host_permissions": ["<all_urls>", "http://127.0.0.1:17890/*"],
@@ -11,8 +11,9 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
+      "all_frames": true,
       "js": ["content.js"],
-      "run_at": "document_idle"
+      "run_at": "document_start"
     }
   ]
 }

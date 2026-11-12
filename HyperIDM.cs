@@ -191,13 +191,31 @@ namespace HyperIDM
                 Application.EnableVisualStyles();
                 Application.SetCompatibleTextRenderingDefault(false);
                 Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
-                Application.ThreadException += delegate { };
+                Application.ThreadException += delegate(object sender, ThreadExceptionEventArgs e)
+                {
+                    LogCrash("UIThreadException", e.Exception);
+                };
+                AppDomain.CurrentDomain.UnhandledException += delegate(object sender, UnhandledExceptionEventArgs e)
+                {
+                    LogCrash("UnhandledException", e.ExceptionObject as Exception);
+                };
 
                 using (TrayAgentContext context = new TrayAgentContext(initialUrl, startMinimized))
                 {
                     Application.Run(context);
                 }
             }
+        }
+
+        private static void LogCrash(string kind, Exception ex)
+        {
+            if (ex == null) return;
+            try
+            {
+                string logPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "duytai-crash.log");
+                File.AppendAllText(logPath, "[" + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "] [" + kind + "] " + ex.ToString() + Environment.NewLine);
+            }
+            catch { }
         }
 
         private static string ExtractUrlArg(string[] args, out bool startMinimized)
@@ -515,6 +533,7 @@ namespace HyperIDM
         public string Url;
         public string FileName;
         public string Referrer;
+        public string Source;
         public Dictionary<string, string> Headers;
     }
 
@@ -624,8 +643,57 @@ namespace HyperIDM
         private bool shownTrayHint = false;
 
         private Process serverProcess = null;
+        private IntPtr engineJobHandle = IntPtr.Zero;
         private DateTime lastServerStartAttempt = DateTime.MinValue;
         private Thread pipeThread;
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct JOBOBJECT_BASIC_LIMIT_INFORMATION
+        {
+            public long PerProcessUserTimeLimit;
+            public long PerJobUserTimeLimit;
+            public uint LimitFlags;
+            public UIntPtr MinimumWorkingSetSize;
+            public UIntPtr MaximumWorkingSetSize;
+            public uint ActiveProcessLimit;
+            public UIntPtr Affinity;
+            public uint PriorityClass;
+            public uint SchedulingClass;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct IO_COUNTERS
+        {
+            public ulong ReadOperationCount;
+            public ulong WriteOperationCount;
+            public ulong OtherOperationCount;
+            public ulong ReadTransferCount;
+            public ulong WriteTransferCount;
+            public ulong OtherTransferCount;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct JOBOBJECT_EXTENDED_LIMIT_INFORMATION
+        {
+            public JOBOBJECT_BASIC_LIMIT_INFORMATION BasicLimitInformation;
+            public IO_COUNTERS IoInfo;
+            public UIntPtr ProcessMemoryLimit;
+            public UIntPtr JobMemoryLimit;
+            public UIntPtr PeakProcessMemoryUsed;
+            public UIntPtr PeakJobMemoryUsed;
+        }
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+        private static extern IntPtr CreateJobObject(IntPtr lpJobAttributes, string lpName);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool SetInformationJobObject(IntPtr hJob, int JobObjectInfoClass, ref JOBOBJECT_EXTENDED_LIMIT_INFORMATION lpJobObjectInfo, uint cbJobObjectInfoLength);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool AssignProcessToJobObject(IntPtr hJob, IntPtr hProcess);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool CloseHandle(IntPtr hObject);
 
         internal const string DefaultIdmFileTypes =
             "3GP 7Z AAC ACE AIF AIFF APK APKS XAPK ARJ ASF AVI BIN BZ2 CAB CRX CSV DEB DMG DOC DOCX EPUB ESD EXE F4V FLAC FLV GZ GZIP HEX IMG IPA IPSW ISO JAR JPG JPEG JSON LHA LZH LZMA M2TS M3U8 M4A M4V MKV MOBI MOV MP3 MP4 MPA MPD MPE MPEG MPG MSI MSIX MSU NUPKG OGG OGV OPUS OTA OVA OVF PDF PKG PLJ PNG PPS PPT PPTX PSD QCOW2 QT R0* R1* RA RAM RAR RM RMVB ROM RPM RTF SEA SIT SITX SQL SQLITE SVG TAR TBZ2 TGZ TIF TIFF TORRENT TS TXT UF2 VHD VHDX VMDK VOB WAV WEBM WEBP WHL WIM WMA WMV XLS XLSX XML XZ Z ZIP ZST";
@@ -1268,13 +1336,37 @@ namespace HyperIDM
                 ProcessStartInfo psi = new ProcessStartInfo
                 {
                     FileName = nodePath,
-                    Arguments = "\"" + serverJs + "\"",
+                    Arguments = "--max-old-space-size=384 \"" + serverJs + "\"",
                     WorkingDirectory = baseDir,
                     CreateNoWindow = true,
                     UseShellExecute = false,
                     WindowStyle = ProcessWindowStyle.Hidden
                 };
                 serverProcess = Process.Start(psi);
+                AttachProcessToKillJob(serverProcess);
+            }
+            catch { }
+        }
+
+        private void AttachProcessToKillJob(Process proc)
+        {
+            if (proc == null) return;
+            try
+            {
+                if (engineJobHandle == IntPtr.Zero)
+                {
+                    engineJobHandle = CreateJobObject(IntPtr.Zero, null);
+                    if (engineJobHandle != IntPtr.Zero)
+                    {
+                        JOBOBJECT_EXTENDED_LIMIT_INFORMATION info = new JOBOBJECT_EXTENDED_LIMIT_INFORMATION();
+                        info.BasicLimitInformation.LimitFlags = 0x2000; // JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+                        SetInformationJobObject(engineJobHandle, 9, ref info, (uint)Marshal.SizeOf(typeof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION)));
+                    }
+                }
+                if (engineJobHandle != IntPtr.Zero)
+                {
+                    AssignProcessToJobObject(engineJobHandle, proc.Handle);
+                }
             }
             catch { }
         }
@@ -1359,7 +1451,7 @@ namespace HyperIDM
                                 InterceptItem item = items[i];
                                 if (!string.IsNullOrEmpty(item.Url) && CanPromptUrl(item.Url))
                                 {
-                                    ShowDownloadDialog(item.Url, item.FileName, item.Referrer, item.Headers, "Bắt link từ Trình duyệt");
+                                    ShowDownloadDialog(item.Url, item.FileName, item.Referrer, item.Headers, string.IsNullOrEmpty(item.Source) ? "Bắt link từ Trình duyệt" : item.Source);
                                 }
                             }
                         }));
@@ -1409,6 +1501,7 @@ namespace HyperIDM
                     item.Url = url;
                     item.FileName = GetDictString(obj, "fileName");
                     item.Referrer = GetDictString(obj, "referrer");
+                    item.Source = GetDictString(obj, "source");
 
                     object headersObj;
                     if (obj.TryGetValue("headers", out headersObj))
@@ -1824,6 +1917,10 @@ namespace HyperIDM
                 if (iconHandle != IntPtr.Zero)
                 {
                     try { DestroyIcon(iconHandle); } catch { }
+                }
+                if (engineJobHandle != IntPtr.Zero)
+                {
+                    try { CloseHandle(engineJobHandle); engineJobHandle = IntPtr.Zero; } catch { }
                 }
                 try { if (uiHost != null) uiHost.Dispose(); } catch { }
             }
@@ -2396,6 +2493,10 @@ namespace HyperIDM
                 agent.StartQuickDownload("https://nodejs.org/dist/v22.14.0/node-v22.14.0-win-x64.zip", "node-v22.14.0-win-x64.zip", agent.DefaultThreads, "Test Node.js ZIP");
             });
             mHelp.DropDownItems.Add(new ToolStripSeparator());
+            mHelp.DropDownItems.Add("Cài Extension Trình duyệt (Bắt link không \"Đã hủy\")...", null, delegate
+            {
+                OpenBrowserExtensionInstaller();
+            });
             mHelp.DropDownItems.Add("Giới thiệu Duytai 64-Bit", null, delegate
             {
                 agent.ShowBalloon(
@@ -3478,6 +3579,52 @@ namespace HyperIDM
             lblStatusSummary.ForeColor = fg;
             lblStatusCapture.ForeColor = fg;
             Invalidate(true);
+        }
+
+        private void OpenBrowserExtensionInstaller()
+        {
+            try
+            {
+                string extDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "extension");
+                if (!Directory.Exists(extDir))
+                {
+                    extDir = Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                        @"Programs\Duytai\extension");
+                }
+                if (Directory.Exists(extDir))
+                {
+                    try { Clipboard.SetText(extDir); } catch { }
+                    try { Process.Start("explorer.exe", "\"" + extDir + "\""); } catch { }
+                }
+
+                string chromeExe = @"C:\Program Files\Google\Chrome\Application\chrome.exe";
+                if (!File.Exists(chromeExe)) chromeExe = @"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe";
+                if (File.Exists(chromeExe))
+                {
+                    try { Process.Start(chromeExe, "chrome://extensions/"); } catch { }
+                }
+                else
+                {
+                    try { Process.Start("msedge.exe", "edge://extensions/"); } catch { }
+                }
+
+                MessageBox.Show(
+                    this,
+                    "Đường dẫn Extension Duytai v7.1 đã được copy vào Clipboard:\n" + extDir + "\n\n" +
+                    "Để bắt link TRƯỚC KHI Chrome tải (không còn hiện \"Đã hủy\"):\n" +
+                    "1. Trong tab Tiện ích mở rộng (Chrome/Edge), bật \"Chế độ dành cho nhà phát triển\" (Developer mode).\n" +
+                    "2. Tắt bớt \"IDM Integration Module\" cũ (vì extension IDM cũ tự hủy link rồi gọi IDMan.exe nên Chrome báo Đã hủy).\n" +
+                    "3. Bấm \"Tải tiện ích đã giải nén\" (Load unpacked) -> Dán (Ctrl+V) đường dẫn vừa copy -> Chọn thư mục extension.\n\n" +
+                    "Sau đó mọi link tải / IPSW / YouTube sẽ nhảy thẳng vào Duytai trước khi Chrome kịp tải!",
+                    "Cài Duytai Browser Extension (v7.1)",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, "Không mở được hướng dẫn Extension: " + ex.Message, "Duytai", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
         }
 
         protected override void Dispose(bool disposing)

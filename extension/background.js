@@ -73,7 +73,18 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
   }
 });
 
-// Tự động bắt MỌI định dạng tệp tải xuống từ trình duyệt và chuyển về Duytai.
+const recentHandoffs = new Map();
+function isRecentlyHandled(url) {
+  const now = Date.now();
+  for (const [k, ts] of recentHandoffs) {
+    if (now - ts > 4000) recentHandoffs.delete(k);
+  }
+  if (recentHandoffs.has(url)) return true;
+  recentHandoffs.set(url, now);
+  return false;
+}
+
+// Tier-2 Bắt link động / Meta-refresh: Pause ngay lập tức, chuyển sang Duytai rồi Cancel + Erase sạch khỏi lịch sử Chrome.
 chrome.downloads.onCreated.addListener(async item => {
   if (!(await enabled())) return;
   const url = item.finalUrl || item.url;
@@ -81,15 +92,27 @@ chrome.downloads.onCreated.addListener(async item => {
   if (/^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?\//i.test(url)) return;
   const isHtmlOnly = item.mime && /^(text\/html|application\/xhtml\+xml)$/i.test(item.mime) && !EXT_RE.test(url) && !EXT_RE.test(item.filename || '');
   if (isHtmlOnly) return;
+
+  // Pause socket Chrome ngay lập tức để không tải song song tốn băng thông
+  try { chrome.downloads.pause(item.id, () => {}); } catch (_) {}
+
+  if (isRecentlyHandled(url)) {
+    chrome.downloads.cancel(item.id, () => chrome.downloads.erase({ id: item.id }));
+    return;
+  }
+
   const fname = item.filename ? item.filename.split(/[\\/]/).pop() : '';
   const r = await handoff(url, { referrer: item.referrer, fileName: fname, source: 'Tự động bắt link Trình duyệt' });
   if (r.ok) {
     chrome.downloads.cancel(item.id, () => chrome.downloads.erase({ id: item.id }));
+  } else {
+    try { chrome.downloads.resume(item.id, () => {}); } catch (_) {}
   }
 });
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg && msg.type === 'download' && msg.url) {
+    isRecentlyHandled(msg.url);
     handoff(msg.url, {
       referrer: msg.referrer || (sender.tab && sender.tab.url),
       fileName: msg.fileName,
