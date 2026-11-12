@@ -101,6 +101,11 @@ class DownloadJob extends EventEmitter {
     this._lastTickTime = 0;
     this._minSplitSize = 1024 * 1024; // 1 MB minimum steal size
     this._writeBufferSize = 1024 * 1024; // 1 MB write coalescing buffer
+    this._globalPendingWriteBytes = 0;
+    this._maxGlobalPendingWriteBytes = 96 * 1024 * 1024; // 96 MB global write-queue RAM cap
+    this._maxWorkerPendingWriteBytes = 8 * 1024 * 1024; // 8 MB per-worker write-queue cap
+    this._savingState = false;
+    this._stateSaveQueued = false;
   }
 
   toJSON() {
@@ -209,6 +214,7 @@ class DownloadJob extends EventEmitter {
       await this._openAndPreallocateTargetFile();
 
       this.status = 'downloading';
+      this._globalPendingWriteBytes = 0;
       this.startTime = Date.now();
       this._lastTickTime = Date.now();
       this._lastTickBytes = this.downloadedBytes;
@@ -645,7 +651,12 @@ class DownloadJob extends EventEmitter {
     }
 
     const isTailPhase = this.totalBytes > 0 && (this.downloadedBytes / this.totalBytes) > 0.80;
-    const minSplit = isTailPhase ? (256 * 1024) : this._minSplitSize;
+    const isFinalPhase = this.totalBytes > 0 && (this.downloadedBytes / this.totalBytes) > 0.97;
+    const isHugeFile = this.totalBytes > 2 * 1024 * 1024 * 1024;
+    if (this.segments.length >= 1024) return null;
+    const minSplit = isHugeFile
+      ? (isFinalPhase ? (512 * 1024) : (isTailPhase ? (1024 * 1024) : (4 * 1024 * 1024)))
+      : (isTailPhase ? (256 * 1024) : this._minSplitSize);
 
     if (!largest || maxRemaining < minSplit * 2) {
       return null;
@@ -719,12 +730,26 @@ class DownloadJob extends EventEmitter {
 
     let writeBuffers = [];
     let bufferedBytes = 0;
+    let pendingWriteBytes = 0;
     let writeOffset = seg.current;
     let writeChain = Promise.resolve();
     let finalized = false;
+    let workerSettled = false;
+    let pausedForDisk = false;
+    let activeRes = null;
+    const diskWriteError = { err: null };
+
+    const maybeResumeDisk = () => {
+      if (pausedForDisk && activeRes && !activeRes.destroyed &&
+          pendingWriteBytes <= (this._maxWorkerPendingWriteBytes >> 1) &&
+          this._globalPendingWriteBytes <= (this._maxGlobalPendingWriteBytes >> 1)) {
+        pausedForDisk = false;
+        activeRes.resume();
+      }
+    };
 
     const flushBuffer = () => {
-      if (bufferedBytes === 0 || !this.fileHandle) return Promise.resolve();
+      if (bufferedBytes === 0 || !this.fileHandle || diskWriteError.err) return writeChain;
       const combined = writeBuffers.length === 1 ? writeBuffers[0] : Buffer.concat(writeBuffers, bufferedBytes);
       const offsetToWrite = writeOffset;
       const lenToWrite = combined.length;
@@ -732,25 +757,68 @@ class DownloadJob extends EventEmitter {
       writeBuffers = [];
       bufferedBytes = 0;
       writeOffset += lenToWrite;
+      pendingWriteBytes += lenToWrite;
+      this._globalPendingWriteBytes += lenToWrite;
 
       writeChain = writeChain.then(async () => {
-        if (this.fileHandle && (this.status === 'downloading' || this.status === 'paused')) {
-          await this.fileHandle.write(combined, 0, lenToWrite, offsetToWrite);
+        try {
+          if (diskWriteError.err) return;
+          if (this.fileHandle && (this.status === 'downloading' || this.status === 'paused')) {
+            await this.fileHandle.write(combined, 0, lenToWrite, offsetToWrite);
+          }
+        } catch (err) {
+          diskWriteError.err = err;
+          if (this.status === 'downloading') {
+            this.status = 'error';
+            this.error = `Lỗi ghi ổ đĩa tại byte ${offsetToWrite}: ${err.message}`;
+            this._abortAllWorkers().then(() => this._cleanupHandles());
+            this.emit('update', this.toJSON());
+          }
+        } finally {
+          pendingWriteBytes = Math.max(0, pendingWriteBytes - lenToWrite);
+          this._globalPendingWriteBytes = Math.max(0, this._globalPendingWriteBytes - lenToWrite);
+          maybeResumeDisk();
+          if (this._globalPendingWriteBytes <= (this._maxGlobalPendingWriteBytes >> 1)) {
+            for (const w of this.activeWorkers.values()) {
+              if (w !== workerEntry && w.maybeResumeDisk) w.maybeResumeDisk();
+            }
+          }
         }
-      }).catch(() => {});
+      });
       return writeChain;
     };
 
+    const workerEntry = {
+      req: null,
+      flushBuffer,
+      getWriteChain: () => writeChain,
+      isDiskPaused: () => pausedForDisk,
+      maybeResumeDisk
+    };
+    this.activeWorkers.set(seg.id, workerEntry);
+
+    const settleFailure = (err) => {
+      if (workerSettled || finalized) return;
+      workerSettled = true;
+      if (this.activeWorkers.get(seg.id) !== workerEntry) return;
+      flushBuffer().then(() => {
+        if (this.activeWorkers.get(seg.id) === workerEntry) {
+          this._handleWorkerFailure(seg, err);
+        }
+      });
+    };
+
     const req = transport.request(reqOptions, (res) => {
+      activeRes = res;
       const code = res.statusCode || 0;
       if (code < 200 || code >= 300) {
         res.destroy();
-        this._handleWorkerFailure(seg, new Error(`HTTP ${code}`));
+        settleFailure(new Error(`HTTP ${code}`));
         return;
       }
 
       res.on('data', (chunk) => {
-        if (this.status !== 'downloading' || finalized) {
+        if (this.status !== 'downloading' || finalized || workerSettled) {
           res.destroy();
           return;
         }
@@ -761,7 +829,7 @@ class DownloadJob extends EventEmitter {
           if (remainingAllowed <= 0) {
             finalized = true;
             res.destroy();
-            this._completeSegment(seg, flushBuffer);
+            this._completeSegment(seg, flushBuffer, workerEntry);
             return;
           }
           if (usableLen > remainingAllowed) {
@@ -780,61 +848,56 @@ class DownloadJob extends EventEmitter {
 
         if (bufferedBytes >= this._writeBufferSize) {
           flushBuffer();
-          if (this.fileHandle && bufferedBytes > this._writeBufferSize * 4) {
+          if (this.fileHandle && !res.destroyed &&
+              (pendingWriteBytes >= this._maxWorkerPendingWriteBytes ||
+               this._globalPendingWriteBytes >= this._maxGlobalPendingWriteBytes)) {
+            pausedForDisk = true;
             res.pause();
-            writeChain.then(() => {
-              if (this.status === 'downloading' && !res.destroyed) res.resume();
-            });
           }
         }
 
         if (seg.end >= 0 && seg.current > seg.end) {
           finalized = true;
           res.destroy();
-          this._completeSegment(seg, flushBuffer);
+          this._completeSegment(seg, flushBuffer, workerEntry);
         }
       });
 
       res.on('end', () => {
-        if (finalized || this.status !== 'downloading') return;
+        if (finalized || workerSettled || this.status !== 'downloading') return;
         if (seg.end < 0 || seg.current > seg.end) {
           finalized = true;
-          this._completeSegment(seg, flushBuffer);
+          this._completeSegment(seg, flushBuffer, workerEntry);
         } else {
-          flushBuffer().then(() => {
-            this._handleWorkerFailure(seg, new Error('Stream ended prematurely'));
-          });
+          settleFailure(new Error('Stream ended prematurely'));
         }
       });
 
       res.on('error', (err) => {
-        if (finalized || this.status !== 'downloading') return;
-        flushBuffer().then(() => {
-          this._handleWorkerFailure(seg, err);
-        });
+        settleFailure(err);
       });
     });
 
+    workerEntry.req = req;
+
     req.on('error', (err) => {
-      if (finalized || this.status !== 'downloading') return;
-      flushBuffer().then(() => {
-        this._handleWorkerFailure(seg, err);
-      });
+      settleFailure(err);
     });
 
     req.setTimeout(12000, () => {
-      if (!finalized && this.status === 'downloading') {
+      if (!finalized && !workerSettled && this.status === 'downloading') {
         req.destroy(new Error('Socket read timeout'));
       }
     });
 
-    this.activeWorkers.set(seg.id, { req, flushBuffer, getWriteChain: () => writeChain });
     req.end();
   }
 
-  _completeSegment(seg, flushBuffer) {
+  _completeSegment(seg, flushBuffer, workerEntry) {
     flushBuffer().then(() => {
-      this.activeWorkers.delete(seg.id);
+      if (!workerEntry || this.activeWorkers.get(seg.id) === workerEntry) {
+        this.activeWorkers.delete(seg.id);
+      }
       if (this.status !== 'downloading') return;
       seg.status = 'completed';
       seg.speedBps = 0;
@@ -914,13 +977,18 @@ class DownloadJob extends EventEmitter {
 
       // Tail-Latency & Anti-Throttle Straggler Watchdog
       for (const seg of activeSegs) {
+        const w = this.activeWorkers.get(seg.id);
+        if (w && w.isDiskPaused && w.isDiskPaused()) {
+          seg.lastDataTime = now;
+          seg.slowTicks = 0;
+          continue;
+        }
         const idleMs = now - (seg.lastDataTime || now);
         const rem = seg.end - seg.current + 1;
         // 1) Recycle any socket stalled with 0 bytes for > 2.2 seconds
         if (idleMs > 2200 && rem > 0) {
           seg.lastDataTime = now;
           this.recycleCount++;
-          const w = this.activeWorkers.get(seg.id);
           if (w && w.req) {
             w.req.destroy(new Error('Stalled socket recycled (>2.2s idle)'));
           }
@@ -934,7 +1002,6 @@ class DownloadJob extends EventEmitter {
             if (seg.slowTicks >= 3) {
               seg.slowTicks = 0;
               this.recycleCount++;
-              const w = this.activeWorkers.get(seg.id);
               if (w && w.req) {
                 w.req.destroy(new Error('Straggler connection recycled to faster CDN edge'));
               }
@@ -1023,7 +1090,9 @@ class DownloadJob extends EventEmitter {
     this._stopTelemetryLoop();
     if (this.fileHandle) {
       try {
-        await this.fileHandle.datasync().catch(() => {});
+        if (this.totalBytes > 0 && this.totalBytes <= 512 * 1024 * 1024) {
+          await this.fileHandle.datasync().catch(() => {});
+        }
         await this.fileHandle.close();
       } catch {}
       this.fileHandle = null;
@@ -1032,28 +1101,44 @@ class DownloadJob extends EventEmitter {
 
   async _saveStateJournal() {
     if (!this.stateFilePath || this.status === 'completed' || this.status === 'canceled') return;
-    const payload = {
-      id: this.id,
-      url: this.url,
-      finalUrl: this.finalUrl,
-      fileName: this.fileName,
-      filePath: this.filePath,
-      totalBytes: this.totalBytes,
-      downloadedBytes: this.downloadedBytes,
-      acceptRanges: this.acceptRanges,
-      etag: this.etag,
-      lastModified: this.lastModified,
-      maxConnections: this.maxConnections,
-      elapsedMs: this.elapsedMs,
-      segments: this.segments.map(s => ({
-        id: s.id,
-        start: s.start,
-        current: s.current,
-        end: s.end,
-        status: s.current > s.end && s.end >= 0 ? 'completed' : 'pending'
-      }))
-    };
-    await fsp.writeFile(this.stateFilePath, JSON.stringify(payload, null, 2), 'utf8').catch(() => {});
+    if (this._savingState) {
+      this._stateSaveQueued = true;
+      return;
+    }
+    this._savingState = true;
+    try {
+      const payload = {
+        id: this.id,
+        url: this.url,
+        finalUrl: this.finalUrl,
+        fileName: this.fileName,
+        filePath: this.filePath,
+        totalBytes: this.totalBytes,
+        downloadedBytes: this.downloadedBytes,
+        acceptRanges: this.acceptRanges,
+        etag: this.etag,
+        lastModified: this.lastModified,
+        maxConnections: this.maxConnections,
+        elapsedMs: this.elapsedMs,
+        segments: this.segments.map(s => ({
+          id: s.id,
+          start: s.start,
+          current: s.current,
+          end: s.end,
+          status: s.current > s.end && s.end >= 0 ? 'completed' : 'pending'
+        }))
+      };
+      const jsonStr = this.segments.length > 128 ? JSON.stringify(payload) : JSON.stringify(payload, null, 2);
+      await fsp.writeFile(this.stateFilePath, jsonStr, 'utf8').catch(() => {});
+    } finally {
+      this._savingState = false;
+      if (this._stateSaveQueued && this.status === 'downloading') {
+        this._stateSaveQueued = false;
+        this._saveStateJournal().catch(() => {});
+      } else {
+        this._stateSaveQueued = false;
+      }
+    }
   }
 
   async _tryLoadStateJournal() {

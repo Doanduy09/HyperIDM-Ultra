@@ -262,18 +262,25 @@ async function syncExistingDownloads() {
 }
 
 let saveDebounce = null;
-function scheduleSaveHistory() {
-  if (saveDebounce) return;
+function scheduleSaveHistory(immediate = false) {
+  if (saveDebounce) {
+    if (!immediate) return;
+    clearTimeout(saveDebounce);
+    saveDebounce = null;
+  }
+  const hasActive = Array.from(jobs.values()).some(j => j.status === 'downloading' || j.status === 'muxing');
+  const delayMs = immediate ? 250 : (hasActive ? 3000 : 800);
   saveDebounce = setTimeout(async () => {
     saveDebounce = null;
     try {
       const serialized = Array.from(jobs.values()).map(j => j.toJSON());
-      await fsp.writeFile(HISTORY_FILE, JSON.stringify(serialized, null, 2), 'utf8');
+      await fsp.writeFile(HISTORY_FILE, JSON.stringify(serialized), 'utf8');
     } catch {}
-  }, 800);
+  }, delayMs);
 }
 
 function broadcastState() {
+  if (sseClients.size === 0) return;
   const payload = JSON.stringify({
     type: 'snapshot',
     timestamp: Date.now(),
@@ -293,11 +300,11 @@ function broadcastState() {
 function attachJobEvents(job) {
   job.on('update', () => {
     broadcastState();
-    scheduleSaveHistory();
+    scheduleSaveHistory(false);
   });
   job.on('completed', () => {
     broadcastState();
-    scheduleSaveHistory();
+    scheduleSaveHistory(true);
   });
 }
 
@@ -345,11 +352,20 @@ const server = http.createServer(async (req, res) => {
   const parsedUrl = new URL(req.url, `http://127.0.0.1:${PORT}`);
   const pathname = parsedUrl.pathname;
 
-  // Built-in HTTP 206 Range Server for Multi-Gigabit Engine Stress Benchmarking
+  // Built-in HTTP 206 Range Server for Multi-Gigabit Engine Stress Benchmarking (supports MB & GB up to 64GB)
   if (pathname.startsWith('/benchmark-payload/')) {
-    const match = /\/benchmark-payload\/(\d+)MB\.bin$/i.exec(pathname);
-    const sizeMB = match ? Math.min(2048, Math.max(10, parseInt(match[1], 10))) : 256;
-    const totalBytes = sizeMB * 1024 * 1024;
+    const match = /\/benchmark-payload\/(\d+)(MB|GB)\.bin$/i.exec(pathname);
+    let totalBytes = 256 * 1024 * 1024;
+    let sizeLabel = '256mb';
+    if (match) {
+      const num = parseInt(match[1], 10);
+      const unit = match[2].toUpperCase();
+      const sizeMB = unit === 'GB'
+        ? Math.min(65536, Math.max(10, num * 1024))
+        : Math.min(65536, Math.max(10, num));
+      totalBytes = sizeMB * 1024 * 1024;
+      sizeLabel = `${num}${unit.toLowerCase()}`;
+    }
 
     const rangeHeader = req.headers['range'];
     let start = 0;
@@ -369,8 +385,8 @@ const server = http.createServer(async (req, res) => {
       'Content-Type': 'application/octet-stream',
       'Content-Length': String(contentLength),
       'Accept-Ranges': 'bytes',
-      'Server': 'HyperIDM-StressTest-Node/26',
-      'ETag': `"hyper-bench-${sizeMB}mb"`
+      'Server': 'Duytai-StressTest-Node/26',
+      'ETag': `"duytai-bench-${sizeLabel}"`
     };
     if (statusCode === 206) {
       headers['Content-Range'] = `bytes ${start}-${end}/${totalBytes}`;
@@ -378,10 +394,13 @@ const server = http.createServer(async (req, res) => {
 
     res.writeHead(statusCode, headers);
     let remaining = contentLength;
+    res.on('close', () => { remaining = 0; });
 
     function pump() {
+      if (res.destroyed || res.writableEnded) return;
       let ok = true;
       while (remaining > 0 && ok) {
+        if (res.destroyed || res.writableEnded) return;
         const toSend = Math.min(remaining, BENCHMARK_CHUNK.length);
         const slice = toSend === BENCHMARK_CHUNK.length ? BENCHMARK_CHUNK : BENCHMARK_CHUNK.subarray(0, toSend);
         remaining -= toSend;
@@ -391,7 +410,7 @@ const server = http.createServer(async (req, res) => {
           ok = res.write(slice);
         }
       }
-      if (remaining > 0) {
+      if (remaining > 0 && !res.destroyed && !res.writableEnded) {
         res.once('drain', pump);
       }
     }

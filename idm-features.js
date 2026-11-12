@@ -563,6 +563,13 @@ function attachIdmFeatures(job, { baseDir, autoCategory = true, verify = true, e
 
   const onUpdate = () => {
     if (verify && !lookupDone && job.status === 'downloading') lookupDone = resolveExpectation().catch(() => {});
+    if (hasher) {
+      if (job.status === 'paused' || job.status === 'canceled' || job.status === 'error') {
+        hasher.stop();
+      } else if (job.status === 'downloading') {
+        hasher.start();
+      }
+    }
   };
   job.on('update', onUpdate);
 
