@@ -24,13 +24,32 @@ async function sendToDuytai(url, { referrer, fileName, source = 'Browser Extensi
   const endpoint = direct ? API_JOBS : API_INTERCEPT;
   const body = { url, maxConnections: 64, headers, source };
   if (fileName) body.fileName = fileName;
-  const res = await fetch(endpoint, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
-  });
-  if (!res.ok) throw new Error(`Duytai HTTP ${res.status}`);
-  return res.json();
+  try {
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    if (res.ok) return res.json();
+  } catch (_) {}
+
+  // Fallback qua Native Messaging Host (kể cả khi Duytai đang đóng -> tự đánh thức Duytai.exe!)
+  if (!direct && chrome.runtime && typeof chrome.runtime.sendNativeMessage === 'function') {
+    return new Promise((resolve, reject) => {
+      try {
+        chrome.runtime.sendNativeMessage('com.duytai.idm', body, resp => {
+          if (chrome.runtime.lastError) {
+            return reject(new Error(chrome.runtime.lastError.message));
+          }
+          if (resp && resp.ok) return resolve(resp);
+          reject(new Error((resp && resp.error) || 'Native host failed'));
+        });
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+  throw new Error('Duytai daemon unreachable');
 }
 
 function notify(title, message) {

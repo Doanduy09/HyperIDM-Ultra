@@ -825,11 +825,33 @@ function startBrowserSqliteDownloadWatcher() {
   }
   const os = require('os');
   const localAppData = process.env.LOCALAPPDATA || 'C:\\Users\\admin\\AppData\\Local';
-  const dbTargets = [
-    { name: 'Chrome', path: path.join(localAppData, 'Google\\Chrome\\User Data\\Default\\History'), maxId: -1 },
-    { name: 'Edge', path: path.join(localAppData, 'Microsoft\\Edge\\User Data\\Default\\History'), maxId: -1 },
-    { name: 'CocCoc', path: path.join(localAppData, 'CocCoc\\Browser\\User Data\\Default\\History'), maxId: -1 }
+  const appData = process.env.APPDATA || 'C:\\Users\\admin\\AppData\\Roaming';
+  const dbTargets = [];
+  const chromiumRoots = [
+    { name: 'Chrome', dir: path.join(localAppData, 'Google\\Chrome\\User Data') },
+    { name: 'Edge', dir: path.join(localAppData, 'Microsoft\\Edge\\User Data') },
+    { name: 'CocCoc', dir: path.join(localAppData, 'CocCoc\\Browser\\User Data') },
+    { name: 'Brave', dir: path.join(localAppData, 'BraveSoftware\\Brave-Browser\\User Data') },
+    { name: 'Vivaldi', dir: path.join(localAppData, 'Vivaldi\\User Data') }
   ];
+  for (const root of chromiumRoots) {
+    if (!fs.existsSync(root.dir)) continue;
+    try {
+      const subdirs = fs.readdirSync(root.dir, { withFileTypes: true });
+      for (const d of subdirs) {
+        if (!d.isDirectory()) continue;
+        if (d.name !== 'Default' && !/^Profile \d+$/i.test(d.name)) continue;
+        const histPath = path.join(root.dir, d.name, 'History');
+        if (fs.existsSync(histPath)) {
+          dbTargets.push({ name: `${root.name}-${d.name.replace(/\s+/g, '')}`, path: histPath, maxId: -1 });
+        }
+      }
+    } catch {}
+  }
+  const operaHist = path.join(appData, 'Opera Software\\Opera Stable\\History');
+  if (fs.existsSync(operaHist)) {
+    dbTargets.push({ name: 'Opera', path: operaHist, maxId: -1 });
+  }
 
   function pollOneBrowser(b) {
     if (!fs.existsSync(b.path)) return;

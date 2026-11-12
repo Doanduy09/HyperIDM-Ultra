@@ -22,9 +22,9 @@ if (-not (Get-Command node -ErrorAction SilentlyContinue) -and -not (Test-Path "
     winget install OpenJS.NodeJS.LTS --accept-package-agreements --accept-source-agreements --silent
 }
 
-Write-Host "[2/6] Copying Duytai 64-bit engine & Browser Extension..." -ForegroundColor Yellow
+Write-Host "[2/6] Copying Duytai 64-bit engine, Native Host & Browser Extension..." -ForegroundColor Yellow
 if ($sourceDir.TrimEnd('\') -ne $installDir.TrimEnd('\')) {
-    foreach ($f in @("engine.js", "server.js", "idm-features.js", "clipboard-batch.js", "cli.js", "HyperIDM.cs", "Install-HyperIDM.ps1")) {
+    foreach ($f in @("engine.js", "server.js", "idm-features.js", "clipboard-batch.js", "cli.js", "duytai-native-host.js", "HyperIDM.cs", "Install-HyperIDM.ps1")) {
         if (Test-Path "$sourceDir\$f") {
             Copy-Item -Path "$sourceDir\$f" -Destination "$installDir\$f" -Force
         }
@@ -36,6 +36,49 @@ if ($sourceDir.TrimEnd('\') -ne $installDir.TrimEnd('\')) {
         Copy-Item -Path "$sourceDir\extension\*" -Destination $extDir -Recurse -Force
     }
 }
+
+# Register Native Messaging Host for ALL major browsers (Chrome, Edge, CocCoc, Brave, Firefox)
+$nodeExe = (Get-Command node -ErrorAction SilentlyContinue).Source
+if (-not $nodeExe -and (Test-Path "C:\Program Files\nodejs\node.exe")) { $nodeExe = "C:\Program Files\nodejs\node.exe" }
+if (-not $nodeExe) { $nodeExe = "node.exe" }
+
+$nativeCmdPath = Join-Path $installDir "duytai-native-host.cmd"
+Set-Content -Path $nativeCmdPath -Value "@echo off`r`n`"$nodeExe`" `"%~dp0duytai-native-host.js`" %*`r`n" -Encoding ASCII
+
+$chromeNmJson = @{
+    name = "com.duytai.idm"
+    description = "Duytai 64-Bit Browser Native Messaging Host"
+    path = $nativeCmdPath
+    type = "stdio"
+    allowed_origins = @(
+        "chrome-extension://knpgakkbngbpcijjehpjflnflccdlaon/"
+    )
+} | ConvertTo-Json -Depth 3
+$nmJsonPath = Join-Path $installDir "com.duytai.idm.json"
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText($nmJsonPath, $chromeNmJson, $utf8NoBom)
+
+$ffNmJson = @{
+    name = "com.duytai.idm"
+    description = "Duytai 64-Bit Firefox Native Messaging Host"
+    path = $nativeCmdPath
+    type = "stdio"
+    allowed_extensions = @("duytai-idm@doanduy.dev")
+} | ConvertTo-Json -Depth 3
+$ffNmJsonPath = Join-Path $installDir "com.duytai.idm.firefox.json"
+[System.IO.File]::WriteAllText($ffNmJsonPath, $ffNmJson, $utf8NoBom)
+
+foreach ($regRoot in @(
+    "HKCU:\Software\Google\Chrome\NativeMessagingHosts\com.duytai.idm",
+    "HKCU:\Software\Microsoft\Edge\NativeMessagingHosts\com.duytai.idm",
+    "HKCU:\Software\CocCoc\Browser\NativeMessagingHosts\com.duytai.idm",
+    "HKCU:\Software\BraveSoftware\Brave-Browser\NativeMessagingHosts\com.duytai.idm"
+)) {
+    New-Item -Path $regRoot -Force | Out-Null
+    Set-ItemProperty -Path $regRoot -Name "(Default)" -Value $nmJsonPath -Force
+}
+New-Item -Path "HKCU:\Software\Mozilla\NativeMessagingHosts\com.duytai.idm" -Force | Out-Null
+Set-ItemProperty -Path "HKCU:\Software\Mozilla\NativeMessagingHosts\com.duytai.idm" -Name "(Default)" -Value $ffNmJsonPath -Force
 
 # Bundle or download yt-dlp.exe for YouTube/Streaming Engine
 if (($sourceDir.TrimEnd('\') -ne $installDir.TrimEnd('\')) -and (Test-Path "$sourceDir\bin\yt-dlp.exe")) {
@@ -101,7 +144,7 @@ Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Na
 $uninstKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Duytai"
 New-Item -Path $uninstKey -Force | Out-Null
 Set-ItemProperty -Path $uninstKey -Name "DisplayName" -Value "Duytai 64-Bit — Trình Tăng Tốc Tải Xuống" -Force
-Set-ItemProperty -Path $uninstKey -Name "DisplayVersion" -Value "7.1.0" -Force
+Set-ItemProperty -Path $uninstKey -Name "DisplayVersion" -Value "7.2.0" -Force
 Set-ItemProperty -Path $uninstKey -Name "Publisher" -Value "DOANDUY" -Force
 Set-ItemProperty -Path $uninstKey -Name "InstallLocation" -Value $installDir -Force
 Set-ItemProperty -Path $uninstKey -Name "DisplayIcon" -Value "$installDir\Duytai.exe" -Force

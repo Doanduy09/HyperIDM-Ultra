@@ -1,12 +1,19 @@
 {
   "manifest_version": 3,
   "name": "Duytai Integration Module (64-Bit)",
-  "version": "7.1.0",
+  "version": "7.2.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAlRvSCMe7L7ZCjAh0rFjzp4Ujy1lQRwlcxzqERyDUB30hqIvXgzgtksJ2dAwketfkzYV8z8+gGGsR9RUbqldMEX1AYS7iccVS2YyG1w7pOJHbJxZCHQrgEfMWQQY7cJ2mBlxZTMZL/ZU7y3hZWcCPQLOVoxAOHN3KK+7NgrryoU0SdSqvm5nCt8x8PECYGIc4AD5n8g5BOMjl9Y8JRyInr0Qb/SFI9/MYK8+W6W4ygrHCnmqEttdln/9wJTft6qQRoOUYcajZEQNR/zOqj3ar0vLQxe6vcKnW/FWGFWqbjoxzQwPpB2wkFldV5cEMrMtMVWWfnRQfFBlea62FnqcLUwIDAQAB",
   "description": "Tự động bắt trước mọi định dạng tệp tải xuống & Video (64/128 luồng) chuyển về Duytai tại 127.0.0.1:17890 — không hiện Đã hủy trên trình duyệt.",
   "minimum_chrome_version": "102",
-  "permissions": ["downloads", "contextMenus", "cookies", "storage", "notifications"],
+  "permissions": ["downloads", "contextMenus", "cookies", "storage", "notifications", "nativeMessaging"],
   "host_permissions": ["<all_urls>", "http://127.0.0.1:17890/*"],
-  "background": { "service_worker": "background.js" },
+  "background": { "service_worker": "background.js", "scripts": ["background.js"] },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "duytai-idm@doanduy.dev",
+      "strict_min_version": "109.0"
+    }
+  },
   "action": { "default_title": "Duytai 64-Bit", "default_popup": "popup.html" },
   "content_scripts": [
     {

@@ -61,6 +61,12 @@ class DownloadJob extends EventEmitter {
     this.saveDir = options.saveDir || path.join(process.env.USERPROFILE || 'C:\\Users\\admin', 'Downloads');
     this.fileName = options.fileName || '';
     this.maxConnections = Math.min(Math.max(parseInt(options.maxConnections || 64, 10), 1), 128);
+    this.effectiveMaxConnections = this.maxConnections;
+    this._targetMaxConnections = this.maxConnections;
+    this._rateLimitUntil = 0;
+    this._rateLimitTimer = null;
+    this._badIps = new Map();
+    this._completedSinceDecrease = 0;
     this.headers = options.headers || {};
     this.videoQuality = options.videoQuality || 'best'; // best | 1080p | 720p | 480p | 360p
     this.maxBytesLimit = options.maxBytesLimit || 0; // Optional cap for partial benchmark tests
@@ -529,8 +535,18 @@ class DownloadJob extends EventEmitter {
   async _resolveCdnPool(targetUrl) {
     try {
       const parsed = new URL(targetUrl);
-      const ips = await dns.resolve4(parsed.hostname);
-      this.cdnIps = Array.isArray(ips) && ips.length > 0 ? ips : [parsed.hostname];
+      const unique = new Set();
+      try {
+        const ips4 = await dns.resolve4(parsed.hostname);
+        if (Array.isArray(ips4)) for (const ip of ips4) unique.add(ip);
+      } catch {}
+      if (unique.size === 0) {
+        try {
+          const all = await dns.lookup(parsed.hostname, { all: true });
+          if (Array.isArray(all)) for (const entry of all) if (entry && entry.address) unique.add(entry.address);
+        } catch {}
+      }
+      this.cdnIps = unique.size > 0 ? Array.from(unique) : [parsed.hostname];
     } catch {
       try {
         const parsed = new URL(targetUrl);
@@ -541,11 +557,26 @@ class DownloadJob extends EventEmitter {
     }
   }
 
+  _pickHealthyIp(seg) {
+    const pool = this.cdnIps;
+    if (!pool || pool.length === 0) return '';
+    const now = Date.now();
+    const startIdx = (seg.id + (seg.retries || 0)) % pool.length;
+    for (let offset = 0; offset < pool.length; offset++) {
+      const candidate = pool[(startIdx + offset) % pool.length];
+      const cooldownUntil = this._badIps.get(candidate) || 0;
+      if (now >= cooldownUntil) return candidate;
+    }
+    return pool[startIdx];
+  }
+
   _initializeSegments() {
     this.segments = [];
     this.downloadedBytes = 0;
 
     if (!this.acceptRanges || this.totalBytes <= 0) {
+      this.effectiveMaxConnections = 1;
+      this._targetMaxConnections = 1;
       this.segments.push({
         id: 0,
         start: 0,
@@ -559,6 +590,14 @@ class DownloadJob extends EventEmitter {
       });
       return;
     }
+
+    // Smart Auto-Scaling theo dung lượng file để tối ưu TLS handshake vs max throughput
+    let smartCap = this.maxConnections;
+    if (this.totalBytes < 512 * 1024) smartCap = 1;
+    else if (this.totalBytes < 4 * 1024 * 1024) smartCap = Math.min(this.maxConnections, 8);
+    else if (this.totalBytes < 32 * 1024 * 1024) smartCap = Math.min(this.maxConnections, 32);
+    this._targetMaxConnections = Math.max(1, smartCap);
+    this.effectiveMaxConnections = this._targetMaxConnections;
 
     // For googlevideo.com, slice into <= 4MB micro-chunks to bypass YouTube per-connection throttling
     const isGoogleVideo = this.finalUrl.includes('googlevideo.com');
@@ -621,13 +660,25 @@ class DownloadJob extends EventEmitter {
   _scheduleWorkers() {
     if (this.status !== 'downloading') return;
 
+    const now = Date.now();
+    if (now < this._rateLimitUntil) {
+      if (!this._rateLimitTimer) {
+        this._rateLimitTimer = setTimeout(() => {
+          this._rateLimitTimer = null;
+          if (this.status === 'downloading') this._scheduleWorkers();
+        }, Math.max(50, this._rateLimitUntil - now));
+      }
+      return;
+    }
+
+    const connLimit = this.effectiveMaxConnections || this.maxConnections;
     for (const seg of this.segments) {
-      if (seg.status === 'pending' && this.activeWorkers.size < this.maxConnections) {
+      if (seg.status === 'pending' && this.activeWorkers.size < connLimit) {
         this._spawnWorker(seg);
       }
     }
 
-    while (this.acceptRanges && this.activeWorkers.size < this.maxConnections) {
+    while (this.acceptRanges && this.activeWorkers.size < connLimit) {
       const stolenSeg = this._tryStealFromLargestSegment();
       if (!stolenSeg) break;
       this._spawnWorker(stolenSeg);
@@ -699,8 +750,7 @@ class DownloadJob extends EventEmitter {
     const isHttps = parsed.protocol === 'https:';
     const transport = isHttps ? https : http;
 
-    const ipIndex = (seg.id + seg.retries) % Math.max(1, this.cdnIps.length);
-    const targetIp = this.cdnIps[ipIndex] || parsed.hostname;
+    const targetIp = this._pickHealthyIp(seg) || parsed.hostname;
     seg.ip = targetIp;
 
     const headers = {
@@ -812,8 +862,15 @@ class DownloadJob extends EventEmitter {
       activeRes = res;
       const code = res.statusCode || 0;
       if (code < 200 || code >= 300) {
+        const retryAfterRaw = res.headers['retry-after'];
         res.destroy();
-        settleFailure(new Error(`HTTP ${code}`));
+        const err = new Error(`HTTP ${code}`);
+        err.statusCode = code;
+        if (retryAfterRaw) {
+          const sec = parseInt(String(retryAfterRaw), 10);
+          if (!Number.isNaN(sec) && sec > 0) err.retryAfterMs = Math.min(15000, sec * 1000);
+        }
+        settleFailure(err);
         return;
       }
 
@@ -881,7 +938,10 @@ class DownloadJob extends EventEmitter {
     workerEntry.req = req;
 
     req.on('socket', (sock) => {
-      try { sock.setNoDelay(true); } catch {}
+      try {
+        sock.setNoDelay(true);
+        sock.setKeepAlive(true, 2000);
+      } catch {}
     });
 
     req.on('error', (err) => {
@@ -905,6 +965,15 @@ class DownloadJob extends EventEmitter {
       if (this.status !== 'downloading') return;
       seg.status = 'completed';
       seg.speedBps = 0;
+      // AIMD Slow-Start Recovery: khôi phục dần số luồng khi kết nối ổn định trở lại
+      const targetCap = this._targetMaxConnections || this.maxConnections;
+      if (this.effectiveMaxConnections < targetCap) {
+        this._completedSinceDecrease++;
+        if (this._completedSinceDecrease >= 4) {
+          this._completedSinceDecrease = 0;
+          this.effectiveMaxConnections = Math.min(targetCap, this.effectiveMaxConnections + 2);
+        }
+      }
       this._scheduleWorkers();
     });
   }
@@ -920,19 +989,35 @@ class DownloadJob extends EventEmitter {
       return;
     }
 
+    if (seg.ip && this.cdnIps.length > 1) {
+      this._badIps.set(seg.ip, Date.now() + 15000);
+    }
+
     seg.retries = (seg.retries || 0) + 1;
     seg.speedBps = 0;
 
-    if (seg.retries > 12) {
+    const code = err && err.statusCode;
+    const isRateLimited = code === 429 || code === 503;
+    const isResetBurst = !code && seg.retries >= 2 && /ECONNRESET|ETIMEDOUT|prematurely/i.test((err && err.message) || '');
+
+    if (isRateLimited || isResetBurst) {
+      this._completedSinceDecrease = 0;
+      this.effectiveMaxConnections = Math.max(4, Math.floor((this.effectiveMaxConnections || this.maxConnections) / 2));
+      const cooldown = (err && err.retryAfterMs) || Math.min(8000, 1000 * seg.retries);
+      this._rateLimitUntil = Math.max(this._rateLimitUntil, Date.now() + cooldown);
+    }
+
+    const maxRetries = isRateLimited ? 24 : 12;
+    if (seg.retries > maxRetries) {
       this.status = 'error';
-      this.error = `Segment #${seg.id} failed after 12 retries: ${err.message}`;
+      this.error = `Segment #${seg.id} failed after ${maxRetries} retries: ${err.message}`;
       this._abortAllWorkers().then(() => this._cleanupHandles());
       this.emit('update', this.toJSON());
       return;
     }
 
     seg.status = 'pending';
-    const backoffMs = Math.min(2000, 150 * seg.retries);
+    const backoffMs = isRateLimited ? Math.min(8000, (err && err.retryAfterMs) || 800 * seg.retries) : Math.min(2000, 150 * seg.retries);
     setTimeout(() => {
       if (this.status === 'downloading') {
         this._scheduleWorkers();
@@ -1040,6 +1125,10 @@ class DownloadJob extends EventEmitter {
     if (this._stateTimer) {
       clearInterval(this._stateTimer);
       this._stateTimer = null;
+    }
+    if (this._rateLimitTimer) {
+      clearTimeout(this._rateLimitTimer);
+      this._rateLimitTimer = null;
     }
   }
 

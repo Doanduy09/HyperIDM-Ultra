@@ -2402,6 +2402,31 @@ namespace HyperIDM
                     agent.NotifyHiddenToTray();
                 }
             };
+
+            Shown += delegate
+            {
+                ThreadPool.QueueUserWorkItem(delegate
+                {
+                    try
+                    {
+                        bool hasExt;
+                        List<string> browsers = DetectBrowsersWithExtensionStatus(out hasExt);
+                        if (!hasExt && browsers.Count > 0)
+                        {
+                            string flagFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, ".ext-hint-shown");
+                            if (!File.Exists(flagFile))
+                            {
+                                try { File.WriteAllText(flagFile, DateTime.Now.ToString("O")); } catch { }
+                                agent.ShowBalloon(
+                                    "Duytai 64-Bit v7.2 — Đa Trình Duyệt",
+                                    "Đã tự đăng ký Native Host cho " + string.Join(", ", browsers.ToArray()) + ". Vào Trợ giúp -> Cài Extension để bắt link không hiện Đã hủy!",
+                                    ToolTipIcon.Info);
+                            }
+                        }
+                    }
+                    catch { }
+                });
+            };
         }
 
         private void BuildMenus()
@@ -3581,6 +3606,71 @@ namespace HyperIDM
             Invalidate(true);
         }
 
+        private const string DuytaiExtensionId = "knpgakkbngbpcijjehpjflnflccdlaon";
+
+        private static List<string> DetectBrowsersWithExtensionStatus(out bool anyHasExtension)
+        {
+            anyHasExtension = false;
+            List<string> installed = new List<string>();
+            string local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            string roaming = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+
+            string[,] roots = new string[,]
+            {
+                { "Chrome", Path.Combine(local, @"Google\Chrome\User Data") },
+                { "Edge", Path.Combine(local, @"Microsoft\Edge\User Data") },
+                { "CocCoc", Path.Combine(local, @"CocCoc\Browser\User Data") },
+                { "Brave", Path.Combine(local, @"BraveSoftware\Brave-Browser\User Data") },
+                { "Opera", Path.Combine(roaming, @"Opera Software\Opera Stable") }
+            };
+
+            for (int i = 0; i < roots.GetLength(0); i++)
+            {
+                string name = roots[i, 0];
+                string rootDir = roots[i, 1];
+                if (!Directory.Exists(rootDir)) continue;
+                installed.Add(name);
+
+                try
+                {
+                    List<string> profileDirs = new List<string>();
+                    if (name == "Opera")
+                    {
+                        profileDirs.Add(rootDir);
+                    }
+                    else
+                    {
+                        string def = Path.Combine(rootDir, "Default");
+                        if (Directory.Exists(def)) profileDirs.Add(def);
+                        string[] subs = Directory.GetDirectories(rootDir, "Profile *");
+                        for (int k = 0; k < subs.Length; k++) profileDirs.Add(subs[k]);
+                    }
+
+                    for (int p = 0; p < profileDirs.Count && !anyHasExtension; p++)
+                    {
+                        string[] prefFiles = new string[]
+                        {
+                            Path.Combine(profileDirs[p], "Secure Preferences"),
+                            Path.Combine(profileDirs[p], "Preferences")
+                        };
+                        for (int f = 0; f < prefFiles.Length; f++)
+                        {
+                            if (!File.Exists(prefFiles[f])) continue;
+                            string content = File.ReadAllText(prefFiles[f], Encoding.UTF8);
+                            if (content.IndexOf(DuytaiExtensionId, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                content.IndexOf("Duytai Integration Module", StringComparison.OrdinalIgnoreCase) >= 0)
+                            {
+                                anyHasExtension = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+                catch { }
+            }
+            return installed;
+        }
+
         private void OpenBrowserExtensionInstaller()
         {
             try
@@ -3598,6 +3688,10 @@ namespace HyperIDM
                     try { Process.Start("explorer.exe", "\"" + extDir + "\""); } catch { }
                 }
 
+                bool extInstalled;
+                List<string> detected = DetectBrowsersWithExtensionStatus(out extInstalled);
+                string browsersLabel = detected.Count > 0 ? string.Join(", ", detected.ToArray()) : "Chrome / Edge";
+
                 string chromeExe = @"C:\Program Files\Google\Chrome\Application\chrome.exe";
                 if (!File.Exists(chromeExe)) chromeExe = @"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe";
                 if (File.Exists(chromeExe))
@@ -3611,13 +3705,17 @@ namespace HyperIDM
 
                 MessageBox.Show(
                     this,
-                    "Đường dẫn Extension Duytai v7.1 đã được copy vào Clipboard:\n" + extDir + "\n\n" +
-                    "Để bắt link TRƯỚC KHI Chrome tải (không còn hiện \"Đã hủy\"):\n" +
-                    "1. Trong tab Tiện ích mở rộng (Chrome/Edge), bật \"Chế độ dành cho nhà phát triển\" (Developer mode).\n" +
-                    "2. Tắt bớt \"IDM Integration Module\" cũ (vì extension IDM cũ tự hủy link rồi gọi IDMan.exe nên Chrome báo Đã hủy).\n" +
-                    "3. Bấm \"Tải tiện ích đã giải nén\" (Load unpacked) -> Dán (Ctrl+V) đường dẫn vừa copy -> Chọn thư mục extension.\n\n" +
-                    "Sau đó mọi link tải / IPSW / YouTube sẽ nhảy thẳng vào Duytai trước khi Chrome kịp tải!",
-                    "Cài Duytai Browser Extension (v7.1)",
+                    "Trình duyệt phát hiện trên máy: " + browsersLabel + "\n" +
+                    "Trạng thái Native Messaging Host (Chrome/Edge/Cốc Cốc/Brave/Firefox): ĐÃ TỰ ĐỘNG ĐĂNG KÝ.\n" +
+                    "Extension ID cố định: " + DuytaiExtensionId + "\n\n" +
+                    "Đường dẫn Extension Duytai v7.2 đã được copy vào Clipboard:\n" + extDir + "\n\n" +
+                    "Google Chrome / Edge khóa không cho phần mềm tự sửa Secure Preferences để tự cài file unpacked nếu chưa qua Store.\n" +
+                    "Chỉ cần làm đúng 1 lần (3 giây) trên trình duyệt:\n" +
+                    "1. Ở tab Tiện ích mở rộng vừa mở, bật \"Developer mode\" (Chế độ nhà phát triển).\n" +
+                    "2. Tắt bớt \"IDM Integration Module\" cũ để không bị hiện dòng \"Đã hủy\".\n" +
+                    "3. Bấm \"Load unpacked\" (Tải tiện ích đã giải nén) -> Dán (Ctrl+V) đường dẫn -> Select Folder.\n\n" +
+                    "Ngoài ra Duytai vẫn đang tự động bắt ngầm across mọi Profile của Chrome, Edge, Cốc Cốc, Brave & Opera!",
+                    "Cài Duytai Browser Extension (v7.2 — Đa Trình Duyệt)",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Information);
             }
