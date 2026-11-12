@@ -831,6 +831,18 @@
       await fetch(`/api/jobs/${id}/${action}`, { method: 'POST' });
     }
 
+    async function promptRefreshUrl(id) {
+      const newUrl = prompt('Nhập link tải mới (đã làm mới token CDN) để tiếp tục tải mà không mất dữ liệu cũ:');
+      if (!newUrl || !newUrl.trim()) return;
+      const res = await fetch(`/api/jobs/${id}/refresh-url`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: newUrl.trim() })
+      });
+      const data = await res.json();
+      if (!res.ok) alert('Lỗi đổi link: ' + (data.error || 'Không xác định'));
+    }
+
     async function deleteJob(id, deleteFile = false) {
       await fetch(`/api/jobs/${id}?deleteFile=${deleteFile}`, { method: 'DELETE' });
     }
@@ -938,6 +950,16 @@
         const activeSegs = segs.filter(s => s.status === 'downloading').length;
         const doneSegs = segs.filter(s => s.status === 'completed').length;
         const avgBps = job.elapsedMs > 0 ? Math.round((job.downloadedBytes * 1000) / job.elapsedMs) : 0;
+        const cat = (job.idm && job.idm.category) ? job.idm.category : '';
+        const chk = (job.idm && job.idm.checksum) ? job.idm.checksum : null;
+        let chkBadge = '';
+        if (chk && chk.status === 'ok') {
+          chkBadge = `<span class="status-pill status-completed" title="${chk.algo.toUpperCase()}: ${chk.actual}">✔ ${chk.algo.toUpperCase()} Chuẩn (${chk.ms || 0}ms)</span>`;
+        } else if (chk && chk.status === 'verifying') {
+          chkBadge = `<span class="status-pill status-probing">🔒 Đang kiểm tra ${chk.algo.toUpperCase()}...</span>`;
+        } else if (chk && chk.status === 'mismatch') {
+          chkBadge = `<span class="status-pill status-error">⚠️ Lệch mã băm ${chk.algo.toUpperCase()}!</span>`;
+        }
 
         return `
           <div class="job-card ${job.status}">
@@ -946,6 +968,8 @@
                 <div class="job-title">
                   <span>📄 ${escapeHtml(job.fileName)}</span>
                   <span class="status-pill status-${job.status}">${statusMap[job.status] || job.status}</span>
+                  ${cat ? `<span class="status-pill" style="background:rgba(139,92,246,0.2);color:#c4b5fd;border:1px solid rgba(139,92,246,0.4);">📁 ${escapeHtml(cat)}</span>` : ''}
+                  ${chkBadge}
                 </div>
                 <div class="job-url" title="${escapeHtml(job.finalUrl || job.url)}">
                   🔗 ${escapeHtml(job.finalUrl || job.url)} • CDN Pool: ${(job.cdnIps || []).join(', ') || 'Direct'}
@@ -956,7 +980,8 @@
                   ? `<button class="action-btn" onclick="jobAction('${job.id}', 'pause')">⏸ Tạm dừng</button>`
                   : ''}
                 ${job.status === 'paused' || job.status === 'error'
-                  ? `<button class="action-btn" onclick="jobAction('${job.id}', 'resume')">▶ Tiếp tục</button>`
+                  ? `<button class="action-btn" onclick="jobAction('${job.id}', 'resume')">▶ Tiếp tục</button>
+                     <button class="action-btn" onclick="promptRefreshUrl('${job.id}')">🔄 Đổi Link Mới</button>`
                   : ''}
                 ${job.status === 'completed'
                   ? `<button class="action-btn" onclick="jobAction('${job.id}', 'open-file')">🚀 Mở File</button>`

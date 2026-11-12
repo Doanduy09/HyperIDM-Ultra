@@ -1,0 +1,20 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+  body{width:300px;margin:0;padding:14px;font:13px system-ui,Segoe UI,sans-serif;background:#12141c;color:#e8eaf2}
+  h1{font-size:15px;margin:0 0 10px}
+  .row{display:flex;justify-content:space-between;align-items:center;margin:8px 0}
+  .speed{font-size:22px;font-weight:700;color:#00c6ff}
+  .job{margin:6px 0;font-size:12px}
+  .bar{height:5px;background:#2a2e3d;border-radius:3px;overflow:hidden}
+  .bar>i{display:block;height:100%;background:linear-gradient(90deg,#6a5cff,#00c6ff)}
+  #off{color:#ff6b6b}
+</style></head>
+<body>
+  <h1>⚡ HyperIDM Ultra</h1>
+  <div class="row"><span>Tốc độ</span><span class="speed" id="speed">0 MB/s</span></div>
+  <div class="row"><label for="auto">Tự động bắt link</label><input type="checkbox" id="auto"></div>
+  <div id="off" hidden>HyperIDM chưa chạy</div>
+  <div id="jobs"></div>
+  <script src="popup.js"></script>
+</body></html>

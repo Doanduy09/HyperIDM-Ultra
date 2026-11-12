@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "HyperIDM Ultra Integration",
+  "version": "1.0.0",
+  "description": "Bắt link tải và gửi tới HyperIDM Ultra (64 luồng) tại 127.0.0.1:17890.",
+  "minimum_chrome_version": "102",
+  "permissions": ["downloads", "contextMenus", "cookies", "storage", "notifications"],
+  "host_permissions": ["<all_urls>", "http://127.0.0.1:17890/*"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_title": "HyperIDM Ultra", "default_popup": "popup.html" },
+  "content_scripts": [
+    {
+      "matches": ["*://*.youtube.com/*", "*://youtu.be/*", "*://ipsw.me/*", "*://*.ipsw.me/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

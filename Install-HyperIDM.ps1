@@ -8,11 +8,13 @@ $sourceDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $installDir = Join-Path $env:LOCALAPPDATA "Programs\HyperIDM"
 $binDir = Join-Path $installDir "bin"
 $publicDir = Join-Path $installDir "public"
+$extDir = Join-Path $installDir "extension"
 
 Write-Host "[1/6] Creating installation directory: $installDir" -ForegroundColor Yellow
 New-Item -Path $installDir -ItemType Directory -Force | Out-Null
 New-Item -Path $binDir -ItemType Directory -Force | Out-Null
 New-Item -Path $publicDir -ItemType Directory -Force | Out-Null
+New-Item -Path $extDir -ItemType Directory -Force | Out-Null
 
 # Ensure Node.js is available on target Windows PC
 if (-not (Get-Command node -ErrorAction SilentlyContinue) -and -not (Test-Path "C:\Program Files\nodejs\node.exe")) {
@@ -20,15 +22,23 @@ if (-not (Get-Command node -ErrorAction SilentlyContinue) -and -not (Test-Path "
     winget install OpenJS.NodeJS.LTS --accept-package-agreements --accept-source-agreements --silent
 }
 
-Write-Host "[2/6] Copying core 64-bit engine & UI files..." -ForegroundColor Yellow
-Copy-Item -Path "$sourceDir\engine.js" -Destination "$installDir\engine.js" -Force
-Copy-Item -Path "$sourceDir\server.js" -Destination "$installDir\server.js" -Force
-Copy-Item -Path "$sourceDir\cli.js" -Destination "$installDir\cli.js" -Force
-Copy-Item -Path "$sourceDir\HyperIDM.cs" -Destination "$installDir\HyperIDM.cs" -Force
-Copy-Item -Path "$sourceDir\public\*" -Destination $publicDir -Recurse -Force
+Write-Host "[2/6] Copying core 64-bit engine, IDM-killer modules & Browser Extension..." -ForegroundColor Yellow
+if ($sourceDir.TrimEnd('\') -ne $installDir.TrimEnd('\')) {
+    foreach ($f in @("engine.js", "server.js", "idm-features.js", "clipboard-batch.js", "cli.js", "HyperIDM.cs", "Install-HyperIDM.ps1")) {
+        if (Test-Path "$sourceDir\$f") {
+            Copy-Item -Path "$sourceDir\$f" -Destination "$installDir\$f" -Force
+        }
+    }
+    if (Test-Path "$sourceDir\public\*") {
+        Copy-Item -Path "$sourceDir\public\*" -Destination $publicDir -Recurse -Force
+    }
+    if (Test-Path "$sourceDir\extension\*") {
+        Copy-Item -Path "$sourceDir\extension\*" -Destination $extDir -Recurse -Force
+    }
+}
 
 # Bundle or download yt-dlp.exe for YouTube/Streaming Engine
-if (Test-Path "$sourceDir\bin\yt-dlp.exe") {
+if (($sourceDir.TrimEnd('\') -ne $installDir.TrimEnd('\')) -and (Test-Path "$sourceDir\bin\yt-dlp.exe")) {
     Copy-Item -Path "$sourceDir\bin\yt-dlp.exe" -Destination "$binDir\yt-dlp.exe" -Force
 } elseif (-not (Test-Path "$binDir\yt-dlp.exe")) {
     Write-Host "[*] Downloading standalone 64-bit yt-dlp.exe..." -ForegroundColor Yellow
@@ -81,8 +91,8 @@ if ($userPath -notlike "*$installDir*") {
 # Register Uninstall entry in Windows Settings (Installed Apps)
 $uninstKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\HyperIDMUltra"
 New-Item -Path $uninstKey -Force | Out-Null
-Set-ItemProperty -Path $uninstKey -Name "DisplayName" -Value "HyperIDM Ultra 64-Bit (TitanFetch Engine)" -Force
-Set-ItemProperty -Path $uninstKey -Name "DisplayVersion" -Value "2.0.0" -Force
+Set-ItemProperty -Path $uninstKey -Name "DisplayName" -Value "HyperIDM Ultra 64-Bit v3.0 (TitanFetch Engine)" -Force
+Set-ItemProperty -Path $uninstKey -Name "DisplayVersion" -Value "3.0.0" -Force
 Set-ItemProperty -Path $uninstKey -Name "Publisher" -Value "DOANDUY / Antigravity" -Force
 Set-ItemProperty -Path $uninstKey -Name "InstallLocation" -Value $installDir -Force
 Set-ItemProperty -Path $uninstKey -Name "DisplayIcon" -Value "$installDir\HyperIDM.exe" -Force

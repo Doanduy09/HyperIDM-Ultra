@@ -33,25 +33,56 @@ Qua quá trình phân tích trực tiếp PE Header của `IDMan.exe` và nhật
 
 ---
 
-## 📦 Cài Đặt Cho Mọi Máy Tính Windows 10 / 11 (1-Click Universal Installer)
+## 🏆 Hệ Sinh Thái Tính Năng Vượt Trội So Với IDM (v3.0 Multi-Model Council Upgrade)
 
-### Cách 1: Chạy trực tiếp bộ cài đặt tự động
-1. Tải hoặc Clone kho mã nguồn này về máy Windows bất kỳ:
-   ```powershell
-   git clone https://github.com/Doanduy09/HyperIDM-Ultra.git
-   cd HyperIDM-Ultra
-   ```
-2. Nhấp đúp vào **`HyperIDM-Setup.exe`** hoặc **`Install-HyperIDM.bat`** (hoặc chạy PowerShell):
-   ```powershell
-   powershell -ExecutionPolicy Bypass -File .\Install-HyperIDM.ps1
-   ```
-3. Bộ cài đặt sẽ tự động:
-   - Cài đặt ứng dụng vào `%LOCALAPPDATA%\Programs\HyperIDM`.
-   - Biên dịch file thực thi 64-bit Native **`HyperIDM.exe` (`PE32+ 0x8664`)**.
-   - Tạo biểu tượng **HyperIDM Ultra** ngoài **Desktop** và **Start Menu**.
-   - Đăng ký giao thức **`hyperidm://`** và lệnh CLI **`hyperidm`** vào biến môi trường `PATH`.
+Bên cạnh lõi **TitanFetch 64-Bit**, phiên bản **v3.0** bổ sung đầy đủ hệ sinh thái tính năng thông minh vượt xa IDM truyền thống:
 
-### Cách 2: Sử dụng qua Giao diện Desktop hoặc Dòng lệnh (CLI)
+1. **Tiện Ích Trình Duyệt Chrome / Edge / Cốc Cốc / Brave (Manifest V3 — `extension/`)**:
+   - Tự động bắt mọi liên kết tải file lớn (`.zip`, `.7z`, `.rar`, `.exe`, `.msi`, `.iso`, `.ipsw`, `.dmg`, `.mp4`, `.mkv`...) và chuyển thẳng sang **HyperIDM Ultra (64–128 luồng)**.
+   - Tự động hiển thị nút nổi **"⚡ Tải Video 64 Luồng (HyperIDM)"** ngay trên trang **YouTube** và **"⚡ Tải IPSW 64 Luồng"** trên **`ipsw.me`**.
+   - Menu chuột phải **"⚡ Tải siêu tốc bằng HyperIDM Ultra (64 Luồng)"** cho mọi liên kết, video, âm thanh và hình ảnh.
+2. **Phân Loại Thư Mục Tự Động Thông Minh (Auto-Category Routing — `idm-features.js`)**:
+   - Tự động nhận diện phần mở rộng & MIME Type để phân loại gọn gàng vào 6 thư mục con trong `Downloads\HyperIDM\`:
+     - `Compressed` (`.zip`, `.rar`, `.7z`, `.tar`, `.gz`, `.bz2`, `.xz`, `.zst`)
+     - `Programs` (`.exe`, `.msi`, `.msix`, `.appx`, `.bat`)
+     - `Video` (`.mp4`, `.mkv`, `.webm`, `.avi`, `.mov`, `.ts`)
+     - `Music` (`.mp3`, `.flac`, `.wav`, `.aac`, `.m4a`, `.ogg`, `.opus`)
+     - `Documents` (`.pdf`, `.doc`, `.docx`, `.xls`, `.xlsx`, `.ppt`, `.pptx`, `.epub`)
+     - `Firmware_Images` (`.ipsw`, `.iso`, `.img`, `.dmg`, `.bin`, `.vhd`, `.vhdx`, `.ova`)
+3. **Kiểm Tra Mã Băm SHA-256 / SHA-1 Tức Thì Khi Đang Tải (`0 ms` Post-Download Wait)**:
+   - Bộ `ProgressiveHasher` tính toán mã băm SHA-256/SHA-1 song song ngay khi các phân đoạn hoàn tất trên RAM/đĩa — kết thúc tải ở 100% là có ngay kết quả kiểm chứng toàn vẹn mà không phải đọc lại hàng chục GB từ ổ cứng.
+   - Tự động đối chiếu mã băm chính thức từ Apple IPSW API v4 đối với các bản dựng Firmware `.ipsw`.
+4. **Làm Mới Liên Kết Hết Hạn (Expired Presigned URL Refresh)**:
+   - Khi tải các file hàng chục GB từ S3 / Google Drive / OneDrive / Fshare mà token hết hạn giữa chừng (HTTP `403`/`410`), chỉ cần bấm nút **`🔄 Link`** để dán liên kết mới và tiếp tục tải ngay từ byte đang dở mà không mất 1 byte dữ liệu nào.
+5. **Tải Hàng Loạt & Mở Rộng Chuỗi Mẫu (`Batch Pattern & Queue`)**:
+   - Hỗ trợ cú pháp mẫu dải số tự động như `https://example.com/archive_part[01-20].rar` hoặc `[a-z]`, kết hợp trình quét toàn bộ liên kết từ trang web và theo dõi Clipboard tự động (`clipboard-batch.js`).
+
+---
+
+## 📦 Cài Đặt Cho Mọi Máy Tính Windows 10 / 11 (1-File Self-Contained Universal Setup)
+
+### Cách 1: Chạy trực tiếp 1 file cài đặt độc lập duy nhất (`HyperIDM-Universal-Setup.exe`)
+- Chỉ cần chép **duy nhất 1 file `HyperIDM-Universal-Setup.exe`** (đã nhúng sẵn toàn bộ mã nguồn Engine, Giao diện, CLI và Extension bên trong Resource) sang bất kỳ máy tính Windows 10/11 nào và nhấp đúp chuột.
+- Hoặc tải kho mã nguồn về máy bất kỳ:
+  ```powershell
+  git clone https://github.com/Doanduy09/HyperIDM-Ultra.git
+  cd HyperIDM-Ultra
+  .\HyperIDM-Universal-Setup.exe
+  ```
+- Bộ cài đặt sẽ tự động:
+  - Giải nén và cài đặt ứng dụng vào `%LOCALAPPDATA%\Programs\HyperIDM`.
+  - Tự động kiểm tra và cài đặt Node.js LTS 64-bit / `yt-dlp.exe` / `ffmpeg.exe` nếu máy mới chưa có.
+  - Biên dịch file thực thi 64-bit Native **`HyperIDM.exe` (`PE32+ 0x8664`)**.
+  - Tạo biểu tượng **HyperIDM Ultra** ngoài **Desktop** và **Start Menu**.
+  - Đăng ký giao thức **`hyperidm://`** và lệnh CLI **`hyperidm`** vào biến môi trường `PATH`.
+
+### Cách 2: Cài đặt Tiện ích Trình duyệt (Chrome / Edge / Cốc Cốc / Brave)
+1. Mở trình duyệt và truy cập `chrome://extensions` (hoặc `edge://extensions`).
+2. Bật **Chế độ nhà phát triển (Developer mode)** ở góc trên bên phải.
+3. Nhấn **Tải tiện ích đã giải nén (Load unpacked)** và chọn thư mục:
+   `%LOCALAPPDATA%\Programs\HyperIDM\extension` (hoặc thư mục `extension` trong repo).
+
+### Cách 3: Sử dụng qua Giao diện Desktop hoặc Dòng lệnh (CLI)
 - **Mở giao diện Desktop**: Nhấp đúp biểu tượng **HyperIDM Ultra** trên Desktop (hoặc chạy `HyperIDM.exe`).
 - **Tải siêu tốc qua CLI**:
   ```powershell

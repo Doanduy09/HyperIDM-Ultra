@@ -4,6 +4,7 @@ const fsp = require('fs').promises;
 const path = require('path');
 const { spawn } = require('child_process');
 const { DownloadJob } = require('./engine');
+const idmFeatures = require('./idm-features');
 
 const PORT = parseInt(process.env.HYPER_IDM_PORT || '17890', 10);
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -12,9 +13,44 @@ const DEFAULT_SAVE_DIR = path.join(process.env.USERPROFILE || 'C:\\Users\\admin'
 
 const jobs = new Map();
 const sseClients = new Set();
+const speedLimiter = new idmFeatures.SpeedLimiter(() => jobs.values());
 
-// Pre-allocated 1MB zero-copy slice for ultra-fast local engine loopback benchmark
-const BENCHMARK_CHUNK = Buffer.alloc(1024 * 1024, 0x48); // 'H'
+const BENCHMARK_CHUNK = Buffer.alloc(1024 * 1024, 0x48);
+
+function createAndRegisterJob(opts, startImmediately = true) {
+  const autoCategory = opts.autoCategory !== false && !opts.saveDir;
+  const saveDir = opts.saveDir || (autoCategory
+    ? idmFeatures.categorizeSaveDir(DEFAULT_SAVE_DIR, opts.url, opts.fileName || '')
+    : DEFAULT_SAVE_DIR);
+
+  const job = new DownloadJob({
+    id: opts.id,
+    url: opts.url.trim(),
+    saveDir,
+    fileName: opts.fileName || '',
+    maxConnections: opts.maxConnections || 64,
+    headers: opts.headers || {},
+    videoQuality: opts.videoQuality || 'best'
+  });
+
+  attachJobEvents(job);
+  idmFeatures.attachIdmFeatures(job, {
+    baseDir: DEFAULT_SAVE_DIR,
+    autoCategory,
+    verify: true,
+    expectedHash: opts.expectedHash || '',
+    alwaysHash: Boolean(opts.alwaysHash)
+  });
+
+  jobs.set(job.id, job);
+  if (startImmediately) job.start();
+  return job;
+}
+
+const batchQueue = new idmFeatures.DownloadQueue({
+  createJob: (url, opts) => createAndRegisterJob({ ...opts, url }, false),
+  maxConcurrent: 3
+});
 
 async function loadHistory() {
   try {
@@ -29,12 +65,12 @@ async function loadHistory() {
         url: item.url,
         saveDir: item.saveDir || DEFAULT_SAVE_DIR,
         fileName: item.fileName,
-        maxConnections: item.maxConnections || 32
+        maxConnections: item.maxConnections || 64
       });
       job.finalUrl = item.finalUrl || item.url;
-      job.filePath = item.filePath || path.join(job.saveDir, job.fileName || '');
+      job.filePath = item.filePath || path.join(job.saveDir, item.fileName || '');
       job.stateFilePath = `${job.filePath}.hyper.json`;
-      job.status = item.status === 'downloading' || item.status === 'probing' ? 'paused' : (item.status || 'paused');
+      job.status = ['downloading', 'probing', 'resolving', 'muxing'].includes(item.status) ? 'paused' : (item.status || 'paused');
       job.totalBytes = item.totalBytes || 0;
       job.downloadedBytes = item.downloadedBytes || 0;
       job.acceptRanges = Boolean(item.acceptRanges);
@@ -44,6 +80,15 @@ async function loadHistory() {
       job.recycleCount = item.recycleCount || 0;
       job.segments = Array.isArray(item.segments) ? item.segments : [];
       attachJobEvents(job);
+      idmFeatures.attachIdmFeatures(job, {
+        baseDir: DEFAULT_SAVE_DIR,
+        autoCategory: false,
+        verify: true
+      });
+      if (item.idm) {
+        job.idmCategory = item.idm.category || null;
+        job.idmChecksum = item.idm.checksum || { status: 'none' };
+      }
       jobs.set(job.id, job);
     }
   } catch {}
@@ -66,6 +111,7 @@ function broadcastState() {
     type: 'snapshot',
     timestamp: Date.now(),
     defaultSaveDir: DEFAULT_SAVE_DIR,
+    globalLimitBps: speedLimiter.globalBps,
     jobs: Array.from(jobs.values()).map(j => j.toJSON())
   });
   for (const res of sseClients) {
@@ -93,7 +139,7 @@ function readJsonBody(req) {
     let body = '';
     req.on('data', chunk => {
       body += chunk.toString();
-      if (body.length > 1024 * 1024) {
+      if (body.length > 2 * 1024 * 1024) {
         reject(new Error('Payload too large'));
       }
     });
@@ -199,6 +245,7 @@ const server = http.createServer(async (req, res) => {
       type: 'snapshot',
       timestamp: Date.now(),
       defaultSaveDir: DEFAULT_SAVE_DIR,
+      globalLimitBps: speedLimiter.globalBps,
       jobs: Array.from(jobs.values()).map(j => j.toJSON())
     })}\n\n`);
     req.on('close', () => sseClients.delete(res));
@@ -208,6 +255,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/jobs' && req.method === 'GET') {
     return sendJson(res, 200, {
       defaultSaveDir: DEFAULT_SAVE_DIR,
+      globalLimitBps: speedLimiter.globalBps,
       jobs: Array.from(jobs.values()).map(j => j.toJSON())
     });
   }
@@ -218,23 +266,48 @@ const server = http.createServer(async (req, res) => {
       if (!body.url || typeof body.url !== 'string') {
         return sendJson(res, 400, { error: 'URL không hợp lệ' });
       }
-      const job = new DownloadJob({
-        url: body.url.trim(),
-        saveDir: body.saveDir || DEFAULT_SAVE_DIR,
-        fileName: body.fileName || '',
-        maxConnections: body.maxConnections || 32,
-        headers: body.headers || {}
-      });
-      attachJobEvents(job);
-      jobs.set(job.id, job);
-      job.start();
+      // Check if URL contains a batch pattern like file[01-10].zip
+      const expanded = idmFeatures.expandBatchPattern(body.url);
+      if (expanded.length > 1) {
+        const created = batchQueue.add(expanded, body);
+        return sendJson(res, 201, { batchCount: created.length, jobs: created.map(j => j.toJSON()) });
+      }
+      const job = createAndRegisterJob(body, true);
       return sendJson(res, 201, job.toJSON());
     } catch (e) {
       return sendJson(res, 500, { error: e.message });
     }
   }
 
-  const actionMatch = /^\/api\/jobs\/([^/]+)\/(pause|resume|open-folder|open-file)$/.exec(pathname);
+  // Batch Queue Endpoint
+  if (pathname === '/api/batch' && req.method === 'POST') {
+    try {
+      const body = await readJsonBody(req);
+      const created = batchQueue.add(body.text || body.urls || '', body);
+      return sendJson(res, 201, { count: created.length, jobs: created.map(j => j.toJSON()) });
+    } catch (e) {
+      return sendJson(res, 500, { error: e.message });
+    }
+  }
+
+  // Global or Per-Job Speed Limiter Endpoint
+  if (pathname === '/api/limit' && req.method === 'POST') {
+    try {
+      const body = await readJsonBody(req);
+      const bps = parseInt(body.bps || 0, 10);
+      if (body.jobId) {
+        speedLimiter.setJobLimit(body.jobId, bps);
+      } else {
+        speedLimiter.setGlobalLimit(bps);
+      }
+      broadcastState();
+      return sendJson(res, 200, { ok: true, globalLimitBps: speedLimiter.globalBps });
+    } catch (e) {
+      return sendJson(res, 500, { error: e.message });
+    }
+  }
+
+  const actionMatch = /^\/api\/jobs\/([^/]+)\/(pause|resume|open-folder|open-file|refresh-url)$/.exec(pathname);
   if (actionMatch && req.method === 'POST') {
     const [, id, action] = actionMatch;
     const job = jobs.get(id);
@@ -247,6 +320,15 @@ const server = http.createServer(async (req, res) => {
     if (action === 'resume') {
       job.start();
       return sendJson(res, 200, job.toJSON());
+    }
+    if (action === 'refresh-url') {
+      try {
+        const body = await readJsonBody(req);
+        const result = await idmFeatures.refreshJobUrl(job, body.url, { force: Boolean(body.force), resume: true });
+        return sendJson(res, 200, { ok: true, ...result, job: job.toJSON() });
+      } catch (e) {
+        return sendJson(res, 400, { error: e.message });
+      }
     }
     if (action === 'open-folder') {
       if (job.filePath && fs.existsSync(job.filePath)) {
@@ -270,6 +352,7 @@ const server = http.createServer(async (req, res) => {
     const job = jobs.get(id);
     if (!job) return sendJson(res, 404, { error: 'Không tìm thấy tác vụ tải' });
     const deleteFile = parsedUrl.searchParams.get('deleteFile') === 'true';
+    batchQueue.remove(job);
     await job.cancel(deleteFile);
     jobs.delete(id);
     broadcastState();
@@ -277,7 +360,6 @@ const server = http.createServer(async (req, res) => {
     return sendJson(res, 200, { ok: true });
   }
 
-  // Serve Static UI
   let filePath = pathname === '/' ? path.join(PUBLIC_DIR, 'index.html') : path.join(PUBLIC_DIR, pathname);
   if (!filePath.startsWith(PUBLIC_DIR)) {
     res.writeHead(403);
@@ -303,6 +385,6 @@ const server = http.createServer(async (req, res) => {
 
 loadHistory().then(() => {
   server.listen(PORT, '127.0.0.1', () => {
-    console.log(`[HyperIDM Ultra 64-Bit Engine] Listening on http://127.0.0.1:${PORT}`);
+    console.log(`[HyperIDM Ultra v3.0 64-Bit Engine] Listening on http://127.0.0.1:${PORT}`);
   });
 });
