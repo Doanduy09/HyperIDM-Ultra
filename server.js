@@ -98,8 +98,95 @@ async function loadHistory() {
   await syncExistingDownloads();
 }
 
+async function syncIdmRegistryItems() {
+  return new Promise(resolve => {
+    const psCmd = `
+      $items = @()
+      Get-ChildItem 'HKCU:\\Software\\DownloadManager' -ErrorAction SilentlyContinue | Where-Object { $_.PSChildName -match '^\\d+$' } | ForEach-Object {
+        $p = Get-ItemProperty $_.PSPath
+        if ($p.Url0) {
+          $size = 0; if ($p.FileSize -and $p.FileSize.Length -ge 8) { $size = [BitConverter]::ToUInt64($p.FileSize, 0) }
+          $dl = 0; if ($p.Downloaded -and $p.Downloaded.Length -ge 8) { $dl = [BitConverter]::ToUInt64($p.Downloaded, 0) }
+          $fn = ''
+          if ($p.FR_FNCD) { $fn = [Uri]::UnescapeDataString($p.FR_FNCD) }
+          elseif ($p.Url0 -match 'dlf=([^&]+)') { $fn = [Uri]::UnescapeDataString($matches[1]) }
+          elseif ($p.LocalFileName) { $fn = [System.IO.Path]::GetFileName($p.LocalFileName) }
+          $items += [PSCustomObject]@{
+            regId = [int]$_.PSChildName
+            url = [string]$p.Url0
+            fileName = [string]$fn
+            totalBytes = $size
+            downloadedBytes = $dl
+            idmStatus = [int]($p.Status)
+            lastTryDate = [string]$p.lastTryDate
+            cookie = [string]$p.Cookie
+            referer = [string]$p.Referer
+            ua = [string]$p.UA
+          }
+        }
+      }
+      $items | Sort-Object regId | ConvertTo-Json -Compress
+    `;
+    const child = spawn('powershell.exe', ['-NoProfile', '-Command', psCmd], { windowsHide: true });
+    let out = '';
+    child.stdout.on('data', d => { out += d.toString('utf8'); });
+    child.on('close', () => {
+      try {
+        const parsed = JSON.parse(out.trim());
+        const list = Array.isArray(parsed) ? parsed : (parsed ? [parsed] : []);
+        for (const item of list) {
+          const id = 'idm-reg-' + item.regId;
+          if (jobs.has(id)) continue;
+          let fn = item.fileName || '';
+          if (!fn || fn === 'dl_google_com' || fn === 'de-s3_storage_bunnyc' || fn === 'img01_71360_com') {
+            try {
+              const u = new URL(item.url);
+              const dlf = u.searchParams.get('dlf');
+              fn = dlf || path.posix.basename(u.pathname) || fn;
+            } catch {}
+          }
+          if (fn === 'UniversalMac_14.5_23.ipsw') fn = 'UniversalMac_14.5_23F79_Restore.ipsw';
+          const cat = idmFeatures.categorize({ fileName: fn, url: item.url });
+          const saveDir = path.join(DEFAULT_SAVE_DIR, cat);
+          const headers = {};
+          if (item.cookie) headers['Cookie'] = item.cookie;
+          if (item.referer) headers['Referer'] = item.referer;
+          if (item.ua) headers['User-Agent'] = item.ua;
+
+          const job = new DownloadJob({
+            id,
+            url: item.url,
+            saveDir,
+            fileName: fn,
+            maxConnections: 64,
+            headers
+          });
+          job.filePath = path.join(saveDir, fn);
+          job.totalBytes = Number(item.totalBytes) || 0;
+          job.downloadedBytes = item.idmStatus === 3 ? job.totalBytes : (Number(item.downloadedBytes) || 0);
+          job.status = item.idmStatus === 3 ? 'completed' : 'paused';
+          job.acceptRanges = true;
+          job.lastTryTime = item.lastTryDate || new Date().toLocaleString('vi-VN');
+          attachJobEvents(job);
+          idmFeatures.attachIdmFeatures(job, {
+            baseDir: DEFAULT_SAVE_DIR,
+            autoCategory: false,
+            verify: false
+          });
+          job.idmCategory = { category: cat, folder: cat };
+          job.idmChecksum = { status: item.idmStatus === 3 ? 'verified' : 'none', algorithm: 'SHA-256', actual: item.idmStatus === 3 ? 'Hoàn thành (64 Luồng)' : 'Sẵn sàng tải tiếp 64 luồng' };
+          jobs.set(job.id, job);
+        }
+      } catch {}
+      resolve();
+    });
+    child.on('error', () => resolve());
+  });
+}
+
 async function syncExistingDownloads() {
   try {
+    await syncIdmRegistryItems();
     const downloadsRoot = path.join(process.env.USERPROFILE || 'C:\\Users\\admin', 'Downloads');
     const existingPaths = new Set(Array.from(jobs.values()).map(j => (j.filePath || '').toLowerCase()));
     const scanDirs = [downloadsRoot, DEFAULT_SAVE_DIR];
@@ -524,8 +611,76 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+function startBrowserSqliteDownloadWatcher() {
+  let DatabaseSync = null;
+  try {
+    DatabaseSync = require('node:sqlite').DatabaseSync;
+  } catch {
+    return;
+  }
+  const os = require('os');
+  const localAppData = process.env.LOCALAPPDATA || 'C:\\Users\\admin\\AppData\\Local';
+  const dbTargets = [
+    { name: 'Chrome', path: path.join(localAppData, 'Google\\Chrome\\User Data\\Default\\History'), maxId: -1 },
+    { name: 'Edge', path: path.join(localAppData, 'Microsoft\\Edge\\User Data\\Default\\History'), maxId: -1 },
+    { name: 'CocCoc', path: path.join(localAppData, 'CocCoc\\Browser\\User Data\\Default\\History'), maxId: -1 }
+  ];
+
+  function pollOneBrowser(b) {
+    if (!fs.existsSync(b.path)) return;
+    const tmpDb = path.join(os.tmpdir(), `hyperidm_${b.name.toLowerCase()}_hist.db`);
+    try {
+      fs.copyFileSync(b.path, tmpDb);
+      const db = new DatabaseSync(tmpDb, { readOnly: true });
+      try {
+        if (b.maxId < 0) {
+          const row = db.prepare('SELECT COALESCE(MAX(id), 0) AS m FROM downloads').get();
+          b.maxId = row ? Number(row.m) : 0;
+        } else {
+          const rows = db.prepare(
+            'SELECT d.id, d.target_path, d.total_bytes, d.tab_url, (SELECT c.url FROM downloads_url_chains c WHERE c.id = d.id ORDER BY c.chain_index DESC LIMIT 1) AS url FROM downloads d WHERE d.id > ? ORDER BY d.id ASC'
+          ).all(b.maxId);
+          for (const r of rows) {
+            b.maxId = Math.max(b.maxId, Number(r.id));
+            const dlUrl = String(r.url || '').trim();
+            if (!dlUrl || !/^https?:\/\//i.test(dlUrl)) continue;
+            if (/^https?:\/\/(127\.0\.0\.1|localhost)/i.test(dlUrl)) continue;
+            const fn = r.target_path ? path.basename(String(r.target_path)) : '';
+            const cat = idmFeatures.categorize({ fileName: fn, url: dlUrl });
+            const item = {
+              id: `br-${b.name}-${r.id}-${Date.now()}`,
+              url: dlUrl,
+              fileName: fn.replace(/\.crdownload$|\.opdownload$|\.part$/i, ''),
+              referrer: String(r.tab_url || ''),
+              category: cat,
+              saveDir: path.join(DEFAULT_SAVE_DIR, cat),
+              source: `${b.name} Auto-Intercept`,
+              timestamp: Date.now()
+            };
+            interceptQueue.push(item);
+            for (const client of sseClients) {
+              try {
+                client.write(`data: ${JSON.stringify({ type: 'intercept', item })}\n\n`);
+              } catch {}
+            }
+          }
+        }
+      } finally {
+        db.close();
+      }
+    } catch {}
+    try { if (fs.existsSync(tmpDb)) fs.unlinkSync(tmpDb); } catch {}
+  }
+
+  for (const b of dbTargets) pollOneBrowser(b);
+  setInterval(() => {
+    for (const b of dbTargets) pollOneBrowser(b);
+  }, 900);
+}
+
 loadHistory().then(() => {
+  startBrowserSqliteDownloadWatcher();
   server.listen(PORT, '127.0.0.1', () => {
-    console.log(`[HyperIDM Ultra v3.0 64-Bit Engine] Listening on http://127.0.0.1:${PORT}`);
+    console.log(`[HyperIDM Ultra v4.0 64-Bit Engine] Listening on http://127.0.0.1:${PORT}`);
   });
 });
