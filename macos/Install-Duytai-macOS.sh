@@ -20,7 +20,8 @@ if [ -d "$APP_SRC/Contents/Resources/core" ]; then
 else
   ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
   cp "$ROOT_DIR/server.js" "$ROOT_DIR/engine.js" "$ROOT_DIR/idm-features.js" \
-     "$ROOT_DIR/duytai-native-host.js" "$ROOT_DIR/package.json" "$CORE_DIR/"
+     "$ROOT_DIR/duytai-native-host.js" "$CORE_DIR/"
+  if [ -f "$ROOT_DIR/package.json" ]; then cp "$ROOT_DIR/package.json" "$CORE_DIR/"; fi
   cp -R "$ROOT_DIR/public" "$ROOT_DIR/extension" "$CORE_DIR/"
   cp "$SCRIPT_DIR/duytai-native-host.sh" "$HOST_SH"
 fi

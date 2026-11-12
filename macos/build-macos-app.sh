@@ -26,8 +26,9 @@ chmod +x "$APP_BUNDLE/Contents/MacOS/Duytai"
 
 echo "[2/4] Bundling Duytai Cross-Platform Core + Extension..."
 cp "$ROOT_DIR/server.js" "$ROOT_DIR/engine.js" "$ROOT_DIR/idm-features.js" \
-   "$ROOT_DIR/duytai-native-host.js" "$ROOT_DIR/package.json" \
+   "$ROOT_DIR/duytai-native-host.js" \
    "$APP_BUNDLE/Contents/Resources/core/"
+if [ -f "$ROOT_DIR/package.json" ]; then cp "$ROOT_DIR/package.json" "$APP_BUNDLE/Contents/Resources/core/"; fi
 cp -R "$ROOT_DIR/public" "$ROOT_DIR/extension" "$APP_BUNDLE/Contents/Resources/core/"
 cp "$SCRIPT_DIR/duytai-native-host.sh" "$SCRIPT_DIR/Install-Duytai-macOS.sh" "$APP_BUNDLE/Contents/Resources/"
 chmod +x "$APP_BUNDLE/Contents/Resources/duytai-native-host.sh" "$APP_BUNDLE/Contents/Resources/Install-Duytai-macOS.sh"
