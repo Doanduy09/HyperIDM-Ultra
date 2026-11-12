@@ -1,0 +1,95 @@
+name: Build & Release Duytai Cross-Platform (Windows + macOS + Android)
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos:
+    name: Build macOS Universal (.dmg)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Build Universal macOS App & DMG
+        run: |
+          chmod +x macos/build-macos-app.sh macos/Install-Duytai-macOS.sh macos/duytai-native-host.sh
+          ./macos/build-macos-app.sh
+      - name: Verify Core Engine on macOS
+        run: |
+          node --check engine.js
+          node --check server.js
+          node --check idm-features.js
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Duytai-macOS-Universal
+          path: Duytai-macOS-Universal.dmg
+
+  build-android:
+    name: Build & Test Android (.apk)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+      - name: Make Gradle Wrapper Executable & Test + Assemble APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew testDebugUnitTest assembleDebug assembleRelease --no-daemon
+      - name: Export APK Artifacts
+        run: |
+          cp android/app/build/outputs/apk/debug/app-debug.apk Duytai-Android.apk
+          cp android/app/build/outputs/apk/release/app-release-unsigned.apk Duytai-Android-unsigned-release.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Duytai-Android-APK
+          path: |
+            Duytai-Android.apk
+            Duytai-Android-unsigned-release.apk
+
+  build-windows:
+    name: Build & Test Windows (.exe)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check Shared Core & Compile HyperIDM.cs
+        shell: powershell
+        run: |
+          node --check engine.js
+          node --check server.js
+          node --check idm-features.js
+          $csc = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
+          & $csc /nologo /target:winexe /out:Duytai.exe HyperIDM.cs /r:System.Windows.Forms.dll /r:System.Drawing.dll /r:System.Net.Http.dll
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Duytai-Windows
+          path: Duytai.exe
+
+  publish-release:
+    needs: [build-macos, build-android, build-windows]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Publish Multi-Platform GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/Duytai-macOS-Universal/Duytai-macOS-Universal.dmg
+            artifacts/Duytai-Android-APK/Duytai-Android.apk
+            artifacts/Duytai-Windows/Duytai.exe

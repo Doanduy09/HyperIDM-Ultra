@@ -27,16 +27,21 @@ const sharedHttpsAgent = new https.Agent({
 });
 
 function findBinary(name) {
+  const exeName = process.platform === 'win32' || name.endsWith('.exe') ? name : name.replace(/\.exe$/i, '');
   const candidates = [
-    path.join(__dirname, 'bin', name),
-    path.join(process.env.LOCALAPPDATA || '', 'Programs', 'HyperIDM', 'bin', name),
-    path.join(process.env.LOCALAPPDATA || '', 'hermes', 'tools', 'ffmpeg-9.0.1-win32-x64', 'bin', name),
-    path.join(process.env.LOCALAPPDATA || '', 'hermes', 'tools', 'ffmpeg-9.0.1-win32-x64', name)
+    path.join(__dirname, 'bin', exeName),
+    path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Duytai', 'bin', exeName),
+    path.join(process.env.LOCALAPPDATA || '', 'Programs', 'HyperIDM', 'bin', exeName),
+    path.join(process.env.LOCALAPPDATA || '', 'hermes', 'tools', 'ffmpeg-9.0.1-win32-x64', 'bin', exeName),
+    path.join(process.env.LOCALAPPDATA || '', 'hermes', 'tools', 'ffmpeg-9.0.1-win32-x64', exeName),
+    path.join('/opt/homebrew/bin', exeName),
+    path.join('/usr/local/bin', exeName),
+    path.join('/usr/bin', exeName)
   ];
   for (const c of candidates) {
-    if (fs.existsSync(c)) return c;
+    if (c && fs.existsSync(c)) return c;
   }
-  return name;
+  return exeName;
 }
 
 /**
@@ -672,9 +677,11 @@ class DownloadJob extends EventEmitter {
     this.fileHandle = await fsp.open(this.filePath, exists ? 'r+' : 'w+');
 
     if (!exists && this.totalBytes > 0) {
-      await new Promise((resolve) => {
-        execFile('fsutil', ['sparse', 'setflag', this.filePath], () => resolve());
-      });
+      if (process.platform === 'win32') {
+        await new Promise((resolve) => {
+          execFile('fsutil', ['sparse', 'setflag', this.filePath], () => resolve());
+        });
+      }
       await this.fileHandle.truncate(this.totalBytes);
     }
   }

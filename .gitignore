@@ -8,3 +8,11 @@ jobs-history.json
 *.mp4
 
 bin/yt-dlp.exe
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+dist/
+*.apk
+*.dmg
+

@@ -1,6 +1,7 @@
 const http = require('http');
 const fs = require('fs');
 const fsp = require('fs').promises;
+const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const crypto = require('crypto');
@@ -10,8 +11,9 @@ const idmFeatures = require('./idm-features');
 const PORT = parseInt(process.env.HYPER_IDM_PORT || '17890', 10);
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const HISTORY_FILE = path.join(__dirname, 'jobs-history.json');
-const DEFAULT_SAVE_DIR = path.join(process.env.USERPROFILE || 'C:\\Users\\admin', 'Downloads', 'Duytai');
-const LEGACY_SAVE_DIR = path.join(process.env.USERPROFILE || 'C:\\Users\\admin', 'Downloads', 'HyperIDM');
+const USER_HOME = process.env.USERPROFILE || process.env.HOME || os.homedir();
+const DEFAULT_SAVE_DIR = path.join(USER_HOME, 'Downloads', 'Duytai');
+const LEGACY_SAVE_DIR = path.join(USER_HOME, 'Downloads', 'HyperIDM');
 
 const jobs = new Map();
 const sseClients = new Set();
@@ -113,6 +115,7 @@ async function loadHistory() {
 }
 
 async function syncIdmRegistryItems() {
+  if (process.platform !== 'win32') return;
   return new Promise(resolve => {
     const psCmd = `
       $items = @()
@@ -201,7 +204,7 @@ async function syncIdmRegistryItems() {
 async function syncExistingDownloads() {
   try {
     await syncIdmRegistryItems();
-    const downloadsRoot = path.join(process.env.USERPROFILE || 'C:\\Users\\admin', 'Downloads');
+    const downloadsRoot = path.join(USER_HOME, 'Downloads');
     const existingPaths = new Set(Array.from(jobs.values()).map(j => (j.filePath || '').toLowerCase()));
     const scanDirs = [downloadsRoot, DEFAULT_SAVE_DIR, LEGACY_SAVE_DIR];
     for (const folder of Object.keys(idmFeatures.CATEGORIES || {})) {
@@ -764,16 +767,29 @@ const server = http.createServer(async (req, res) => {
       }
     }
     if (action === 'open-folder') {
-      if (job.filePath && fs.existsSync(job.filePath)) {
-        spawn('explorer.exe', [`/select,${job.filePath}`], { detached: true, stdio: 'ignore' }).unref();
-      } else if (job.saveDir && fs.existsSync(job.saveDir)) {
-        spawn('explorer.exe', [job.saveDir], { detached: true, stdio: 'ignore' }).unref();
+      const target = job.filePath && fs.existsSync(job.filePath) ? job.filePath : (job.saveDir && fs.existsSync(job.saveDir) ? job.saveDir : null);
+      if (target) {
+        if (process.platform === 'win32') {
+          const args = target === job.filePath ? [`/select,${target}`] : [target];
+          spawn('explorer.exe', args, { detached: true, stdio: 'ignore' }).unref();
+        } else if (process.platform === 'darwin') {
+          const args = target === job.filePath ? ['-R', target] : [target];
+          spawn('open', args, { detached: true, stdio: 'ignore' }).unref();
+        } else {
+          spawn('xdg-open', [job.saveDir || path.dirname(target)], { detached: true, stdio: 'ignore' }).unref();
+        }
       }
       return sendJson(res, 200, { ok: true });
     }
     if (action === 'open-file') {
       if (job.filePath && fs.existsSync(job.filePath)) {
-        spawn('cmd.exe', ['/c', 'start', '', job.filePath], { detached: true, stdio: 'ignore' }).unref();
+        if (process.platform === 'win32') {
+          spawn('cmd.exe', ['/c', 'start', '', job.filePath], { detached: true, stdio: 'ignore' }).unref();
+        } else if (process.platform === 'darwin') {
+          spawn('open', [job.filePath], { detached: true, stdio: 'ignore' }).unref();
+        } else {
+          spawn('xdg-open', [job.filePath], { detached: true, stdio: 'ignore' }).unref();
+        }
       }
       return sendJson(res, 200, { ok: true });
     }
@@ -823,17 +839,45 @@ function startBrowserSqliteDownloadWatcher() {
   } catch {
     return;
   }
-  const os = require('os');
-  const localAppData = process.env.LOCALAPPDATA || 'C:\\Users\\admin\\AppData\\Local';
-  const appData = process.env.APPDATA || 'C:\\Users\\admin\\AppData\\Roaming';
   const dbTargets = [];
-  const chromiumRoots = [
-    { name: 'Chrome', dir: path.join(localAppData, 'Google\\Chrome\\User Data') },
-    { name: 'Edge', dir: path.join(localAppData, 'Microsoft\\Edge\\User Data') },
-    { name: 'CocCoc', dir: path.join(localAppData, 'CocCoc\\Browser\\User Data') },
-    { name: 'Brave', dir: path.join(localAppData, 'BraveSoftware\\Brave-Browser\\User Data') },
-    { name: 'Vivaldi', dir: path.join(localAppData, 'Vivaldi\\User Data') }
-  ];
+  let chromiumRoots = [];
+  if (process.platform === 'win32') {
+    const localAppData = process.env.LOCALAPPDATA || path.join(USER_HOME, 'AppData', 'Local');
+    const appData = process.env.APPDATA || path.join(USER_HOME, 'AppData', 'Roaming');
+    chromiumRoots = [
+      { name: 'Chrome', dir: path.join(localAppData, 'Google', 'Chrome', 'User Data') },
+      { name: 'Edge', dir: path.join(localAppData, 'Microsoft', 'Edge', 'User Data') },
+      { name: 'CocCoc', dir: path.join(localAppData, 'CocCoc', 'Browser', 'User Data') },
+      { name: 'Brave', dir: path.join(localAppData, 'BraveSoftware', 'Brave-Browser', 'User Data') },
+      { name: 'Vivaldi', dir: path.join(localAppData, 'Vivaldi', 'User Data') }
+    ];
+    const operaHist = path.join(appData, 'Opera Software', 'Opera Stable', 'History');
+    if (fs.existsSync(operaHist)) {
+      dbTargets.push({ name: 'Opera', path: operaHist, maxId: -1 });
+    }
+  } else if (process.platform === 'darwin') {
+    const appSupport = path.join(USER_HOME, 'Library', 'Application Support');
+    chromiumRoots = [
+      { name: 'Chrome', dir: path.join(appSupport, 'Google', 'Chrome') },
+      { name: 'Edge', dir: path.join(appSupport, 'Microsoft Edge') },
+      { name: 'CocCoc', dir: path.join(appSupport, 'CocCoc', 'Browser') },
+      { name: 'Brave', dir: path.join(appSupport, 'BraveSoftware', 'Brave-Browser') },
+      { name: 'Vivaldi', dir: path.join(appSupport, 'Vivaldi') },
+      { name: 'Arc', dir: path.join(appSupport, 'Arc', 'User Data') }
+    ];
+    const operaHist = path.join(appSupport, 'com.operasoftware.Opera', 'History');
+    if (fs.existsSync(operaHist)) {
+      dbTargets.push({ name: 'Opera', path: operaHist, maxId: -1 });
+    }
+  } else {
+    const cfg = path.join(USER_HOME, '.config');
+    chromiumRoots = [
+      { name: 'Chrome', dir: path.join(cfg, 'google-chrome') },
+      { name: 'Chromium', dir: path.join(cfg, 'chromium') },
+      { name: 'Edge', dir: path.join(cfg, 'microsoft-edge') },
+      { name: 'Brave', dir: path.join(cfg, 'BraveSoftware', 'Brave-Browser') }
+    ];
+  }
   for (const root of chromiumRoots) {
     if (!fs.existsSync(root.dir)) continue;
     try {
@@ -847,10 +891,6 @@ function startBrowserSqliteDownloadWatcher() {
         }
       }
     } catch {}
-  }
-  const operaHist = path.join(appData, 'Opera Software\\Opera Stable\\History');
-  if (fs.existsSync(operaHist)) {
-    dbTargets.push({ name: 'Opera', path: operaHist, maxId: -1 });
   }
 
   function pollOneBrowser(b) {
