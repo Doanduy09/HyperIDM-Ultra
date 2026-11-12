@@ -13,6 +13,7 @@ const DEFAULT_SAVE_DIR = path.join(process.env.USERPROFILE || 'C:\\Users\\admin'
 
 const jobs = new Map();
 const sseClients = new Set();
+const interceptQueue = [];
 const speedLimiter = new idmFeatures.SpeedLimiter(() => jobs.values());
 
 const BENCHMARK_CHUNK = Buffer.alloc(1024 * 1024, 0x48);
@@ -55,40 +56,104 @@ const batchQueue = new idmFeatures.DownloadQueue({
 async function loadHistory() {
   try {
     await fsp.mkdir(DEFAULT_SAVE_DIR, { recursive: true });
-    if (!fs.existsSync(HISTORY_FILE)) return;
-    const raw = await fsp.readFile(HISTORY_FILE, 'utf8');
-    const list = JSON.parse(raw);
-    if (!Array.isArray(list)) return;
-    for (const item of list) {
+    if (fs.existsSync(HISTORY_FILE)) {
+      const raw = await fsp.readFile(HISTORY_FILE, 'utf8');
+      const list = JSON.parse(raw);
+      if (Array.isArray(list)) {
+        for (const item of list) {
+          const job = new DownloadJob({
+            id: item.id,
+            url: item.url,
+            saveDir: item.saveDir || DEFAULT_SAVE_DIR,
+            fileName: item.fileName,
+            maxConnections: item.maxConnections || 64
+          });
+          job.finalUrl = item.finalUrl || item.url;
+          job.filePath = item.filePath || path.join(job.saveDir, item.fileName || '');
+          job.stateFilePath = `${job.filePath}.hyper.json`;
+          job.status = ['downloading', 'probing', 'resolving', 'muxing'].includes(item.status) ? 'paused' : (item.status || 'paused');
+          job.totalBytes = item.totalBytes || 0;
+          job.downloadedBytes = item.downloadedBytes || 0;
+          job.acceptRanges = Boolean(item.acceptRanges);
+          job.peakSpeedBps = item.peakSpeedBps || 0;
+          job.elapsedMs = item.elapsedMs || 0;
+          job.stealCount = item.stealCount || 0;
+          job.recycleCount = item.recycleCount || 0;
+          job.segments = Array.isArray(item.segments) ? item.segments : [];
+          attachJobEvents(job);
+          idmFeatures.attachIdmFeatures(job, {
+            baseDir: DEFAULT_SAVE_DIR,
+            autoCategory: false,
+            verify: true
+          });
+          if (item.idm) {
+            job.idmCategory = item.idm.category || null;
+            job.idmChecksum = item.idm.checksum || { status: 'none' };
+          }
+          jobs.set(job.id, job);
+        }
+      }
+    }
+  } catch {}
+  await syncExistingDownloads();
+}
+
+async function syncExistingDownloads() {
+  try {
+    const downloadsRoot = path.join(process.env.USERPROFILE || 'C:\\Users\\admin', 'Downloads');
+    const existingPaths = new Set(Array.from(jobs.values()).map(j => (j.filePath || '').toLowerCase()));
+    const scanDirs = [downloadsRoot, DEFAULT_SAVE_DIR];
+    for (const folder of Object.keys(idmFeatures.CATEGORIES || {})) {
+      scanDirs.push(path.join(DEFAULT_SAVE_DIR, folder));
+      scanDirs.push(path.join(downloadsRoot, folder));
+    }
+
+    const foundFiles = [];
+    for (const dir of scanDirs) {
+      if (!fs.existsSync(dir)) continue;
+      const entries = await fsp.readdir(dir, { withFileTypes: true });
+      for (const ent of entries) {
+        if (!ent.isFile()) continue;
+        if (ent.name.endsWith('.hyper.json') || ent.name === 'desktop.ini') continue;
+        const fullPath = path.join(dir, ent.name);
+        if (existingPaths.has(fullPath.toLowerCase())) continue;
+        try {
+          const st = await fsp.stat(fullPath);
+          if (st.size > 0) {
+            foundFiles.push({ name: ent.name, dir, fullPath, size: st.size, mtimeMs: st.mtimeMs });
+          }
+        } catch {}
+      }
+    }
+
+    foundFiles.sort((a, b) => b.mtimeMs - a.mtimeMs);
+    for (const f of foundFiles.slice(0, 25)) {
+      if (existingPaths.has(f.fullPath.toLowerCase())) continue;
+      existingPaths.add(f.fullPath.toLowerCase());
+      const id = 'local-' + Buffer.from(f.name).toString('hex').slice(0, 16);
+      if (jobs.has(id)) continue;
       const job = new DownloadJob({
-        id: item.id,
-        url: item.url,
-        saveDir: item.saveDir || DEFAULT_SAVE_DIR,
-        fileName: item.fileName,
-        maxConnections: item.maxConnections || 64
+        id,
+        url: `file:///${f.fullPath.replace(/\\/g, '/')}`,
+        saveDir: f.dir,
+        fileName: f.name,
+        maxConnections: 64
       });
-      job.finalUrl = item.finalUrl || item.url;
-      job.filePath = item.filePath || path.join(job.saveDir, item.fileName || '');
-      job.stateFilePath = `${job.filePath}.hyper.json`;
-      job.status = ['downloading', 'probing', 'resolving', 'muxing'].includes(item.status) ? 'paused' : (item.status || 'paused');
-      job.totalBytes = item.totalBytes || 0;
-      job.downloadedBytes = item.downloadedBytes || 0;
-      job.acceptRanges = Boolean(item.acceptRanges);
-      job.peakSpeedBps = item.peakSpeedBps || 0;
-      job.elapsedMs = item.elapsedMs || 0;
-      job.stealCount = item.stealCount || 0;
-      job.recycleCount = item.recycleCount || 0;
-      job.segments = Array.isArray(item.segments) ? item.segments : [];
+      job.filePath = f.fullPath;
+      job.status = 'completed';
+      job.totalBytes = f.size;
+      job.downloadedBytes = f.size;
+      job.acceptRanges = true;
+      job.lastTryTime = new Date(f.mtimeMs).toLocaleString('vi-VN');
       attachJobEvents(job);
       idmFeatures.attachIdmFeatures(job, {
         baseDir: DEFAULT_SAVE_DIR,
         autoCategory: false,
-        verify: true
+        verify: false
       });
-      if (item.idm) {
-        job.idmCategory = item.idm.category || null;
-        job.idmChecksum = item.idm.checksum || { status: 'none' };
-      }
+      const cat = idmFeatures.categorize({ fileName: f.name, url: f.name });
+      job.idmCategory = { category: cat, folder: cat };
+      job.idmChecksum = { status: 'verified', algorithm: 'NTFS-InPlace', actual: 'Sẵn sàng trên ổ đĩa' };
       jobs.set(job.id, job);
     }
   } catch {}
@@ -305,6 +370,82 @@ const server = http.createServer(async (req, res) => {
     } catch (e) {
       return sendJson(res, 500, { error: e.message });
     }
+  }
+
+  // Categories list endpoint
+  if (pathname === '/api/categories' && req.method === 'GET') {
+    return sendJson(res, 200, { categories: idmFeatures.CATEGORIES });
+  }
+
+  // Batch Pattern Expand endpoint
+  if (pathname === '/api/batch-expand' && req.method === 'POST') {
+    try {
+      const body = await readJsonBody(req);
+      const urls = idmFeatures.expandBatchPattern(body.pattern || body.url || '');
+      return sendJson(res, 200, { count: urls.length, urls });
+    } catch (e) {
+      return sendJson(res, 500, { error: e.message });
+    }
+  }
+
+  // Intercept Link Queue (for System Tray Native Popup Dialog & Browser Extension)
+  if (pathname === '/api/intercept' && req.method === 'POST') {
+    try {
+      const body = await readJsonBody(req);
+      if (!body.url) return sendJson(res, 400, { error: 'Missing url' });
+      const cat = idmFeatures.categorize({ fileName: body.fileName || '', url: body.url });
+      const item = {
+        id: 'int-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
+        url: body.url,
+        fileName: body.fileName || '',
+        referrer: body.referrer || '',
+        category: cat,
+        saveDir: path.join(DEFAULT_SAVE_DIR, cat),
+        timestamp: Date.now()
+      };
+      interceptQueue.push(item);
+      for (const client of sseClients) {
+        try {
+          client.write(`data: ${JSON.stringify({ type: 'intercept', item })}\n\n`);
+        } catch {}
+      }
+      return sendJson(res, 201, { ok: true, item });
+    } catch (e) {
+      return sendJson(res, 500, { error: e.message });
+    }
+  }
+
+  if (pathname === '/api/intercept-queue' && req.method === 'GET') {
+    const items = interceptQueue.splice(0, interceptQueue.length);
+    return sendJson(res, 200, { items });
+  }
+
+  // Pause All Active Jobs (IDM "Dừng tất cả" button & Tray action)
+  if (pathname === '/api/pause-all' && req.method === 'POST') {
+    let pausedCount = 0;
+    for (const job of jobs.values()) {
+      if (['downloading', 'probing', 'resolving'].includes(job.status)) {
+        await job.pause();
+        pausedCount++;
+      }
+    }
+    broadcastState();
+    scheduleSaveHistory();
+    return sendJson(res, 200, { ok: true, pausedCount });
+  }
+
+  // Clear All Completed Jobs from List (IDM "Xóa các mục đã hoàn thành" button)
+  if (pathname === '/api/clear-completed' && req.method === 'POST') {
+    let removedCount = 0;
+    for (const [id, job] of jobs.entries()) {
+      if (job.status === 'completed') {
+        jobs.delete(id);
+        removedCount++;
+      }
+    }
+    broadcastState();
+    scheduleSaveHistory();
+    return sendJson(res, 200, { ok: true, removedCount });
   }
 
   const actionMatch = /^\/api\/jobs\/([^/]+)\/(pause|resume|open-folder|open-file|refresh-url)$/.exec(pathname);

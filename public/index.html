@@ -1,756 +1,1735 @@
 <!DOCTYPE html>
-<html lang="vi">
+<html lang="vi" data-theme="light">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>HyperIDM Ultra 64-Bit — TitanFetch Download Accelerator</title>
+  <title>Internet Download Manager — HyperIDM Ultra 6.43 Pro (64-Bit Native Engine)</title>
   <style>
-    :root {
-      --bg-base: #070b14;
-      --bg-panel: #0f1626;
-      --bg-card: #141e33;
-      --bg-card-hover: #192540;
-      --border: rgba(56, 189, 248, 0.16);
-      --border-strong: rgba(56, 189, 248, 0.38);
-      --text-main: #f1f5f9;
+    :root[data-theme="light"] {
+      --bg-window: #f3f5f8;
+      --bg-menubar: #ffffff;
+      --bg-ribbon: linear-gradient(180deg, #ffffff 0%, #f1f5f9 100%);
+      --bg-quickbar: #f8fafc;
+      --bg-panel: #ffffff;
+      --bg-sidebar: #fbfcfe;
+      --bg-table-head: linear-gradient(180deg, #f8fafc 0%, #eef2f6 100%);
+      --bg-row-even: #ffffff;
+      --bg-row-odd: #f8fafc;
+      --bg-row-hover: #e8f2ff;
+      --bg-row-selected: #cce4ff;
+      --bg-statusbar: #edf1f7;
+      --bg-modal: #ffffff;
+      --bg-modal-head: linear-gradient(180deg, #f0f6ff 0%, #e4eefc 100%);
+      --bg-input: #ffffff;
+      --border-main: #cfd8e3;
+      --border-soft: #e2e8f0;
+      --text-main: #0f172a;
+      --text-sub: #334155;
+      --text-muted: #64748b;
+      --accent: #0067c0;
+      --accent-hover: #005299;
+      --accent-soft: rgba(0, 103, 192, 0.1);
+      --green: #0f9d58;
+      --amber: #d97706;
+      --red: #dc2626;
+      --shadow-sm: 0 1px 3px rgba(15, 23, 42, 0.06);
+      --shadow-lg: 0 18px 45px rgba(15, 23, 42, 0.22);
+      --seg-empty: #e2e8f0;
+    }
+
+    :root[data-theme="dark"] {
+      --bg-window: #0b1120;
+      --bg-menubar: #0f172a;
+      --bg-ribbon: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
+      --bg-quickbar: #111827;
+      --bg-panel: #111827;
+      --bg-sidebar: #0f172a;
+      --bg-table-head: linear-gradient(180deg, #1e293b 0%, #151e2e 100%);
+      --bg-row-even: #111827;
+      --bg-row-odd: #151f32;
+      --bg-row-hover: #1e3a5f;
+      --bg-row-selected: #1d4ed8;
+      --bg-statusbar: #0f172a;
+      --bg-modal: #162032;
+      --bg-modal-head: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
+      --bg-input: #0b1120;
+      --border-main: #283548;
+      --border-soft: #1e293b;
+      --text-main: #f8fafc;
+      --text-sub: #cbd5e1;
       --text-muted: #94a3b8;
-      --accent-cyan: #06b6d4;
-      --accent-blue: #3b82f6;
-      --accent-emerald: #10b981;
-      --accent-amber: #f59e0b;
-      --accent-rose: #f43f5e;
-      --accent-purple: #8b5cf6;
+      --accent: #38bdf8;
+      --accent-hover: #0284c7;
+      --accent-soft: rgba(56, 189, 248, 0.14);
+      --green: #22c55e;
+      --amber: #f59e0b;
+      --red: #ef4444;
+      --shadow-sm: 0 2px 6px rgba(0, 0, 0, 0.35);
+      --shadow-lg: 0 20px 50px rgba(0, 0, 0, 0.65);
+      --seg-empty: #1e293b;
     }
 
     * {
       box-sizing: border-box;
       margin: 0;
       padding: 0;
-      font-family: 'Segoe UI', Inter, -apple-system, BlinkMacSystemFont, sans-serif;
+      user-select: none;
     }
 
     body {
-      background: radial-gradient(circle at 15% 0%, #0f2042 0%, var(--bg-base) 55%);
+      font-family: "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif;
+      font-size: 12.5px;
+      background: var(--bg-window);
       color: var(--text-main);
-      min-height: 100vh;
-      overflow-x: hidden;
+      height: 100vh;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
     }
 
-    .app-shell {
-      max-width: 1440px;
-      margin: 0 auto;
-      padding: 20px 24px 40px;
-    }
-
-    /* Header */
-    .topbar {
+    /* 1. TOP MENU BAR (Chuẩn IDM 6.43) */
+    .idm-menubar {
+      height: 30px;
+      background: var(--bg-menubar);
+      border-bottom: 1px solid var(--border-main);
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 16px;
-      padding: 16px 22px;
-      background: rgba(15, 22, 38, 0.85);
-      backdrop-filter: blur(14px);
-      border: 1px solid var(--border);
-      border-radius: 16px;
-      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
-      margin-bottom: 20px;
+      padding: 0 10px;
+      flex-shrink: 0;
     }
 
-    .brand {
+    .menu-left {
       display: flex;
       align-items: center;
-      gap: 14px;
+      gap: 2px;
     }
 
-    .brand-logo {
-      width: 46px;
-      height: 46px;
-      border-radius: 12px;
-      background: linear-gradient(135deg, #06b6d4, #3b82f6 60%, #8b5cf6);
+    .app-icon-badge {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-weight: 700;
+      color: var(--accent);
+      padding-right: 10px;
+      margin-right: 4px;
+      border-right: 1px solid var(--border-soft);
+      font-size: 12.5px;
+    }
+
+    .menu-item {
+      position: relative;
+      padding: 4px 9px;
+      border-radius: 4px;
+      cursor: pointer;
+      color: var(--text-main);
+      font-size: 12px;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      background: transparent;
+      border: none;
+      font-family: inherit;
+    }
+
+    .menu-item:hover {
+      background: var(--accent-soft);
+      color: var(--accent);
+    }
+
+    .menu-item.highlight {
+      font-weight: 700;
+      color: var(--accent);
+      background: var(--accent-soft);
+    }
+
+    .menu-dropdown {
+      display: none;
+      position: absolute;
+      top: 100%;
+      left: 0;
+      min-width: 220px;
+      background: var(--bg-modal);
+      border: 1px solid var(--border-main);
+      border-radius: 6px;
+      box-shadow: var(--shadow-lg);
+      padding: 4px;
+      z-index: 200;
+    }
+
+    .menu-wrap {
+      position: relative;
+    }
+
+    .menu-wrap:hover .menu-dropdown {
+      display: block;
+    }
+
+    .menu-dd-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 10px;
+      border-radius: 4px;
+      font-size: 12px;
+      color: var(--text-main);
+      cursor: pointer;
+    }
+
+    .menu-dd-item:hover {
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .menu-dd-sep {
+      height: 1px;
+      background: var(--border-soft);
+      margin: 4px 0;
+    }
+
+    .menu-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .tray-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11.5px;
+      font-weight: 600;
+      padding: 2px 9px;
+      border-radius: 99px;
+      background: rgba(15, 157, 88, 0.12);
+      color: var(--green);
+      border: 1px solid rgba(15, 157, 88, 0.3);
+      cursor: pointer;
+    }
+
+    .tray-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 6px var(--green);
+      animation: pulseDot 1.8s infinite;
+    }
+
+    @keyframes pulseDot {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.45; transform: scale(0.85); }
+    }
+
+    .theme-btn {
+      padding: 3px 9px;
+      border-radius: 5px;
+      border: 1px solid var(--border-main);
+      background: var(--bg-panel);
+      color: var(--text-main);
+      font-size: 11.5px;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .theme-btn:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    /* 2. IDM 6.43 3D RIBBON TOOLBAR */
+    .idm-ribbon {
+      background: var(--bg-ribbon);
+      border-bottom: 1px solid var(--border-main);
+      padding: 5px 10px;
+      display: flex;
+      align-items: center;
+      gap: 2px;
+      flex-wrap: wrap;
+      flex-shrink: 0;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .toolbar-btn {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-width: 64px;
+      padding: 4px 7px;
+      border-radius: 6px;
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--text-main);
+      cursor: pointer;
+      transition: all 0.12s ease;
+      gap: 3px;
+      font-family: inherit;
+      position: relative;
+    }
+
+    .toolbar-btn:hover:not(:disabled) {
+      background: var(--accent-soft);
+      border-color: rgba(0, 103, 192, 0.28);
+      transform: translateY(-1px);
+    }
+
+    .toolbar-btn:active:not(:disabled) {
+      transform: translateY(0);
+    }
+
+    .toolbar-btn:disabled {
+      opacity: 0.42;
+      cursor: default;
+    }
+
+    .tb-icon {
+      width: 30px;
+      height: 30px;
+      border-radius: 8px;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-weight: 900;
-      font-size: 20px;
-      color: #fff;
-      box-shadow: 0 0 22px rgba(6, 182, 212, 0.45);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.6), 0 2px 4px rgba(15, 23, 42, 0.12);
+      position: relative;
     }
 
-    .brand-title h1 {
-      font-size: 20px;
-      font-weight: 800;
-      letter-spacing: -0.3px;
-      display: flex;
-      align-items: center;
-      gap: 10px;
+    .tb-icon svg {
+      width: 18px;
+      height: 18px;
+      fill: none;
+      stroke: #fff;
+      stroke-width: 2.2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      filter: drop-shadow(0 1px 1px rgba(0,0,0,0.25));
     }
 
-    .badge-arch {
+    .ico-add { background: linear-gradient(145deg, #22c55e, #15803d); }
+    .ico-resume { background: linear-gradient(145deg, #3b82f6, #1d4ed8); }
+    .ico-pause { background: linear-gradient(145deg, #f59e0b, #b45309); }
+    .ico-stopall { background: linear-gradient(145deg, #ef4444, #b91c1c); }
+    .ico-delete { background: linear-gradient(145deg, #fb7185, #be123c); }
+    .ico-clean { background: linear-gradient(145deg, #a855f7, #6d28d9); }
+    .ico-options { background: linear-gradient(145deg, #64748b, #334155); }
+    .ico-sched { background: linear-gradient(145deg, #06b6d4, #0e7490); }
+    .ico-startq { background: linear-gradient(145deg, #10b981, #047857); }
+    .ico-stopq { background: linear-gradient(145deg, #f97316, #c2410c); }
+    .ico-test { background: linear-gradient(145deg, #ec4899, #be185d); }
+
+    .tb-label {
       font-size: 11px;
-      font-weight: 700;
-      padding: 3px 9px;
-      border-radius: 999px;
-      background: rgba(16, 185, 129, 0.16);
-      color: #34d399;
-      border: 1px solid rgba(16, 185, 129, 0.35);
-      text-transform: uppercase;
-    }
-
-    .brand-sub {
-      font-size: 12.5px;
-      color: var(--text-muted);
-      margin-top: 3px;
-    }
-
-    .nav-tabs {
-      display: flex;
-      gap: 8px;
-    }
-
-    .tab-btn {
-      background: rgba(255, 255, 255, 0.04);
-      color: var(--text-muted);
-      border: 1px solid rgba(255, 255, 255, 0.08);
-      padding: 9px 16px;
-      border-radius: 10px;
-      font-size: 13px;
       font-weight: 600;
-      cursor: pointer;
-      transition: all 0.18s ease;
-    }
-
-    .tab-btn:hover {
-      color: #fff;
-      border-color: var(--border-strong);
-    }
-
-    .tab-btn.active {
-      background: linear-gradient(135deg, rgba(6, 182, 212, 0.22), rgba(59, 130, 246, 0.22));
-      color: #38bdf8;
-      border-color: #38bdf8;
-      box-shadow: 0 0 16px rgba(56, 189, 248, 0.2);
-    }
-
-    /* New Download Bar */
-    .composer-card {
-      background: var(--bg-panel);
-      border: 1px solid var(--border-strong);
-      border-radius: 16px;
-      padding: 18px 20px;
-      margin-bottom: 20px;
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
-    }
-
-    .composer-main {
-      display: grid;
-      grid-template-columns: 1fr 170px auto auto;
-      gap: 12px;
-      align-items: center;
-    }
-
-    .url-input {
-      width: 100%;
-      padding: 13px 16px;
-      border-radius: 11px;
-      border: 1px solid rgba(148, 163, 184, 0.25);
-      background: #080d19;
-      color: #fff;
-      font-size: 14px;
-      outline: none;
-      transition: border 0.2s;
-    }
-
-    .url-input:focus {
-      border-color: #38bdf8;
-      box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.15);
-    }
-
-    .select-box {
-      padding: 13px 12px;
-      border-radius: 11px;
-      border: 1px solid rgba(148, 163, 184, 0.25);
-      background: #080d19;
-      color: #38bdf8;
-      font-weight: 700;
-      font-size: 13.5px;
-      outline: none;
-      cursor: pointer;
-    }
-
-    .btn-primary {
-      padding: 13px 22px;
-      border-radius: 11px;
-      border: none;
-      background: linear-gradient(135deg, #06b6d4, #2563eb);
-      color: #fff;
-      font-weight: 800;
-      font-size: 14px;
-      cursor: pointer;
-      box-shadow: 0 6px 20px rgba(6, 182, 212, 0.35);
-      transition: transform 0.15s, box-shadow 0.15s;
+      line-height: 1.1;
       white-space: nowrap;
+      color: var(--text-sub);
     }
 
-    .btn-primary:hover {
-      transform: translateY(-1px);
-      box-shadow: 0 8px 25px rgba(6, 182, 212, 0.55);
+    .toolbar-sep {
+      width: 1px;
+      height: 38px;
+      background: var(--border-main);
+      margin: 0 4px;
     }
 
-    .btn-secondary {
-      padding: 12px 15px;
-      border-radius: 11px;
-      border: 1px solid rgba(148, 163, 184, 0.25);
-      background: rgba(255, 255, 255, 0.04);
-      color: var(--text-main);
-      font-weight: 600;
-      font-size: 13px;
-      cursor: pointer;
-      white-space: nowrap;
+    /* Dropdown on Test Speed button */
+    .test-dropdown-wrap {
+      position: relative;
     }
 
-    .btn-secondary:hover {
-      background: rgba(255, 255, 255, 0.09);
-      border-color: #38bdf8;
-    }
-
-    .composer-QuickBar {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      justify-content: space-between;
-      gap: 10px;
-      margin-top: 12px;
-      padding-top: 12px;
-      border-top: 1px solid rgba(255, 255, 255, 0.06);
-      font-size: 12.5px;
-      color: var(--text-muted);
-    }
-
-    .preset-group {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      align-items: center;
-    }
-
-    .chip-btn {
-      padding: 5px 11px;
+    .test-dropdown-menu {
+      display: none;
+      position: absolute;
+      top: calc(100% + 2px);
+      right: 0;
+      width: 310px;
+      background: var(--bg-modal);
+      border: 1px solid var(--border-main);
       border-radius: 8px;
-      border: 1px solid rgba(56, 189, 248, 0.28);
-      background: rgba(56, 189, 248, 0.09);
-      color: #7dd3fc;
+      box-shadow: var(--shadow-lg);
+      padding: 6px;
+      z-index: 250;
+    }
+
+    .test-dropdown-wrap.open .test-dropdown-menu,
+    .test-dropdown-wrap:hover .test-dropdown-menu {
+      display: block;
+    }
+
+    .test-dd-item {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 7px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      color: var(--text-main);
       font-size: 12px;
       font-weight: 600;
-      cursor: pointer;
-      transition: all 0.15s;
     }
 
-    .chip-btn:hover {
-      background: rgba(56, 189, 248, 0.22);
-      color: #fff;
+    .test-dd-item:hover {
+      background: var(--accent-soft);
+      color: var(--accent);
     }
 
-    .chip-btn.turbo {
-      border-color: rgba(16, 185, 129, 0.4);
-      background: rgba(16, 185, 129, 0.12);
-      color: #6ee7b7;
-    }
-
-    .advanced-drawer {
-      display: none;
-      grid-template-columns: 1fr 1fr 1fr;
-      gap: 12px;
-      margin-top: 12px;
-      padding-top: 12px;
-      border-top: 1px dashed rgba(255, 255, 255, 0.1);
-    }
-
-    .advanced-drawer.open {
-      display: grid;
-    }
-
-    .field-group label {
-      display: block;
-      font-size: 11.5px;
+    .test-dd-sub {
+      font-size: 10.5px;
       color: var(--text-muted);
-      margin-bottom: 5px;
+      font-weight: 400;
+    }
+
+    /* 2B. QUICK URL BAR */
+    .quick-url-bar {
+      background: var(--bg-quickbar);
+      border-bottom: 1px solid var(--border-main);
+      padding: 5px 10px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+
+    .quick-url-input {
+      flex: 1;
+      height: 28px;
+      padding: 0 10px;
+      border-radius: 4px;
+      border: 1px solid var(--border-main);
+      background: var(--bg-input);
+      color: var(--text-main);
+      font-size: 12.5px;
+      outline: none;
+    }
+
+    .quick-url-input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px var(--accent-soft);
+    }
+
+    .quick-select {
+      height: 28px;
+      padding: 0 8px;
+      border-radius: 4px;
+      border: 1px solid var(--border-main);
+      background: var(--bg-input);
+      color: var(--text-main);
+      font-size: 12px;
       font-weight: 600;
     }
 
-    .field-group input {
-      width: 100%;
-      padding: 9px 12px;
-      border-radius: 8px;
-      border: 1px solid rgba(148, 163, 184, 0.22);
-      background: #080d19;
+    .btn-quick-dl {
+      height: 28px;
+      padding: 0 12px;
+      border-radius: 4px;
+      border: none;
+      background: var(--accent);
       color: #fff;
-      font-size: 13px;
+      font-weight: 700;
+      font-size: 12px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
     }
 
-    /* Telemetry Grid */
-    .telemetry-grid {
-      display: grid;
-      grid-template-columns: 1.3fr 1fr 1fr 1fr;
-      gap: 16px;
-      margin-bottom: 22px;
+    .btn-quick-dl:hover {
+      background: var(--accent-hover);
     }
 
-    .metric-card {
-      background: var(--bg-panel);
-      border: 1px solid var(--border);
-      border-radius: 14px;
-      padding: 16px 18px;
-      position: relative;
+    .search-input {
+      width: 185px;
+      height: 28px;
+      padding: 0 9px;
+      border-radius: 4px;
+      border: 1px solid var(--border-main);
+      background: var(--bg-input);
+      color: var(--text-main);
+      font-size: 12px;
+    }
+
+    /* 3. SPLIT-PANE 2-COLUMN WORKSPACE (Chuẩn IDM 6.43) */
+    .workspace-split {
+      flex: 1;
+      display: flex;
+      min-height: 0;
       overflow: hidden;
     }
 
-    .metric-label {
-      font-size: 12px;
-      text-transform: uppercase;
-      letter-spacing: 0.6px;
-      color: var(--text-muted);
-      font-weight: 700;
+    /* Left TreeView Sidebar */
+    .sidebar-tree {
+      width: 225px;
+      background: var(--bg-sidebar);
+      border-right: 1px solid var(--border-main);
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+      transition: width 0.15s ease;
     }
 
-    .metric-value {
-      font-size: 28px;
-      font-weight: 900;
-      margin-top: 6px;
+    .sidebar-tree.collapsed {
+      width: 42px;
+    }
+
+    .sidebar-tree.collapsed .tree-label-text,
+    .sidebar-tree.collapsed .tree-count,
+    .sidebar-tree.collapsed .sidebar-title-text,
+    .sidebar-tree.collapsed .sidebar-telemetry {
+      display: none;
+    }
+
+    .sidebar-header {
+      height: 28px;
+      padding: 0 10px;
+      background: var(--bg-table-head);
+      border-bottom: 1px solid var(--border-main);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-weight: 700;
+      font-size: 11.5px;
+      color: var(--text-sub);
+    }
+
+    .tree-collapse-btn {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 12px;
+      padding: 2px 4px;
+    }
+
+    .tree-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 6px 5px;
+    }
+
+    .tree-group-header {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      padding: 4px 6px;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      color: var(--text-muted);
+      cursor: pointer;
+    }
+
+    .tree-node {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 5px 8px 5px 14px;
+      border-radius: 5px;
+      cursor: pointer;
+      color: var(--text-main);
+      font-size: 12px;
+      margin-bottom: 1px;
+    }
+
+    .tree-node:hover {
+      background: var(--bg-row-hover);
+    }
+
+    .tree-node.active {
+      background: var(--bg-row-selected);
+      font-weight: 700;
+      color: var(--text-main);
+    }
+
+    :root[data-theme="dark"] .tree-node.active {
       color: #fff;
+    }
+
+    .tree-node-left {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      min-width: 0;
+    }
+
+    .tree-count {
+      font-size: 10.5px;
+      font-weight: 700;
+      padding: 1px 6px;
+      border-radius: 99px;
+      background: var(--border-soft);
+      color: var(--text-sub);
+    }
+
+    .sidebar-telemetry {
+      border-top: 1px solid var(--border-main);
+      padding: 8px 10px;
+      background: var(--bg-panel);
+    }
+
+    .tele-title {
+      font-size: 10.5px;
+      font-weight: 700;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 4px;
+    }
+
+    .tele-speed-big {
+      font-size: 15px;
+      font-weight: 800;
+      color: var(--accent);
       display: flex;
       align-items: baseline;
-      gap: 10px;
-    }
-
-    .metric-sub {
-      font-size: 12.5px;
-      color: #38bdf8;
-      font-weight: 600;
-      margin-top: 4px;
+      gap: 5px;
     }
 
     #speedCanvas {
-      position: absolute;
-      bottom: 0;
-      left: 0;
       width: 100%;
-      height: 48px;
-      opacity: 0.45;
-      pointer-events: none;
+      height: 38px;
+      display: block;
+      margin-top: 4px;
+      border-radius: 4px;
+      background: var(--bg-quickbar);
+      border: 1px solid var(--border-soft);
     }
 
-    /* Jobs List */
-    .jobs-container {
+    /* Right DataGrid Area */
+    .main-grid-pane {
+      flex: 1;
       display: flex;
       flex-direction: column;
-      gap: 16px;
-    }
-
-    .job-card {
-      background: var(--bg-card);
-      border: 1px solid var(--border);
-      border-radius: 16px;
-      padding: 18px 20px;
-      transition: border-color 0.2s;
-    }
-
-    .job-card.downloading {
-      border-color: #06b6d4;
-      box-shadow: 0 0 28px rgba(6, 182, 212, 0.14);
-    }
-
-    .job-card.completed {
-      border-color: rgba(16, 185, 129, 0.35);
-    }
-
-    .job-header {
-      display: flex;
-      align-items: flex-start;
-      justify-content: space-between;
-      gap: 16px;
-      margin-bottom: 12px;
-    }
-
-    .job-title-wrap {
       min-width: 0;
+      background: var(--bg-panel);
+    }
+
+    .datagrid-scroll {
       flex: 1;
+      overflow: auto;
+      position: relative;
     }
 
-    .job-title {
-      font-size: 16px;
-      font-weight: 800;
-      color: #fff;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      word-break: break-all;
-    }
-
-    .status-pill {
-      font-size: 11px;
-      font-weight: 800;
-      padding: 3px 9px;
-      border-radius: 99px;
-      text-transform: uppercase;
-      white-space: nowrap;
-    }
-
-    .status-downloading { background: rgba(6, 182, 212, 0.2); color: #22d3ee; border: 1px solid rgba(6, 182, 212, 0.4); }
-    .status-probing, .status-resolving, .status-muxing { background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.4); }
-    .status-completed { background: rgba(16, 185, 129, 0.2); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.4); }
-    .status-paused { background: rgba(148, 163, 184, 0.2); color: #cbd5e1; border: 1px solid rgba(148, 163, 184, 0.35); }
-    .status-error { background: rgba(244, 63, 94, 0.2); color: #fb7185; border: 1px solid rgba(244, 63, 94, 0.4); }
-
-    .job-url {
+    table.idm-datagrid {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
       font-size: 12px;
-      color: var(--text-muted);
-      margin-top: 4px;
+    }
+
+    table.idm-datagrid thead th {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      height: 28px;
+      background: var(--bg-table-head);
+      border-bottom: 1px solid var(--border-main);
+      border-right: 1px solid var(--border-soft);
+      padding: 0 8px;
+      text-align: left;
+      font-weight: 700;
+      font-size: 11.5px;
+      color: var(--text-sub);
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
     }
 
-    .job-actions {
+    table.idm-datagrid tbody tr {
+      height: 32px;
+      border-bottom: 1px solid var(--border-soft);
+      cursor: pointer;
+    }
+
+    table.idm-datagrid tbody tr:nth-child(even) {
+      background: var(--bg-row-even);
+    }
+
+    table.idm-datagrid tbody tr:nth-child(odd) {
+      background: var(--bg-row-odd);
+    }
+
+    table.idm-datagrid tbody tr:hover {
+      background: var(--bg-row-hover);
+    }
+
+    table.idm-datagrid tbody tr.selected {
+      background: var(--bg-row-selected) !important;
+    }
+
+    :root[data-theme="dark"] table.idm-datagrid tbody tr.selected td {
+      color: #fff;
+    }
+
+    table.idm-datagrid td {
+      padding: 0 8px;
+      border-right: 1px solid var(--border-soft);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      vertical-align: middle;
+    }
+
+    .file-cell {
       display: flex;
-      gap: 8px;
+      align-items: center;
+      gap: 7px;
+      min-width: 0;
+    }
+
+    .ext-icon {
+      width: 22px;
+      height: 22px;
+      border-radius: 4px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 9px;
+      font-weight: 800;
+      color: #fff;
+      flex-shrink: 0;
+      letter-spacing: -0.02em;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.18);
+    }
+
+    .ext-ipsw { background: linear-gradient(135deg, #6366f1, #4338ca); }
+    .ext-zip  { background: linear-gradient(135deg, #f59e0b, #b45309); }
+    .ext-exe  { background: linear-gradient(135deg, #0ea5e9, #0369a1); }
+    .ext-mp4  { background: linear-gradient(135deg, #ec4899, #be185d); }
+    .ext-pdf  { background: linear-gradient(135deg, #ef4444, #b91c1c); }
+    .ext-apk  { background: linear-gradient(135deg, #22c55e, #15803d); }
+    .ext-mp3  { background: linear-gradient(135deg, #8b5cf6, #5b21b6); }
+    .ext-bin  { background: linear-gradient(135deg, #64748b, #334155); }
+
+    .file-name-text {
+      font-weight: 600;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .cat-tag {
+      display: inline-block;
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+      background: var(--accent-soft);
+      color: var(--accent);
+    }
+
+    /* Cell Progress Bar */
+    .cell-prog-wrap {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      width: 100%;
+    }
+
+    .cell-prog-bar {
+      flex: 1;
+      height: 14px;
+      background: var(--seg-empty);
+      border-radius: 3px;
+      overflow: hidden;
+      position: relative;
+      border: 1px solid var(--border-main);
+    }
+
+    .cell-prog-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #0078d4, #22c55e);
+      transition: width 0.15s linear;
+    }
+
+    .cell-prog-fill.paused {
+      background: linear-gradient(90deg, #f59e0b, #d97706);
+    }
+
+    .cell-prog-fill.error {
+      background: linear-gradient(90deg, #ef4444, #b91c1c);
+    }
+
+    .cell-prog-label {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--text-main);
+      text-shadow: 0 0 3px var(--bg-panel);
+    }
+
+    .row-mini-actions {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+    }
+
+    .mini-btn {
+      padding: 2px 6px;
+      font-size: 11px;
+      border-radius: 3px;
+      border: 1px solid var(--border-main);
+      background: var(--bg-panel);
+      color: var(--text-main);
+      cursor: pointer;
+    }
+
+    .mini-btn:hover {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+    }
+
+    .empty-grid-box {
+      padding: 55px 20px;
+      text-align: center;
+      color: var(--text-muted);
+    }
+
+    /* 4. STATUS BAR (Chuẩn Desktop IDM 6.43) */
+    .idm-statusbar {
+      height: 26px;
+      background: var(--bg-statusbar);
+      border-top: 1px solid var(--border-main);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 10px;
+      font-size: 11.5px;
+      color: var(--text-sub);
       flex-shrink: 0;
     }
 
-    .action-btn {
-      padding: 7px 12px;
-      border-radius: 8px;
-      border: 1px solid rgba(255, 255, 255, 0.12);
-      background: rgba(255, 255, 255, 0.05);
-      color: #e2e8f0;
-      font-size: 12px;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.15s;
+    .sb-left, .sb-right {
+      display: flex;
+      align-items: center;
+      gap: 12px;
     }
 
-    .action-btn:hover {
-      background: rgba(56, 189, 248, 0.18);
-      border-color: #38bdf8;
+    .sb-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding-right: 10px;
+      border-right: 1px solid var(--border-main);
+    }
+
+    .sb-item:last-child {
+      border-right: none;
+    }
+
+    /* 5. IDM DOWNLOAD PROGRESS DIALOG & MODALS */
+    .modal-backdrop {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.45);
+      backdrop-filter: blur(2px);
+      z-index: 500;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .modal-backdrop.open {
+      display: flex;
+    }
+
+    .idm-dialog {
+      width: 680px;
+      max-width: 96vw;
+      background: var(--bg-modal);
+      border: 1px solid var(--border-main);
+      border-radius: 8px;
+      box-shadow: var(--shadow-lg);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .dialog-titlebar {
+      height: 34px;
+      background: var(--bg-modal-head);
+      border-bottom: 1px solid var(--border-main);
+      padding: 0 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-weight: 700;
+      font-size: 12.5px;
+    }
+
+    .dialog-close {
+      width: 24px;
+      height: 24px;
+      border-radius: 4px;
+      border: none;
+      background: transparent;
+      color: var(--text-main);
+      cursor: pointer;
+      font-weight: 700;
+    }
+
+    .dialog-close:hover {
+      background: var(--red);
       color: #fff;
     }
 
-    .action-btn.danger:hover {
-      background: rgba(244, 63, 94, 0.22);
-      border-color: #f43f5e;
-      color: #fda4af;
+    .dialog-tabs {
+      display: flex;
+      gap: 2px;
+      padding: 6px 12px 0;
+      background: var(--bg-quickbar);
+      border-bottom: 1px solid var(--border-main);
     }
 
-    /* Progress Bar */
-    .progress-track {
-      height: 12px;
-      background: #080d19;
-      border-radius: 999px;
-      overflow: hidden;
-      border: 1px solid rgba(255, 255, 255, 0.07);
+    .d-tab {
+      padding: 6px 14px;
+      font-size: 12px;
+      font-weight: 600;
+      border: 1px solid transparent;
+      border-bottom: none;
+      border-radius: 5px 5px 0 0;
+      background: transparent;
+      color: var(--text-sub);
+      cursor: pointer;
+    }
+
+    .d-tab.active {
+      background: var(--bg-modal);
+      border-color: var(--border-main);
+      color: var(--accent);
+      font-weight: 700;
+      margin-bottom: -1px;
+    }
+
+    .dialog-body {
+      padding: 12px 14px;
+      max-height: 78vh;
+      overflow-y: auto;
+    }
+
+    .info-grid {
+      display: grid;
+      grid-template-columns: 155px 1fr;
+      row-gap: 5px;
+      column-gap: 10px;
+      font-size: 12px;
       margin-bottom: 10px;
     }
 
-    .progress-fill {
-      height: 100%;
-      background: linear-gradient(90deg, #06b6d4, #3b82f6, #10b981);
-      border-radius: 999px;
-      transition: width 0.22s linear;
-    }
-
-    .job-stats-bar {
-      display: flex;
-      flex-wrap: wrap;
-      justify-content: space-between;
-      gap: 12px;
-      font-size: 12.5px;
+    .info-label {
       color: var(--text-muted);
-      margin-bottom: 12px;
+      font-weight: 600;
     }
 
-    .stat-highlight {
-      color: #fff;
-      font-weight: 700;
-    }
-
-    .speed-badge {
-      color: #22d3ee;
-      font-weight: 800;
-      font-size: 14px;
-    }
-
-    /* Segment Matrix Grid */
-    .segments-panel {
-      background: rgba(7, 11, 20, 0.72);
-      border: 1px solid rgba(255, 255, 255, 0.06);
-      border-radius: 10px;
-      padding: 10px 12px;
-    }
-
-    .segments-header {
-      display: flex;
-      justify-content: space-between;
-      font-size: 11.5px;
-      color: var(--text-muted);
-      margin-bottom: 8px;
-    }
-
-    .segments-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(68px, 1fr));
-      gap: 5px;
-    }
-
-    .seg-cell {
-      background: #0d1526;
-      border: 1px solid rgba(255, 255, 255, 0.06);
-      border-radius: 5px;
-      padding: 4px 5px;
-      font-size: 10px;
-    }
-
-    .seg-cell.active {
-      border-color: rgba(6, 182, 212, 0.45);
-    }
-
-    .seg-cell.done {
-      border-color: rgba(16, 185, 129, 0.35);
-      background: rgba(16, 185, 129, 0.07);
-    }
-
-    .seg-top {
-      display: flex;
-      justify-content: space-between;
-      color: #cbd5e1;
-      font-weight: 700;
-      margin-bottom: 3px;
-    }
-
-    .seg-bar {
-      height: 4px;
-      background: #050811;
-      border-radius: 3px;
+    .info-val {
+      color: var(--text-main);
+      font-weight: 600;
       overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
-    .seg-bar-fill {
+    .big-prog-bar {
+      height: 18px;
+      background: var(--seg-empty);
+      border: 1px solid var(--border-main);
+      border-radius: 4px;
+      overflow: hidden;
+      position: relative;
+      margin: 8px 0;
+    }
+
+    .big-prog-fill {
       height: 100%;
-      background: #06b6d4;
+      background: linear-gradient(90deg, #0067c0, #10b981);
+      transition: width 0.12s linear;
     }
 
-    .seg-cell.done .seg-bar-fill {
+    .big-prog-text {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 800;
+      color: var(--text-main);
+    }
+
+    /* IDM 64-Segment Visual Ribbon Map */
+    .seg-map-box {
+      border: 1px solid var(--border-main);
+      background: var(--bg-quickbar);
+      border-radius: 4px;
+      padding: 6px;
+      margin-bottom: 10px;
+    }
+
+    .seg-map-title {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--text-sub);
+      margin-bottom: 4px;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .seg-strip {
+      display: grid;
+      grid-template-columns: repeat(16, 1fr);
+      gap: 3px;
+    }
+
+    .seg-block {
+      height: 12px;
+      background: var(--seg-empty);
+      border-radius: 2px;
+      overflow: hidden;
+      border: 1px solid var(--border-soft);
+    }
+
+    .seg-block-fill {
+      height: 100%;
+      background: #0067c0;
+    }
+
+    .seg-block.done .seg-block-fill {
       background: #10b981;
     }
 
-    /* Comparison Table View */
-    .arch-view {
-      display: none;
+    /* IDM Per-Connection Table */
+    .conn-table-wrap {
+      height: 155px;
+      overflow-y: auto;
+      border: 1px solid var(--border-main);
+      border-radius: 4px;
       background: var(--bg-panel);
-      border: 1px solid var(--border);
-      border-radius: 16px;
-      padding: 24px;
     }
 
-    .arch-view.active {
-      display: block;
-    }
-
-    .arch-table {
+    table.conn-table {
       width: 100%;
       border-collapse: collapse;
-      margin-top: 16px;
-      font-size: 13.5px;
+      font-size: 11.5px;
     }
 
-    .arch-table th, .arch-table td {
-      padding: 13px 15px;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+    table.conn-table th {
+      position: sticky;
+      top: 0;
+      background: var(--bg-table-head);
+      border-bottom: 1px solid var(--border-main);
+      padding: 4px 8px;
+      text-align: left;
+      font-weight: 700;
+    }
+
+    table.conn-table td {
+      padding: 3px 8px;
+      border-bottom: 1px solid var(--border-soft);
+    }
+
+    .dialog-footer {
+      padding: 9px 14px;
+      background: var(--bg-quickbar);
+      border-top: 1px solid var(--border-main);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .btn-std {
+      padding: 5px 12px;
+      border-radius: 4px;
+      border: 1px solid var(--border-main);
+      background: var(--bg-panel);
+      color: var(--text-main);
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .btn-std:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    .btn-std.primary {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+    }
+
+    .btn-std.primary:hover {
+      background: var(--accent-hover);
+    }
+
+    .form-row {
+      margin-bottom: 10px;
+    }
+
+    .form-row label {
+      display: block;
+      font-size: 11.5px;
+      font-weight: 700;
+      color: var(--text-sub);
+      margin-bottom: 4px;
+    }
+
+    .form-row input, .form-row select, .form-row textarea {
+      width: 100%;
+      padding: 6px 9px;
+      border-radius: 4px;
+      border: 1px solid var(--border-main);
+      background: var(--bg-input);
+      color: var(--text-main);
+      font-size: 12.5px;
+      font-family: inherit;
+    }
+
+    /* Comparison table inside modal */
+    table.comp-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+      margin-top: 8px;
+    }
+
+    table.comp-table th, table.comp-table td {
+      border: 1px solid var(--border-main);
+      padding: 7px 10px;
       text-align: left;
     }
 
-    .arch-table th {
-      background: rgba(56, 189, 248, 0.1);
-      color: #38bdf8;
-      font-weight: 800;
-    }
-
-    .bad-val { color: #fb7185; font-weight: 600; }
-    .good-val { color: #34d399; font-weight: 700; }
-
-    .empty-state {
-      text-align: center;
-      padding: 48px 20px;
-      color: var(--text-muted);
-      background: var(--bg-panel);
-      border: 1px dashed rgba(148, 163, 184, 0.25);
-      border-radius: 16px;
+    table.comp-table th {
+      background: var(--bg-table-head);
     }
   </style>
 </head>
 <body>
-  <div class="app-shell">
-    <!-- Topbar -->
-    <div class="topbar">
-      <div class="brand">
-        <div class="brand-logo">⚡</div>
-        <div class="brand-title">
-          <h1>
-            HyperIDM Ultra
-            <span class="badge-arch">64-Bit Native Zero-Rebuild Engine</span>
-          </h1>
-          <div class="brand-sub">
-            Wave-0 Parallel Burst (128 Streams) • Multi-IP CDN Load Balancer • In-Place Sparse Write (0ms Stitch) • Dynamic Sub-Chunk Work-Stealing
+
+  <!-- 1. TOP MENU BAR (Chuẩn IDM 6.43) -->
+  <div class="idm-menubar">
+    <div class="menu-left">
+      <div class="app-icon-badge">
+        <span>⚡ HyperIDM 6.43 Pro</span>
+      </div>
+
+      <div class="menu-wrap">
+        <button class="menu-item">Công việc</button>
+        <div class="menu-dropdown">
+          <div class="menu-dd-item" onclick="openAddUrlModal()"><span>➕ Thêm địa chỉ tải xuống mới...</span><span>Ctrl+N</span></div>
+          <div class="menu-dd-item" onclick="openBatchModal()"><span>📋 Thêm tải xuống hàng loạt (Batch URL)...</span><span>Ctrl+B</span></div>
+          <div class="menu-dd-sep"></div>
+          <div class="menu-dd-item" onclick="runStressBenchmark(512, 64)"><span>⚡ Chạy Stress Benchmark 512MB (64 Luồng)</span></div>
+        </div>
+      </div>
+
+      <div class="menu-wrap">
+        <button class="menu-item">Tệp tin</button>
+        <div class="menu-dropdown">
+          <div class="menu-dd-item" onclick="toolbarAction('resume')"><span>▶️ Tải tiếp tệp đang chọn</span></div>
+          <div class="menu-dd-item" onclick="toolbarAction('pause')"><span>⏸️ Dừng tệp đang chọn</span></div>
+          <div class="menu-dd-item" onclick="toolbarAction('open-folder')"><span>📂 Mở thư mục chứa tệp</span></div>
+          <div class="menu-dd-sep"></div>
+          <div class="menu-dd-item" onclick="toolbarAction('delete')"><span>❌ Xóa tệp đang chọn</span><span>Del</span></div>
+          <div class="menu-dd-item" onclick="cleanCompletedJobs()"><span>🧹 Xóa tất cả tệp đã hoàn thành</span></div>
+        </div>
+      </div>
+
+      <div class="menu-wrap">
+        <button class="menu-item">Tải xuống</button>
+        <div class="menu-dropdown">
+          <div class="menu-dd-item" onclick="startAllQueue()"><span>🚀 Bắt đầu hàng đợi tải xuống</span></div>
+          <div class="menu-dd-item" onclick="pauseAllJobs()"><span>⏹️ Dừng tất cả đang tải</span></div>
+          <div class="menu-dd-sep"></div>
+          <div class="menu-dd-item" onclick="openOptionsModal()"><span>⚙️ Tùy chọn cấu hình & Giới hạn tốc độ...</span></div>
+        </div>
+      </div>
+
+      <div class="menu-wrap">
+        <button class="menu-item">Hiển thị</button>
+        <div class="menu-dropdown">
+          <div class="menu-dd-item" onclick="toggleSidebar()"><span>🌲 Ẩn / Hiện Cây Thể Loại</span></div>
+          <div class="menu-dd-item" onclick="toggleTheme()"><span>🌗 Chuyển đổi Giao diện Sáng / Tối</span></div>
+          <div class="menu-dd-item" onclick="openSelectedProgressDialog()"><span>📊 Mở Cửa sổ Tiến trình chi tiết IDM</span></div>
+        </div>
+      </div>
+
+      <div class="menu-wrap">
+        <button class="menu-item">Trợ giúp</button>
+        <div class="menu-dropdown">
+          <div class="menu-dd-item" onclick="openOptionsModal()"><span>🧩 Hướng dẫn tích hợp Trình duyệt & Clipboard</span></div>
+          <div class="menu-dd-item" onclick="openCompareModal()"><span>🔬 Giải phẫu Nhị phân IDM 6.43 vs HyperIDM</span></div>
+        </div>
+      </div>
+
+      <button class="menu-item highlight" onclick="openCompareModal()">⚡ So sánh IDM vs HyperIDM</button>
+    </div>
+
+    <div class="menu-right">
+      <div class="tray-pill" id="trayStatusPill" onclick="toggleAutoCapture()" title="Nhấn để Bật/Tắt tự động bắt link từ Clipboard & Trình duyệt">
+        <span class="tray-dot" id="trayDot"></span>
+        <span id="trayStatusText">🟢 Đang chạy ngầm ở Khay hệ thống (Bắt link tự động: BẬT)</span>
+      </div>
+      <button class="theme-btn" id="themeToggleBtn" onclick="toggleTheme()">
+        <span id="themeIcon">🌙</span> <span id="themeText">Giao diện Tối</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- 2. RIBBON TOOLBAR (Hàng nút biểu tượng 3D SVG chuẩn IDM 6.43) -->
+  <div class="idm-ribbon">
+    <button class="toolbar-btn" onclick="openAddUrlModal()" title="Thêm địa chỉ URL mới để tải xuống">
+      <div class="tb-icon ico-add">
+        <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      </div>
+      <span class="tb-label">Thêm URL</span>
+    </button>
+
+    <button class="toolbar-btn" id="btnTbResume" onclick="toolbarAction('resume')" title="Tải tiếp tệp đang chọn">
+      <div class="tb-icon ico-resume">
+        <svg viewBox="0 0 24 24"><polygon points="6 4 20 12 6 20 6 4" fill="#fff"/></svg>
+      </div>
+      <span class="tb-label">Tải tiếp</span>
+    </button>
+
+    <button class="toolbar-btn" id="btnTbPause" onclick="toolbarAction('pause')" title="Tạm dừng tệp đang chọn">
+      <div class="tb-icon ico-pause">
+        <svg viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16" fill="#fff"/><rect x="14" y="4" width="4" height="16" fill="#fff"/></svg>
+      </div>
+      <span class="tb-label">Dừng</span>
+    </button>
+
+    <button class="toolbar-btn" onclick="pauseAllJobs()" title="Dừng tất cả các tệp đang tải">
+      <div class="tb-icon ico-stopall">
+        <svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" fill="#fff"/></svg>
+      </div>
+      <span class="tb-label">Dừng tất cả</span>
+    </button>
+
+    <div class="toolbar-sep"></div>
+
+    <button class="toolbar-btn" id="btnTbDelete" onclick="toolbarAction('delete')" title="Xóa tệp đang chọn khỏi danh sách">
+      <div class="tb-icon ico-delete">
+        <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </div>
+      <span class="tb-label">Xóa</span>
+    </button>
+
+    <button class="toolbar-btn" onclick="cleanCompletedJobs()" title="Xóa toàn bộ các mục đã tải hoàn tất khỏi danh sách">
+      <div class="tb-icon ico-clean">
+        <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
+      </div>
+      <span class="tb-label">Xóa hoàn thành</span>
+    </button>
+
+    <div class="toolbar-sep"></div>
+
+    <button class="toolbar-btn" onclick="openOptionsModal()" title="Cấu hình số luồng 64/128, Giới hạn tốc độ, Tự động bắt link">
+      <div class="tb-icon ico-options">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.6.77 1.02 1.51 1H21a2 2 0 1 1 0 4h-.09c-.74.02-1.25.44-1.51 1z"/></svg>
+      </div>
+      <span class="tb-label">Tùy chọn</span>
+    </button>
+
+    <button class="toolbar-btn" onclick="openBatchModal()" title="Lập lịch & Tải hàng loạt (Batch Queue)">
+      <div class="tb-icon ico-sched">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 15"/></svg>
+      </div>
+      <span class="tb-label">Lập lịch / Hàng đợi</span>
+    </button>
+
+    <button class="toolbar-btn" onclick="startAllQueue()" title="Bắt đầu chạy toàn bộ hàng đợi">
+      <div class="tb-icon ico-startq">
+        <svg viewBox="0 0 24 24"><polygon points="5 4 15 12 5 20 5 4" fill="#fff"/><line x1="19" y1="5" x2="19" y2="19"/></svg>
+      </div>
+      <span class="tb-label">Bắt đầu hàng đợi</span>
+    </button>
+
+    <button class="toolbar-btn" onclick="pauseAllJobs()" title="Dừng hàng đợi">
+      <div class="tb-icon ico-stopq">
+        <svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2" fill="#fff"/></svg>
+      </div>
+      <span class="tb-label">Dừng hàng đợi</span>
+    </button>
+
+    <div class="toolbar-sep"></div>
+
+    <div class="test-dropdown-wrap" id="testMenuWrap">
+      <button class="toolbar-btn" onclick="document.getElementById('testMenuWrap').classList.toggle('open')">
+        <div class="tb-icon ico-test">
+          <svg viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" fill="#fff"/></svg>
+        </div>
+        <span class="tb-label">🔥 Test Tốc Độ ▾</span>
+      </button>
+      <div class="test-dropdown-menu">
+        <div class="test-dd-item" onclick="quickDownload('https://ipsw.me/download/Mac15,12/23F79/', '', 64)">
+          <span>🍎</span>
+          <div>
+            <div>Test IPSW.me (Mac15,12/23F79)</div>
+            <div class="test-dd-sub">Smart CDN Resolve • 64 Luồng Sparse + Auto SHA1</div>
+          </div>
+        </div>
+        <div class="test-dd-item" onclick="quickDownload('https://www.youtube.com/watch?v=KxMqSz8qVSg', '', 64)">
+          <span>🎬</span>
+          <div>
+            <div>Test YouTube 8K (KxMqSz8qVSg)</div>
+            <div class="test-dd-sub">Tách luồng Video+Audio & Ghép MP4 0s</div>
+          </div>
+        </div>
+        <div class="test-dd-item" onclick="quickDownload('https://nodejs.org/dist/v22.14.0/node-v22.14.0-win-x64.zip', 'node-v22.14.0-win-x64.zip', 64)">
+          <span>📦</span>
+          <div>
+            <div>Test Node.js x64 ZIP</div>
+            <div class="test-dd-sub">Cloudflare CDN Quốc tế • 64 Luồng</div>
+          </div>
+        </div>
+        <div class="test-dd-item" onclick="runStressBenchmark(512, 64)">
+          <span>⚡</span>
+          <div>
+            <div>Stress Test 512MB (Local 206 Engine)</div>
+            <div class="test-dd-sub">Kiểm chứng tốc độ cực đại In-Place 0ms Stitch</div>
           </div>
         </div>
       </div>
-      <div class="nav-tabs">
-        <button class="tab-btn active" onclick="switchTab('downloads', this)">🚀 Quản Lý Tải Xuống</button>
-        <button class="tab-btn" onclick="switchTab('forensics', this)">🔬 Giải Phẫu IDM vs. HyperIDM</button>
+    </div>
+  </div>
+
+  <!-- 2B. QUICK PASTE & SEARCH BAR -->
+  <div class="quick-url-bar">
+    <span style="font-weight:700; color:var(--accent); font-size:12px;">🔗 Nhập nhanh URL:</span>
+    <input id="quickUrlInput" class="quick-url-input" type="text" placeholder="Dán link tải xuống (.zip, .ipsw, .exe, .mp4, YouTube, IPSW.me...) rồi nhấn Enter hoặc bấm Tải Ngay..." onkeydown="if(event.key==='Enter') startQuickBarDownload()" />
+    <select id="quickConnSelect" class="quick-select">
+      <option value="16">16 Luồng</option>
+      <option value="32">32 Luồng (IDM Max)</option>
+      <option value="64" selected>64 Luồng (Hyper-Turbo)</option>
+      <option value="128">128 Luồng (Extreme)</option>
+    </select>
+    <button class="btn-quick-dl" onclick="startQuickBarDownload()">⚡ Bắt Đầu Tải</button>
+    <input id="searchGridInput" class="search-input" type="text" placeholder="🔍 Tìm tên tệp..." oninput="renderGrid()" />
+  </div>
+
+  <!-- 3. SPLIT-PANE 2-COLUMN WORKSPACE (Chuẩn IDM 6.43) -->
+  <div class="workspace-split">
+    <!-- Left Column: Category TreeView -->
+    <div class="sidebar-tree" id="sidebarTree">
+      <div class="sidebar-header">
+        <span class="sidebar-title-text">📂 Thể loại (Categories)</span>
+        <button class="tree-collapse-btn" onclick="toggleSidebar()" title="Thu gọn / Mở rộng">◀</button>
+      </div>
+
+      <div class="tree-list" id="categoryTreeList">
+        <!-- Populated dynamically with counts -->
+      </div>
+
+      <div class="sidebar-telemetry">
+        <div class="tele-title">
+          <span>Băng thông Thực tế</span>
+          <span id="liveSpeedMbps">0.0 Mbps</span>
+        </div>
+        <div class="tele-speed-big">
+          <span id="liveSpeedMB">0.00 MB/s</span>
+        </div>
+        <canvas id="speedCanvas" width="200" height="38"></canvas>
       </div>
     </div>
 
-    <!-- Main Downloads View -->
-    <div id="downloadsView">
-      <div class="composer-card">
-        <div class="composer-main">
-          <input id="urlInput" class="url-input" type="text" placeholder="Dán link tải xuống (HTTP/HTTPS) vào đây để kích hoạt tải đa luồng 100% Max Speed..." />
-          <select id="connSelect" class="select-box">
-            <option value="16">16 Luồng</option>
-            <option value="32">32 Luồng (Max IDM)</option>
-            <option value="64" selected>64 Luồng (Hyper Turbo)</option>
-            <option value="128">128 Luồng (Extreme)</option>
+    <!-- Right Column: IDM DataGrid -->
+    <div class="main-grid-pane">
+      <div class="datagrid-scroll">
+        <table class="idm-datagrid">
+          <thead>
+            <tr>
+              <th style="width: 24%;">Tên tệp</th>
+              <th style="width: 9%;">Thể loại</th>
+              <th style="width: 8%;">Kích thước</th>
+              <th style="width: 17%;">Trạng thái</th>
+              <th style="width: 8%;">Thời gian còn lại</th>
+              <th style="width: 9%;">Tốc độ truyền</th>
+              <th style="width: 7%;">Số luồng</th>
+              <th style="width: 9%;">Thử tải lần cuối</th>
+              <th style="width: 9%;">Mã băm / Thao tác</th>
+            </tr>
+          </thead>
+          <tbody id="jobsTableBody">
+          </tbody>
+        </table>
+        <div id="emptyGridState" class="empty-grid-box" style="display:none;">
+          <div style="font-size:28px; margin-bottom:6px;">📥</div>
+          <div style="font-weight:700; font-size:13.5px; color:var(--text-main); margin-bottom:4px;">Danh sách tải xuống đang trống</div>
+          <div>Dán link vào thanh phía trên, bấm nút <b>➕ Thêm URL</b> hoặc chọn <b>🔥 Test Tốc Độ</b> để bắt đầu tải đa luồng 64-Bit.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 4. DESKTOP STATUS BAR -->
+  <div class="idm-statusbar">
+    <div class="sb-left">
+      <div class="sb-item">📋 Tổng số tệp: <b id="sbTotalFiles">0</b> (<span id="sbActiveFiles">0 đang tải</span>)</div>
+      <div class="sb-item">🚀 Tốc độ hiện tại: <b id="sbLiveSpeed" style="color:var(--accent);">0.00 MB/s (0.0 Mbps)</b></div>
+      <div class="sb-item">🏆 Đỉnh tốc độ (Peak): <b id="sbPeakSpeed">0.00 MB/s</b></div>
+      <div class="sb-item">⚡ Cắt luồng động (Work-Stealing): <b id="sbSteals">0 lần</b></div>
+    </div>
+    <div class="sb-right">
+      <div class="sb-item">💾 Ghép file ở 99%: <b style="color:var(--green);">0 ms In-Place</b></div>
+      <div class="sb-item" id="sbTrayInfo">🟢 Hệ thống bắt link ngầm: Đang hoạt động</div>
+    </div>
+  </div>
+
+  <!-- 5. IDM DOWNLOAD PROGRESS DIALOG (Khi bấm đúp vào 1 dòng hoặc khi bắt đầu tải) -->
+  <div class="modal-backdrop" id="progressModalBackdrop">
+    <div class="idm-dialog">
+      <div class="dialog-titlebar">
+        <span id="dlgWindowTitle">⚡ Đang tải xuống — HyperIDM Ultra 6.43 Pro</span>
+        <button class="dialog-close" onclick="closeProgressDialog()">✕</button>
+      </div>
+
+      <div class="dialog-tabs">
+        <button class="d-tab active" onclick="switchProgressTab('status', this)">Trạng thái tải xuống</button>
+        <button class="d-tab" onclick="switchProgressTab('limit', this)">Giới hạn tốc độ</button>
+        <button class="d-tab" onclick="switchProgressTab('done', this)">Tùy chọn khi hoàn tất</button>
+      </div>
+
+      <div class="dialog-body">
+        <!-- Tab 1: Trạng thái tải xuống -->
+        <div id="dlgTabStatus">
+          <div class="info-grid">
+            <div class="info-label">Địa chỉ URL:</div>
+            <div class="info-val" id="dlgUrl">--</div>
+            <div class="info-label">Tên tệp lưu:</div>
+            <div class="info-val" id="dlgFileName">--</div>
+            <div class="info-label">Trạng thái:</div>
+            <div class="info-val" id="dlgStatus" style="color:var(--accent);">--</div>
+            <div class="info-label">Kích thước tệp:</div>
+            <div class="info-val" id="dlgTotalSize">--</div>
+            <div class="info-label">Đã tải được:</div>
+            <div class="info-val" id="dlgDownloaded">--</div>
+            <div class="info-label">Tốc độ truyền:</div>
+            <div class="info-val" id="dlgSpeed" style="color:var(--green); font-size:13px;">0.00 MB/s</div>
+            <div class="info-label">Thời gian còn lại:</div>
+            <div class="info-val" id="dlgEta">--:--</div>
+            <div class="info-label">Khả năng tải tiếp:</div>
+            <div class="info-val" id="dlgResumeCap" style="color:var(--green);">Có — 64 Luồng Sparse In-Place (0ms Rebuild)</div>
+          </div>
+
+          <div class="big-prog-bar">
+            <div class="big-prog-fill" id="dlgProgFill" style="width:0%"></div>
+            <div class="big-prog-text" id="dlgProgText">0.00%</div>
+          </div>
+
+          <div class="seg-map-box">
+            <div class="seg-map-title">
+              <span id="dlgSegHeader">Sơ đồ 64 phân đoạn (In-Place Sparse Offset Map)</span>
+              <span id="dlgStealStat" style="color:var(--accent);">Work-Stealing: 0 lần</span>
+            </div>
+            <div class="seg-strip" id="dlgSegStrip"></div>
+          </div>
+
+          <div style="font-size:11.5px; font-weight:700; color:var(--text-sub); margin-bottom:4px;">
+            Chi tiết từng luồng kết nối (Vị trí # | Đã tải | Trạng thái chi tiết từng kết nối):
+          </div>
+          <div class="conn-table-wrap">
+            <table class="conn-table">
+              <thead>
+                <tr>
+                  <th style="width:14%;">Vị trí #</th>
+                  <th style="width:24%;">Đã tải</th>
+                  <th style="width:20%;">Tiến độ</th>
+                  <th style="width:42%;">Trạng thái chi tiết từng kết nối</th>
+                </tr>
+              </thead>
+              <tbody id="dlgConnTableBody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Tab 2: Giới hạn tốc độ -->
+        <div id="dlgTabLimit" style="display:none;">
+          <div class="form-row">
+            <label>Giới hạn tốc độ cho tệp đang tải này (KB/s — nhập 0 để Tải Max Speed không giới hạn):</label>
+            <input type="number" id="dlgJobLimitInput" value="0" min="0" step="512" />
+          </div>
+          <button class="btn-std primary" onclick="applyPerJobSpeedLimit()">✔ Áp dụng giới hạn tốc độ</button>
+        </div>
+
+        <!-- Tab 3: Tùy chọn khi hoàn tất -->
+        <div id="dlgTabDone" style="display:none;">
+          <div class="form-row">
+            <label><input type="checkbox" id="chkAutoOpenFolder" style="width:auto; margin-right:6px;" /> Tự động mở thư mục chứa tệp khi tải xong</label>
+          </div>
+          <div class="form-row">
+            <label><input type="checkbox" id="chkAutoCloseDialog" checked style="width:auto; margin-right:6px;" /> Giữ hộp thoại hiển thị kết quả SHA-256 sau khi hoàn tất</label>
+          </div>
+        </div>
+      </div>
+
+      <div class="dialog-footer">
+        <div style="display:flex; gap:6px;">
+          <button class="btn-std" onclick="dialogJobAction('open-file')">🚀 Mở tệp</button>
+          <button class="btn-std" onclick="dialogJobAction('open-folder')">📂 Mở thư mục</button>
+          <button class="btn-std" onclick="dialogRefreshUrl()">🔄 Đổi Link Mới</button>
+        </div>
+        <div style="display:flex; gap:6px;">
+          <button class="btn-std primary" id="dlgPauseResumeBtn" onclick="dialogTogglePauseResume()">⏸ Tạm dừng</button>
+          <button class="btn-std" onclick="closeProgressDialog()">Đóng cửa sổ</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: THÊM URL MỚI (Chuẩn IDM) -->
+  <div class="modal-backdrop" id="addUrlModalBackdrop">
+    <div class="idm-dialog" style="width: 560px;">
+      <div class="dialog-titlebar">
+        <span>➕ Nhập địa chỉ tệp tải xuống mới — HyperIDM Ultra</span>
+        <button class="dialog-close" onclick="closeModal('addUrlModalBackdrop')">✕</button>
+      </div>
+      <div class="dialog-body">
+        <div class="form-row">
+          <label>Địa chỉ URL (Hỗ trợ HTTP/HTTPS, YouTube, IPSW.me, mẫu hàng loạt file[01-10].zip):</label>
+          <input type="text" id="modalUrlInput" placeholder="https://..." />
+        </div>
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+          <div class="form-row">
+            <label>Tên tệp lưu (Để trống = Tự động nhận diện):</label>
+            <input type="text" id="modalFileNameInput" placeholder="Tự động từ URL / Content-Disposition" />
+          </div>
+          <div class="form-row">
+            <label>Số luồng kết nối đồng thời:</label>
+            <select id="modalConnSelect">
+              <option value="16">16 Luồng</option>
+              <option value="32">32 Luồng (Chuẩn IDM)</option>
+              <option value="64" selected>64 Luồng (Hyper-Turbo)</option>
+              <option value="128">128 Luồng (Extreme)</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row">
+          <label>Thư mục lưu trữ (Tự động phân loại theo Thể loại nếu để mặc định):</label>
+          <input type="text" id="modalSaveDirInput" placeholder="C:\Users\admin\Downloads\HyperIDM" />
+        </div>
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+          <div class="form-row">
+            <label>Cookie / Authorization Header (Tùy chọn):</label>
+            <input type="text" id="modalCookieInput" placeholder="Cookie: session=..." />
+          </div>
+          <div class="form-row">
+            <label>Mã băm kiểm tra SHA-256 / SHA-1 / MD5 (Tùy chọn):</label>
+            <input type="text" id="modalHashInput" placeholder="Tự động đối chiếu khi tải xong" />
+          </div>
+        </div>
+      </div>
+      <div class="dialog-footer">
+        <span style="font-size:11px; color:var(--text-muted);">✔ Hỗ trợ tự động bắt link từ Clipboard khi cửa sổ này mở</span>
+        <div style="display:flex; gap:6px;">
+          <button class="btn-std primary" onclick="submitAddUrlModal(true)">⚡ Bắt đầu tải ngay</button>
+          <button class="btn-std" onclick="closeModal('addUrlModalBackdrop')">Hủy bỏ</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: LẬP LỊCH / TẢI HÀNG LOẠT (BATCH QUEUE) -->
+  <div class="modal-backdrop" id="batchModalBackdrop">
+    <div class="idm-dialog" style="width: 580px;">
+      <div class="dialog-titlebar">
+        <span>⏰ Lập lịch & Hàng đợi tải hàng loạt (Batch Queue)</span>
+        <button class="dialog-close" onclick="closeModal('batchModalBackdrop')">✕</button>
+      </div>
+      <div class="dialog-body">
+        <div class="form-row">
+          <label>Danh sách URL (Mỗi dòng 1 link hoặc dùng ký hiệu mẫu như <code>https://cdn.com/part[01-10].zip</code>):</label>
+          <textarea id="batchUrlsInput" rows="6" placeholder="https://example.com/file1.zip&#10;https://example.com/file2.zip"></textarea>
+        </div>
+        <div class="form-row">
+          <label>Số luồng mỗi tệp:</label>
+          <select id="batchConnSelect">
+            <option value="32">32 Luồng</option>
+            <option value="64" selected>64 Luồng</option>
           </select>
-          <button class="btn-primary" onclick="startDownloadFromInput()">⚡ TẢI MAX SPEED</button>
-          <button class="btn-secondary" onclick="toggleAdvanced()">⚙️ Tùy chọn</button>
-        </div>
-
-        <div id="advancedDrawer" class="advanced-drawer">
-          <div class="field-group">
-            <label>Tên file lưu (Để trống = Tự động nhận diện)</label>
-            <input id="fileNameInput" type="text" placeholder="Ví dụ: setup.exe" />
-          </div>
-          <div class="field-group">
-            <label>Thư mục lưu trữ (In-Place Direct Write)</label>
-            <input id="saveDirInput" type="text" placeholder="C:\Users\admin\Downloads\HyperIDM" />
-          </div>
-          <div class="field-group">
-            <label>Custom Cookie / Authorization Header (Tùy chọn)</label>
-            <input id="cookieInput" type="text" placeholder="Cookie: session=..." />
-          </div>
-        </div>
-
-        <div class="composer-QuickBar">
-          <div class="preset-group">
-            <span>🔥 <b>Test Tốc Độ Thực Tế Ngay:</b></span>
-            <button class="chip-btn turbo" onclick="quickDownload('https://www.youtube.com/watch?v=KxMqSz8qVSg', '', 64)">🎬 Test YouTube (KxMqSz8qVSg • 64 Luồng)</button>
-            <button class="chip-btn turbo" onclick="quickDownload('https://ipsw.me/download/Mac15,12/23F79/', '', 64)">🍏 Test IPSW.me (Mac15,12/23F79 • Smart Resolve)</button>
-            <button class="chip-btn" onclick="runStressBenchmark(512, 64)">⚡ Benchmark Engine (512 MB • 64 Luồng)</button>
-            <button class="chip-btn" onclick="quickDownload('https://nodejs.org/dist/v22.14.0/node-v22.14.0-win-x64.zip', 'node-v22.14.0-win-x64.zip', 64)">🌐 Test CDN Quốc Tế (Node.js x64 ZIP)</button>
-          </div>
-          <div id="saveDirBadge">📁 Lưu tại: <b>C:\Users\admin\Downloads\HyperIDM</b></div>
         </div>
       </div>
-
-      <!-- Telemetry Cards -->
-      <div class="telemetry-grid">
-        <div class="metric-card">
-          <div class="metric-label">Tổng Tốc Độ Tải Thực Tế (Real-Time)</div>
-          <div class="metric-value">
-            <span id="liveSpeedMB">0.00 MB/s</span>
-            <span id="liveSpeedMbps" style="font-size:14px; color:#38bdf8; font-weight:700;">(0.0 Mbps)</span>
-          </div>
-          <div class="metric-sub" id="activeJobsText">Đang sẵn sàng • Wave-0 Instant Burst</div>
-          <canvas id="speedCanvas" width="360" height="48"></canvas>
-        </div>
-
-        <div class="metric-card">
-          <div class="metric-label">Đỉnh Tốc Độ Đạt Được (Peak)</div>
-          <div class="metric-value" id="peakSpeedMB">0.00 MB/s</div>
-          <div class="metric-sub" id="peakSpeedMbps">0.0 Mbps • Buffer 1,024 KB/luồng</div>
-        </div>
-
-        <div class="metric-card">
-          <div class="metric-label">Dynamic Work-Stealing & Anti-Throttle</div>
-          <div class="metric-value" id="stealMetric">0 lần cắt luồng</div>
-          <div class="metric-sub" id="recycleMetric">0 kết nối chậm được tái sinh</div>
-        </div>
-
-        <div class="metric-card">
-          <div class="metric-label">Thời Gian Ghép File Ở 99% (Rebuild)</div>
-          <div class="metric-value" style="color:#34d399;">0 ms</div>
-          <div class="metric-sub">Ghi trực tiếp In-Place (1x TBW SSD)</div>
+      <div class="dialog-footer">
+        <span style="font-size:11px; color:var(--text-muted);">Hàng đợi tự động điều phối tải tuần tự/song song thông minh</span>
+        <div style="display:flex; gap:6px;">
+          <button class="btn-std primary" onclick="submitBatchModal()">🚀 Thêm vào Hàng đợi & Bắt đầu</button>
+          <button class="btn-std" onclick="closeModal('batchModalBackdrop')">Đóng</button>
         </div>
       </div>
-
-      <!-- Active & Completed Jobs List -->
-      <div id="jobsList" class="jobs-container"></div>
     </div>
+  </div>
 
-    <!-- Forensic Comparison View -->
-    <div id="forensicsView" class="arch-view">
-      <h2 style="font-size:20px; margin-bottom:8px;">🔬 Báo Cáo Giải Phẫu Nhị Phân `IDMan.exe` (v6.43b10) Trên Máy Của Anh Duy vs. HyperIDM Ultra</h2>
-      <p style="color:var(--text-muted); font-size:13.5px; line-height:1.6;">
-        Dữ liệu dưới đây được trích xuất trực tiếp từ PE Header của <code>C:\Program Files (x86)\Internet Download Manager\IDMan.exe</code> và nhật ký thực thi <code>UniversalMac_14_114.log</code> trên máy anh:
-      </p>
+  <!-- MODAL: TÙY CHỌN CẤU HÌNH (OPTIONS) -->
+  <div class="modal-backdrop" id="optionsModalBackdrop">
+    <div class="idm-dialog" style="width: 560px;">
+      <div class="dialog-titlebar">
+        <span>⚙️ Tùy chọn cấu hình HyperIDM Ultra 6.43 Pro</span>
+        <button class="dialog-close" onclick="closeModal('optionsModalBackdrop')">✕</button>
+      </div>
+      <div class="dialog-body">
+        <div class="form-row">
+          <label>Số luồng mặc định (Wave-0 Instant Parallel Burst):</label>
+          <select id="optDefaultConns">
+            <option value="32">32 Luồng (Max IDM 6.43)</option>
+            <option value="64" selected>64 Luồng (Hyper-Turbo Khuyên dùng)</option>
+            <option value="128">128 Luồng (Extreme Multi-Gigabit)</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label>Giới hạn tốc độ toàn cục (KB/s — 0 = Không giới hạn):</label>
+          <input type="number" id="optGlobalLimitKB" value="0" min="0" step="1024" />
+        </div>
+        <div class="form-row">
+          <label><input type="checkbox" id="optAutoCapture" checked style="width:auto; margin-right:6px;" onchange="setAutoCapture(this.checked)" /> Tự động chạy ngầm ở Khay hệ thống (System Tray) và bắt link khi Copy vào Clipboard</label>
+        </div>
+        <div style="padding:10px; border-radius:6px; background:var(--bg-quickbar); border:1px solid var(--border-main); font-size:12px; line-height:1.5;">
+          <b>🧩 Chế độ chạy ngầm System Tray (`HyperIDM.exe`):</b><br/>
+          • Ứng dụng `HyperIDM.exe` luôn thường trú dưới khay hệ thống góc phải màn hình Windows.<br/>
+          • Khi anh Copy bất kỳ link `.zip, .rar, .exe, .ipsw, .mp4, .iso, YouTube, IPSW.me...`, hộp thoại bắt link chuẩn IDM sẽ tự động bật lên tức thì!
+        </div>
+      </div>
+      <div class="dialog-footer">
+        <span></span>
+        <div style="display:flex; gap:6px;">
+          <button class="btn-std primary" onclick="saveOptionsModal()">💾 Lưu cấu hình</button>
+          <button class="btn-std" onclick="closeModal('optionsModalBackdrop')">Đóng</button>
+        </div>
+      </div>
+    </div>
+  </div>
 
-      <table class="arch-table">
-        <thead>
-          <tr>
-            <th>Hạng mục Kiến trúc</th>
-            <th>Internet Download Manager (IDM v6.43b10 hiện tại)</th>
-            <th>HyperIDM Ultra (TitanFetch 64-Bit Engine)</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td><b>Kiến trúc Nhị phân (PE Header)</b></td>
-            <td class="bad-val">32-bit x86 (Machine 0x014C, LargeAddressAware = False, giới hạn cứng 2GB RAM)</td>
-            <td class="good-val">64-bit x64 Native (Không giới hạn địa chỉ bộ nhớ, tối ưu tập lệnh 64-bit)</td>
-          </tr>
-          <tr>
-            <td><b>Kích thước Buffer Giải mã TLS/I/O</b></td>
-            <td class="bad-val">16 KB cố định (SChannel MaxMessage = 16,384 bytes trong log thực tế)</td>
-            <td class="good-val">1,024 KB (1 MB) Coalescing Ring Buffer mỗi luồng (Giảm 64x lần gọi syscall đĩa)</td>
-          </tr>
-          <tr>
-            <td><b>Cơ chế Khởi tạo Đa Luồng</b></td>
-            <td class="bad-val">Tăng bậc tuần tự 6 đợt (1 → 2 → 4 → 8 → 16 → 32), luồng C0 bị ngắt kết nối 2 lần đầu</td>
-            <td class="good-val">Wave-0 Instant Parallel Burst: Phóng đồng loạt 32–128 luồng ngay sau 1 RTT Probe</td>
-          </tr>
-          <tr>
-            <td><b>Cơ chế Ghi Đĩa & Nối File (99% Stall)</b></td>
-            <td class="bad-val">Tách N file tạm trong %APPDATA%\IDM\DwnlData + chồng lấn 64-byte → Đứng máy ở 99% để đọc/chép nối file (Tốn gấp đôi tuổi thọ SSD 2x TBW)</td>
-            <td class="good-val">Pre-Allocated Sparse In-Place Write: Ghi thẳng vào đúng byte offset của file đích → Hoàn tất ở 100% trong 0 ms (Không nối file, 1x TBW)</td>
-          </tr>
-          <tr>
-            <td><b>Phân tải Đa IP CDN (DNS Pool)</b></td>
-            <td class="bad-val">Khóa cứng 1 địa chỉ IP duy nhất (17.253.85.135 cho cả 32 luồng) → Dễ bị CDN bóp băng thông theo IP</td>
-            <td class="good-val">Multi-IP DNS Pool Round-Robin: Phân tán luồng qua toàn bộ danh sách IP Edge CDN + Giữ TLS SNI</td>
-          </tr>
-          <tr>
-            <td><b>Xử lý Luồng Chậm (Work-Stealing)</b></td>
-            <td class="bad-val">Cắt đôi tĩnh (Bisection) và ép ngắt socket cũ để tạo Range mới</td>
-            <td class="good-val">Dynamic In-Flight Boundary Shrink + Straggler Watchdog: Thu hẹp biên luồng đang chạy không cần ngắt socket & tự tái sinh kết nối bị CDN bóp</td>
-          </tr>
-        </tbody>
-      </table>
+  <!-- MODAL: SO SÁNH IDM 6.43 vs HYPERIDM ULTRA -->
+  <div class="modal-backdrop" id="compareModalBackdrop">
+    <div class="idm-dialog" style="width: 760px;">
+      <div class="dialog-titlebar">
+        <span>⚡ Giải Phẫu Nhị Phân: Internet Download Manager 6.43 vs. HyperIDM Ultra 64-Bit</span>
+        <button class="dialog-close" onclick="closeModal('compareModalBackdrop')">✕</button>
+      </div>
+      <div class="dialog-body">
+        <p style="font-size:12px; color:var(--text-sub); margin-bottom:6px;">
+          Bảng đối chiếu trực tiếp từ PE Header của <code>IDMan.exe (v6.43)</code> và kiến trúc lõi <b>HyperIDM Ultra</b>:
+        </p>
+        <table class="comp-table">
+          <thead>
+            <tr>
+              <th>Tiêu chí Kỹ thuật</th>
+              <th>IDM 6.43 Truyền thống</th>
+              <th>HyperIDM Ultra 6.43 Pro</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><b>Kiến trúc Nhị phân</b></td>
+              <td style="color:var(--red);">32-bit x86 (Giới hạn bộ nhớ 2GB)</td>
+              <td style="color:var(--green); font-weight:700;">64-bit x64 Native (Không giới hạn bộ nhớ)</td>
+            </tr>
+            <tr>
+              <td><b>Ghi đĩa & Ghép file ở 99%</b></td>
+              <td style="color:var(--red);">Tách N file tạm rồi chép nối lại ở 99% (Đứng máy với file lớn, tốn 2x TBW SSD)</td>
+              <td style="color:var(--green); font-weight:700;">Sparse In-Place Direct Write (Ghi thẳng vào offset file đích, 0ms ghép file ở 100%)</td>
+            </tr>
+            <tr>
+              <td><b>Số luồng & Khởi tạo</b></td>
+              <td style="color:var(--red);">Tối đa 32 luồng, tăng bậc tuần tự chậm</td>
+              <td style="color:var(--green); font-weight:700;">64–128 Luồng Wave-0 Instant Parallel Burst</td>
+            </tr>
+            <tr>
+              <td><b>Cân bằng tải Đa IP CDN</b></td>
+              <td style="color:var(--red);">Khóa cứng 1 IP duy nhất cho mọi luồng</td>
+              <td style="color:var(--green); font-weight:700;">Multi-IP DNS Pool Round-Robin + Work-Stealing động</td>
+            </tr>
+            <tr>
+              <td><b>Chạy ngầm & Tự bắt link</b></td>
+              <td>System Tray + Bắt link Clipboard/Browser</td>
+              <td style="color:var(--green); font-weight:700;">System Tray Native (`HyperIDM.exe`) + Bắt link Clipboard/Browser + Giải mã trực tiếp IPSW.me & YouTube</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="dialog-footer">
+        <span></span>
+        <button class="btn-std primary" onclick="closeModal('compareModalBackdrop')">Đóng</button>
+      </div>
     </div>
   </div>
 
   <script>
     let currentJobs = [];
     let defaultSaveDir = '';
-    const globalSpeedHistory = new Array(50).fill(0);
+    let selectedJobId = null;
+    let activeDialogJobId = null;
+    let currentCategory = 'all';
+    let autoCaptureEnabled = true;
+    const globalSpeedHistory = new Array(45).fill(0);
+    const knownJobIds = new Set();
+    let initialSnapshotLoaded = false;
 
-    function switchTab(tab, btn) {
-      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      document.getElementById('downloadsView').style.display = tab === 'downloads' ? 'block' : 'none';
-      document.getElementById('forensicsView').classList.toggle('active', tab === 'forensics');
+    const CATEGORY_TREE = [
+      { id: 'all', label: 'Tất cả tải xuống', icon: '📁' },
+      { id: 'Compressed', label: 'Dữ liệu nén', icon: '📦' },
+      { id: 'Documents', label: 'Tài liệu', icon: '📄' },
+      { id: 'Music', label: 'Âm nhạc', icon: '🎵' },
+      { id: 'Programs', label: 'Chương trình', icon: '💿' },
+      { id: 'Video', label: 'Video', icon: '🎬' },
+      { id: 'Firmware_ISO', label: 'Firmware / ISO', icon: '🍎' },
+      { id: 'unfinished', label: 'Chưa tải xong', icon: '⏳' },
+      { id: 'completed', label: 'Đã tải xong', icon: '✅' },
+      { id: 'grabber', label: 'Grabber Project', icon: '🕸️' },
+      { id: 'queued', label: 'Danh sách chờ tải', icon: '📋' }
+    ];
+
+    // Theme Management (Default: Light Fluent IDM 6.43)
+    function applyTheme(theme) {
+      document.documentElement.setAttribute('data-theme', theme);
+      localStorage.setItem('hyperidm_theme', theme);
+      const isDark = theme === 'dark';
+      document.getElementById('themeIcon').textContent = isDark ? '☀️' : '🌙';
+      document.getElementById('themeText').textContent = isDark ? 'Giao diện Sáng (IDM)' : 'Giao diện Tối';
     }
 
-    function toggleAdvanced() {
-      document.getElementById('advancedDrawer').classList.toggle('open');
+    function toggleTheme() {
+      const cur = document.documentElement.getAttribute('data-theme') || 'light';
+      applyTheme(cur === 'light' ? 'dark' : 'light');
+    }
+
+    (function initTheme() {
+      const saved = localStorage.getItem('hyperidm_theme') || 'light';
+      applyTheme(saved);
+    })();
+
+    function toggleSidebar() {
+      document.getElementById('sidebarTree').classList.toggle('collapsed');
+    }
+
+    function setAutoCapture(enabled) {
+      autoCaptureEnabled = Boolean(enabled);
+      const pill = document.getElementById('trayStatusPill');
+      const txt = document.getElementById('trayStatusText');
+      const sb = document.getElementById('sbTrayInfo');
+      if (autoCaptureEnabled) {
+        txt.textContent = '🟢 Đang chạy ngầm ở Khay hệ thống (Bắt link tự động: BẬT)';
+        sb.textContent = '🟢 Hệ thống bắt link ngầm: Đang hoạt động';
+        pill.style.opacity = '1';
+      } else {
+        txt.textContent = '⚪ Chạy ngầm ở Khay hệ thống (Bắt link tự động: TẮT)';
+        sb.textContent = '⚪ Bắt link tự động: Tạm tắt';
+        pill.style.opacity = '0.75';
+      }
+      const chk = document.getElementById('optAutoCapture');
+      if (chk) chk.checked = autoCaptureEnabled;
+    }
+
+    function toggleAutoCapture() {
+      setAutoCapture(!autoCaptureEnabled);
     }
 
     function formatBytes(bytes) {
@@ -770,81 +1749,188 @@
       return ((bps * 8) / (1000 * 1000)).toFixed(1) + ' Mbps';
     }
 
-    function formatEta(sec) {
-      if (sec === 0) return 'Hoàn tất (0s)';
+    function formatEta(sec, status) {
+      if (status === 'completed') return 'Hoàn tất';
+      if (sec === 0) return '0s';
       if (!sec || !Number.isFinite(sec)) return '--:--';
-      if (sec < 60) return `${sec}s`;
+      if (sec < 60) return `${sec} giây`;
       const m = Math.floor(sec / 60);
       const s = sec % 60;
-      return `${m}m ${s}s`;
+      return `${m}p ${s}s`;
     }
 
-    async function startDownloadFromInput() {
-      const url = document.getElementById('urlInput').value.trim();
-      if (!url) {
-        alert('Anh vui lòng nhập URL cần tải!');
+    function inferJobCategory(job) {
+      if (job.idm && job.idm.category) return job.idm.category;
+      const fn = String(job.fileName || '').toLowerCase();
+      const u = String(job.url || '').toLowerCase();
+      if (/\.(ipsw|iso|img|dmg|bin|wim)$/.test(fn) || u.includes('ipsw.me')) return 'Firmware_ISO';
+      if (/\.(zip|rar|7z|tar|gz|tgz|xz|bz2)$/.test(fn)) return 'Compressed';
+      if (/\.(exe|msi|apk|deb|rpm|pkg)$/.test(fn)) return 'Programs';
+      if (/\.(mp4|mkv|webm|mov|avi|flv|ts)$/.test(fn) || u.includes('youtube.com') || u.includes('youtu.be')) return 'Video';
+      if (/\.(mp3|flac|wav|aac|m4a|ogg)$/.test(fn)) return 'Music';
+      if (/\.(pdf|doc|docx|xls|xlsx|ppt|pptx|txt|epub)$/.test(fn)) return 'Documents';
+      return 'General';
+    }
+
+    function categoryDisplayVi(cat) {
+      const map = {
+        Compressed: 'Dữ liệu nén',
+        Documents: 'Tài liệu',
+        Music: 'Âm nhạc',
+        Programs: 'Chương trình',
+        Video: 'Video',
+        Firmware_ISO: 'Firmware / ISO',
+        General: 'Tệp tin khác'
+      };
+      return map[cat] || cat || 'Tệp tin';
+    }
+
+    function getFileIconSpec(fileName, cat) {
+      const fn = String(fileName || '').toLowerCase();
+      if (fn.endsWith('.ipsw') || fn.endsWith('.iso') || fn.endsWith('.img') || cat === 'Firmware_ISO') {
+        return { cls: 'ext-ipsw', text: fn.endsWith('.iso') ? 'ISO' : (fn.endsWith('.img') ? 'IMG' : 'IPSW') };
+      }
+      if (/\.(zip|rar|7z|gz|tar)$/.test(fn) || cat === 'Compressed') {
+        return { cls: 'ext-zip', text: fn.endsWith('.rar') ? 'RAR' : (fn.endsWith('.7z') ? '7Z' : 'ZIP') };
+      }
+      if (/\.(apk|xapk)$/.test(fn)) return { cls: 'ext-apk', text: 'APK' };
+      if (/\.(exe|msi)$/.test(fn) || cat === 'Programs') return { cls: 'ext-exe', text: fn.endsWith('.msi') ? 'MSI' : 'EXE' };
+      if (/\.(mp4|mkv|webm|mov)$/.test(fn) || cat === 'Video') return { cls: 'ext-mp4', text: 'MP4' };
+      if (/\.(pdf|doc|docx)$/.test(fn) || cat === 'Documents') return { cls: 'ext-pdf', text: 'PDF' };
+      if (/\.(mp3|flac|wav)$/.test(fn) || cat === 'Music') return { cls: 'ext-mp3', text: 'MP3' };
+      return { cls: 'ext-bin', text: 'BIN' };
+    }
+
+    function matchesCategoryFilter(job, catId) {
+      if (catId === 'all') return true;
+      if (catId === 'unfinished') return job.status !== 'completed';
+      if (catId === 'completed') return job.status === 'completed';
+      if (catId === 'queued') return job.status === 'queued' || job.status === 'paused';
+      if (catId === 'grabber') return Boolean(job.resolverType && job.resolverType !== 'direct');
+      return inferJobCategory(job) === catId;
+    }
+
+    function renderCategoryTree() {
+      const container = document.getElementById('categoryTreeList');
+      container.innerHTML = CATEGORY_TREE.map(node => {
+        const count = currentJobs.filter(j => matchesCategoryFilter(j, node.id)).length;
+        const activeCls = currentCategory === node.id ? 'active' : '';
+        return `
+          <div class="tree-node ${activeCls}" onclick="selectCategory('${node.id}')">
+            <div class="tree-node-left">
+              <span>${node.icon}</span>
+              <span class="tree-label-text">${node.label}</span>
+            </div>
+            <span class="tree-count">${count}</span>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function selectCategory(catId) {
+      currentCategory = catId;
+      renderCategoryTree();
+      renderGrid();
+    }
+
+    function selectRow(jobId) {
+      selectedJobId = jobId;
+      renderGrid();
+    }
+
+    function onRowDoubleClick(jobId) {
+      selectedJobId = jobId;
+      openProgressDialog(jobId);
+    }
+
+    function renderGrid() {
+      const tbody = document.getElementById('jobsTableBody');
+      const emptyBox = document.getElementById('emptyGridState');
+      const q = (document.getElementById('searchGridInput').value || '').trim().toLowerCase();
+
+      const filtered = currentJobs.filter(j => {
+        if (!matchesCategoryFilter(j, currentCategory)) return false;
+        if (q && !String(j.fileName || '').toLowerCase().includes(q) && !String(j.url || '').toLowerCase().includes(q)) return false;
+        return true;
+      });
+
+      if (!selectedJobId && filtered.length > 0) {
+        selectedJobId = filtered[0].id;
+      }
+
+      if (filtered.length === 0) {
+        tbody.innerHTML = '';
+        emptyBox.style.display = 'block';
         return;
       }
-      const maxConnections = parseInt(document.getElementById('connSelect').value, 10) || 64;
-      const fileName = document.getElementById('fileNameInput').value.trim();
-      const saveDir = document.getElementById('saveDirInput').value.trim() || defaultSaveDir;
-      const cookieRaw = document.getElementById('cookieInput').value.trim();
-      const headers = {};
-      if (cookieRaw) {
-        if (cookieRaw.includes(':')) {
-          const idx = cookieRaw.indexOf(':');
-          headers[cookieRaw.slice(0, idx).trim()] = cookieRaw.slice(idx + 1).trim();
-        } else {
-          headers['Cookie'] = cookieRaw;
-        }
-      }
+      emptyBox.style.display = 'none';
 
-      document.getElementById('urlInput').value = '';
-      await createJob({ url, fileName, saveDir, maxConnections, headers });
-    }
+      const statusVi = {
+        downloading: 'Đang tải...',
+        resolving: 'Đang bắt link...',
+        probing: 'Cấp phát đĩa...',
+        muxing: 'Ghép luồng 0s...',
+        completed: 'Hoàn tất 100%',
+        paused: 'Tạm dừng',
+        error: 'Lỗi kết nối',
+        queued: 'Trong hàng đợi'
+      };
 
-    async function quickDownload(url, fileName, maxConnections = 64) {
-      const saveDir = document.getElementById('saveDirInput').value.trim() || defaultSaveDir;
-      await createJob({ url, fileName, saveDir, maxConnections });
-    }
+      tbody.innerHTML = filtered.map(job => {
+        const cat = inferJobCategory(job);
+        const ico = getFileIconSpec(job.fileName, cat);
+        const isSel = job.id === selectedJobId ? 'selected' : '';
+        const prog = Number(job.progress || 0).toFixed(1);
+        const segs = job.segments || [];
+        const activeSegs = segs.filter(s => s.status === 'downloading').length;
+        const avgBps = job.elapsedMs > 0 ? Math.round((job.downloadedBytes * 1000) / job.elapsedMs) : 0;
+        const speedText = job.status === 'downloading'
+          ? formatSpeed(job.currentSpeedBps)
+          : (job.status === 'completed' ? formatSpeed(avgBps) : '--');
+        const fillCls = job.status === 'paused' ? 'paused' : (job.status === 'error' ? 'error' : '');
+        const chk = (job.idm && job.idm.checksum) ? job.idm.checksum : null;
+        let chkText = '';
+        if (chk && chk.status === 'ok') chkText = `✔ ${chk.algo.toUpperCase()}`;
+        else if (chk && chk.status === 'verifying') chkText = `⏳ Hash...`;
+        else if (chk && chk.status === 'mismatch') chkText = `⚠ Lệch Hash`;
 
-    async function runStressBenchmark(sizeMB = 512, maxConnections = 64) {
-      const url = `${window.location.origin}/benchmark-payload/${sizeMB}MB.bin`;
-      const saveDir = document.getElementById('saveDirInput').value.trim() || defaultSaveDir;
-      await createJob({
-        url,
-        fileName: `HyperIDM_Engine_Benchmark_${sizeMB}MB.bin`,
-        saveDir,
-        maxConnections
-      });
-    }
+        const lastTry = new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
-    async function createJob(payload) {
-      await fetch('/api/jobs', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-    }
-
-    async function jobAction(id, action) {
-      await fetch(`/api/jobs/${id}/${action}`, { method: 'POST' });
-    }
-
-    async function promptRefreshUrl(id) {
-      const newUrl = prompt('Nhập link tải mới (đã làm mới token CDN) để tiếp tục tải mà không mất dữ liệu cũ:');
-      if (!newUrl || !newUrl.trim()) return;
-      const res = await fetch(`/api/jobs/${id}/refresh-url`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: newUrl.trim() })
-      });
-      const data = await res.json();
-      if (!res.ok) alert('Lỗi đổi link: ' + (data.error || 'Không xác định'));
-    }
-
-    async function deleteJob(id, deleteFile = false) {
-      await fetch(`/api/jobs/${id}?deleteFile=${deleteFile}`, { method: 'DELETE' });
+        return `
+          <tr class="${isSel}" onclick="selectRow('${job.id}')" ondblclick="onRowDoubleClick('${job.id}')" title="Nhấn đúp để mở Cửa sổ Tiến trình Tải xuống chi tiết kiểu IDM">
+            <td>
+              <div class="file-cell">
+                <span class="ext-icon ${ico.cls}">${ico.text}</span>
+                <span class="file-name-text">${escapeHtml(job.fileName)}</span>
+              </div>
+            </td>
+            <td><span class="cat-tag">${escapeHtml(categoryDisplayVi(cat))}</span></td>
+            <td style="font-weight:600;">${job.totalBytes > 0 ? formatBytes(job.totalBytes) : 'Đang tính'}</td>
+            <td>
+              <div class="cell-prog-wrap">
+                <div class="cell-prog-bar">
+                  <div class="cell-prog-fill ${fillCls}" style="width:${Math.min(100, job.progress || 0)}%"></div>
+                  <div class="cell-prog-label">${statusVi[job.status] || job.status} (${prog}%)</div>
+                </div>
+              </div>
+            </td>
+            <td>${formatEta(job.etaSeconds, job.status)}</td>
+            <td style="font-weight:700; color:${job.status === 'downloading' ? 'var(--green)' : 'var(--text-sub)'};">${speedText}</td>
+            <td><b>${activeSegs > 0 ? activeSegs + '/' : ''}${segs.length || job.maxConnections || 64}</b></td>
+            <td style="color:var(--text-muted);">${lastTry}</td>
+            <td onclick="event.stopPropagation()">
+              <div class="row-mini-actions">
+                ${chkText ? `<span style="font-size:10.5px; color:var(--green); font-weight:700; margin-right:3px;">${chkText}</span>` : ''}
+                <button class="mini-btn" onclick="openProgressDialog('${job.id}')" title="Mở Hộp thoại Tiến trình IDM">📊</button>
+                ${job.status === 'downloading'
+                  ? `<button class="mini-btn" onclick="jobAction('${job.id}', 'pause')" title="Tạm dừng">⏸</button>`
+                  : (job.status !== 'completed' ? `<button class="mini-btn" onclick="jobAction('${job.id}', 'resume')" title="Tiếp tục">▶</button>` : `<button class="mini-btn" onclick="jobAction('${job.id}', 'open-file')" title="Mở tệp">🚀</button>`)}
+                <button class="mini-btn" onclick="jobAction('${job.id}', 'open-folder')" title="Mở thư mục">📂</button>
+              </div>
+            </td>
+          </tr>
+        `;
+      }).join('');
     }
 
     function drawSparkline() {
@@ -860,43 +1946,60 @@
       ctx.moveTo(0, h);
       globalSpeedHistory.forEach((val, idx) => {
         const x = (idx / (globalSpeedHistory.length - 1)) * w;
-        const y = h - (val / maxVal) * (h - 6);
+        const y = h - (val / maxVal) * (h - 5);
         ctx.lineTo(x, y);
       });
       ctx.lineTo(w, h);
       ctx.closePath();
 
       const grad = ctx.createLinearGradient(0, 0, 0, h);
-      grad.addColorStop(0, 'rgba(6, 182, 212, 0.65)');
-      grad.addColorStop(1, 'rgba(6, 182, 212, 0.0)');
+      grad.addColorStop(0, 'rgba(0, 103, 192, 0.45)');
+      grad.addColorStop(1, 'rgba(0, 103, 192, 0.02)');
       ctx.fillStyle = grad;
       ctx.fill();
 
       ctx.beginPath();
       globalSpeedHistory.forEach((val, idx) => {
         const x = (idx / (globalSpeedHistory.length - 1)) * w;
-        const y = h - (val / maxVal) * (h - 6);
+        const y = h - (val / maxVal) * (h - 5);
         if (idx === 0) ctx.moveTo(x, y);
         else ctx.lineTo(x, y);
       });
-      ctx.strokeStyle = '#22d3ee';
-      ctx.lineWidth = 2;
+      ctx.strokeStyle = '#0067c0';
+      ctx.lineWidth = 1.8;
       ctx.stroke();
     }
 
     function renderSnapshot(data) {
       if (data.defaultSaveDir && !defaultSaveDir) {
         defaultSaveDir = data.defaultSaveDir;
-        document.getElementById('saveDirInput').value = defaultSaveDir;
-        document.getElementById('saveDirBadge').innerHTML = `📁 Lưu tại: <b>${defaultSaveDir}</b>`;
+        const modalDir = document.getElementById('modalSaveDirInput');
+        if (modalDir && !modalDir.value) modalDir.value = defaultSaveDir;
       }
 
-      currentJobs = (data.jobs || []).slice().reverse();
+      const incoming = (data.jobs || []).slice().reverse();
+
+      // Auto-popup IDM Progress Dialog when a brand new active download starts
+      if (initialSnapshotLoaded) {
+        for (const j of incoming) {
+          if (!knownJobIds.has(j.id) && (j.status === 'downloading' || j.status === 'resolving' || j.status === 'probing')) {
+            knownJobIds.add(j.id);
+            selectedJobId = j.id;
+            openProgressDialog(j.id);
+          } else {
+            knownJobIds.add(j.id);
+          }
+        }
+      } else {
+        incoming.forEach(j => knownJobIds.add(j.id));
+        initialSnapshotLoaded = true;
+      }
+
+      currentJobs = incoming;
 
       let totalLiveBps = 0;
       let maxPeakBps = 0;
       let totalSteals = 0;
-      let totalRecycles = 0;
       let activeCount = 0;
 
       for (const j of currentJobs) {
@@ -906,139 +2009,341 @@
         }
         if ((j.peakSpeedBps || 0) > maxPeakBps) maxPeakBps = j.peakSpeedBps;
         totalSteals += (j.stealCount || 0);
-        totalRecycles += (j.recycleCount || 0);
       }
 
       globalSpeedHistory.push(totalLiveBps);
-      if (globalSpeedHistory.length > 50) globalSpeedHistory.shift();
+      if (globalSpeedHistory.length > 45) globalSpeedHistory.shift();
       drawSparkline();
 
       document.getElementById('liveSpeedMB').textContent = formatSpeed(totalLiveBps);
-      document.getElementById('liveSpeedMbps').textContent = `(${formatMbps(totalLiveBps)})`;
-      document.getElementById('activeJobsText').textContent = activeCount > 0
-        ? `Đang tải ${activeCount} tác vụ • Bão hòa băng thông đa luồng`
-        : `Sẵn sàng • 0ms In-Place Sparse Engine`;
+      document.getElementById('liveSpeedMbps').textContent = formatMbps(totalLiveBps);
 
-      document.getElementById('peakSpeedMB').textContent = formatSpeed(maxPeakBps);
-      document.getElementById('peakSpeedMbps').textContent = `${formatMbps(maxPeakBps)} • Buffer 1,024 KB/luồng`;
-      document.getElementById('stealMetric').textContent = `${totalSteals} lần cắt luồng`;
-      document.getElementById('recycleMetric').textContent = `${totalRecycles} kết nối chậm được tái sinh`;
+      document.getElementById('sbTotalFiles').textContent = currentJobs.length;
+      document.getElementById('sbActiveFiles').textContent = `${activeCount} đang tải`;
+      document.getElementById('sbLiveSpeed').textContent = `${formatSpeed(totalLiveBps)} (${formatMbps(totalLiveBps)})`;
+      document.getElementById('sbPeakSpeed').textContent = formatSpeed(maxPeakBps);
+      document.getElementById('sbSteals').textContent = `${totalSteals} lần`;
 
-      const container = document.getElementById('jobsList');
-      if (currentJobs.length === 0) {
-        container.innerHTML = `
-          <div class="empty-state">
-            <h3 style="color:#fff; margin-bottom:6px;">Chưa có tác vụ tải xuống nào</h3>
-            <p>Dán link vào thanh phía trên hoặc bấm nút <b>"⚡ Benchmark Cực Hạn Engine"</b> / <b>"🌐 Test CDN Quốc Tế"</b> để trải nghiệm tốc độ tối đa!</p>
-          </div>
-        `;
-        return;
+      renderCategoryTree();
+      renderGrid();
+      if (activeDialogJobId) {
+        updateProgressDialogContent();
       }
+    }
 
-      container.innerHTML = currentJobs.map(job => {
-        const statusMap = {
-          downloading: 'Đang tải Max Speed',
-          resolving: 'Đang giải mã Smart Link / Video Stream',
-          probing: 'Đang phân tích & Cấp phát đĩa',
-          muxing: 'Đang ghép Video+Audio (0s Copy Mux)',
-          completed: 'Hoàn tất (0ms Rebuild)',
-          paused: 'Đã tạm dừng',
-          error: 'Lỗi kết nối',
-          queued: 'Đang chờ'
-        };
-        const segs = job.segments || [];
-        const activeSegs = segs.filter(s => s.status === 'downloading').length;
-        const doneSegs = segs.filter(s => s.status === 'completed').length;
-        const avgBps = job.elapsedMs > 0 ? Math.round((job.downloadedBytes * 1000) / job.elapsedMs) : 0;
-        const cat = (job.idm && job.idm.category) ? job.idm.category : '';
-        const chk = (job.idm && job.idm.checksum) ? job.idm.checksum : null;
-        let chkBadge = '';
-        if (chk && chk.status === 'ok') {
-          chkBadge = `<span class="status-pill status-completed" title="${chk.algo.toUpperCase()}: ${chk.actual}">✔ ${chk.algo.toUpperCase()} Chuẩn (${chk.ms || 0}ms)</span>`;
-        } else if (chk && chk.status === 'verifying') {
-          chkBadge = `<span class="status-pill status-probing">🔒 Đang kiểm tra ${chk.algo.toUpperCase()}...</span>`;
-        } else if (chk && chk.status === 'mismatch') {
-          chkBadge = `<span class="status-pill status-error">⚠️ Lệch mã băm ${chk.algo.toUpperCase()}!</span>`;
+    // IDM Download Progress Dialog Logic
+    function openProgressDialog(jobId) {
+      activeDialogJobId = jobId;
+      document.getElementById('progressModalBackdrop').classList.add('open');
+      updateProgressDialogContent();
+    }
+
+    function openSelectedProgressDialog() {
+      if (selectedJobId) openProgressDialog(selectedJobId);
+      else if (currentJobs.length > 0) openProgressDialog(currentJobs[0].id);
+    }
+
+    function closeProgressDialog() {
+      activeDialogJobId = null;
+      document.getElementById('progressModalBackdrop').classList.remove('open');
+    }
+
+    function switchProgressTab(tabName, btn) {
+      document.querySelectorAll('#progressModalBackdrop .d-tab').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById('dlgTabStatus').style.display = tabName === 'status' ? 'block' : 'none';
+      document.getElementById('dlgTabLimit').style.display = tabName === 'limit' ? 'block' : 'none';
+      document.getElementById('dlgTabDone').style.display = tabName === 'done' ? 'block' : 'none';
+    }
+
+    function updateProgressDialogContent() {
+      const job = currentJobs.find(j => j.id === activeDialogJobId);
+      if (!job) return;
+
+      const statusMap = {
+        downloading: 'Đang nhận dữ liệu đa luồng (Wave-0 Parallel Burst)...',
+        resolving: 'Đang phân giải Smart Link / Token CDN...',
+        probing: 'Đang kiểm tra HTTP 206 Range & Cấp phát Sparse File...',
+        muxing: 'Đang ghép luồng Video + Audio (0s Copy Mux)...',
+        completed: 'Đã tải hoàn tất 100% (0ms In-Place Stitch)',
+        paused: 'Đã tạm dừng (Sẵn sàng tải tiếp tức thì)',
+        error: 'Lỗi kết nối: ' + (job.error || 'Không xác định'),
+        queued: 'Đang xếp hàng chờ tải'
+      };
+
+      const pct = Number(job.progress || 0).toFixed(2);
+      document.getElementById('dlgWindowTitle').textContent = `${pct}% — ${job.fileName} — HyperIDM Ultra`;
+      document.getElementById('dlgUrl').textContent = job.finalUrl || job.url;
+      document.getElementById('dlgFileName').textContent = `${job.fileName} (${job.saveDir || defaultSaveDir})`;
+      document.getElementById('dlgStatus').textContent = statusMap[job.status] || job.status;
+      document.getElementById('dlgTotalSize').textContent = job.totalBytes > 0 ? formatBytes(job.totalBytes) : 'Đang xác định...';
+      document.getElementById('dlgDownloaded').textContent = `${formatBytes(job.downloadedBytes)} (${pct}%)`;
+
+      const avgBps = job.elapsedMs > 0 ? Math.round((job.downloadedBytes * 1000) / job.elapsedMs) : 0;
+      const spd = job.status === 'downloading' ? job.currentSpeedBps : avgBps;
+      document.getElementById('dlgSpeed').textContent = `${formatSpeed(spd)} (${formatMbps(spd)}) — Đỉnh: ${formatSpeed(job.peakSpeedBps)}`;
+      document.getElementById('dlgEta').textContent = formatEta(job.etaSeconds, job.status);
+
+      const segs = job.segments || [];
+      document.getElementById('dlgResumeCap').textContent = job.acceptRanges !== false
+        ? `Có — ${segs.length || job.maxConnections || 64} Luồng Sparse In-Place (0ms Rebuild)`
+        : 'Luồng đơn (Server không hỗ trợ Range)';
+
+      document.getElementById('dlgProgFill').style.width = `${Math.min(100, job.progress || 0)}%`;
+      document.getElementById('dlgProgText').textContent = `${pct}%`;
+
+      document.getElementById('dlgSegHeader').textContent = `Sơ đồ ${segs.length} phân đoạn (In-Place Sparse Offset Map)`;
+      document.getElementById('dlgStealStat').textContent = `Work-Stealing: ${job.stealCount || 0} lần • Tái sinh socket: ${job.recycleCount || 0}`;
+
+      const strip = document.getElementById('dlgSegStrip');
+      strip.innerHTML = segs.slice(0, 64).map(s => `
+        <div class="seg-block ${s.status === 'completed' ? 'done' : ''}" title="Luồng #${s.id}: ${s.progress}%">
+          <div class="seg-block-fill" style="width:${s.progress || 0}%"></div>
+        </div>
+      `).join('');
+
+      const connBody = document.getElementById('dlgConnTableBody');
+      connBody.innerHTML = segs.map(s => {
+        const downloadedSeg = Math.max(0, (s.current || 0) - (s.start || 0));
+        let stText = 'Đang chờ cấp phát';
+        if (s.status === 'downloading') {
+          stText = `Đang nhận dữ liệu... (${s.ip ? 'CDN ' + s.ip : 'HTTP 206 Stream'})`;
+        } else if (s.status === 'completed') {
+          stText = '✔ Hoàn tất phân đoạn';
         }
-
         return `
-          <div class="job-card ${job.status}">
-            <div class="job-header">
-              <div class="job-title-wrap">
-                <div class="job-title">
-                  <span>📄 ${escapeHtml(job.fileName)}</span>
-                  <span class="status-pill status-${job.status}">${statusMap[job.status] || job.status}</span>
-                  ${cat ? `<span class="status-pill" style="background:rgba(139,92,246,0.2);color:#c4b5fd;border:1px solid rgba(139,92,246,0.4);">📁 ${escapeHtml(cat)}</span>` : ''}
-                  ${chkBadge}
-                </div>
-                <div class="job-url" title="${escapeHtml(job.finalUrl || job.url)}">
-                  🔗 ${escapeHtml(job.finalUrl || job.url)} • CDN Pool: ${(job.cdnIps || []).join(', ') || 'Direct'}
-                </div>
-              </div>
-              <div class="job-actions">
-                ${job.status === 'downloading' || job.status === 'probing'
-                  ? `<button class="action-btn" onclick="jobAction('${job.id}', 'pause')">⏸ Tạm dừng</button>`
-                  : ''}
-                ${job.status === 'paused' || job.status === 'error'
-                  ? `<button class="action-btn" onclick="jobAction('${job.id}', 'resume')">▶ Tiếp tục</button>
-                     <button class="action-btn" onclick="promptRefreshUrl('${job.id}')">🔄 Đổi Link Mới</button>`
-                  : ''}
-                ${job.status === 'completed'
-                  ? `<button class="action-btn" onclick="jobAction('${job.id}', 'open-file')">🚀 Mở File</button>`
-                  : ''}
-                <button class="action-btn" onclick="jobAction('${job.id}', 'open-folder')">📂 Mở Thư Mục</button>
-                <button class="action-btn danger" onclick="deleteJob('${job.id}', true)">🗑 Xóa</button>
-              </div>
-            </div>
-
-            <div class="progress-track">
-              <div class="progress-fill" style="width:${job.progress || 0}%"></div>
-            </div>
-
-            <div class="job-stats-bar">
-              <div>
-                Tiến độ: <span class="stat-highlight">${job.progress || 0}%</span>
-                (${formatBytes(job.downloadedBytes)} / ${job.totalBytes > 0 ? formatBytes(job.totalBytes) : 'Đang tính'})
-              </div>
-              <div>
-                Tốc độ: <span class="speed-badge">${job.status === 'downloading' ? formatSpeed(job.currentSpeedBps) : formatSpeed(avgBps)}</span>
-                <span style="color:#94a3b8;">(Đỉnh: ${formatSpeed(job.peakSpeedBps)})</span>
-              </div>
-              <div>
-                Thời gian: <span class="stat-highlight">${(job.elapsedMs / 1000).toFixed(2)}s</span> •
-                ETA: <span class="stat-highlight">${formatEta(job.etaSeconds)}</span>
-              </div>
-              <div>
-                Luồng: <span class="stat-highlight">${activeSegs} đang chạy / ${doneSegs}/${segs.length} xong</span>
-                (Work-Steal: <b>${job.stealCount || 0}</b>)
-              </div>
-            </div>
-
-            ${job.error ? `<div style="color:#fb7185; font-size:12.5px; margin-bottom:8px;">⚠️ Lỗi: ${escapeHtml(job.error)}</div>` : ''}
-
-            <div class="segments-panel">
-              <div class="segments-header">
-                <span>⚡ Bản đồ Phân đoạn Đa Luồng Trực Tiếp (In-Place Offset Matrix — ${segs.length} Segments)</span>
-                <span style="color:#34d399;">✔ Ghi trực tiếp vào file đích (0ms Rebuild)</span>
-              </div>
-              <div class="segments-grid">
-                ${segs.slice(0, 64).map(s => `
-                  <div class="seg-cell ${s.status === 'downloading' ? 'active' : (s.status === 'completed' ? 'done' : '')}" title="Luồng #${s.id} | IP: ${s.ip || 'Auto'} | Tiến độ: ${s.progress}%">
-                    <div class="seg-top">
-                      <span>#${s.id}</span>
-                      <span>${s.progress}%</span>
-                    </div>
-                    <div class="seg-bar">
-                      <div class="seg-bar-fill" style="width:${s.progress}%"></div>
-                    </div>
-                  </div>
-                `).join('')}
-              </div>
-            </div>
-          </div>
+          <tr>
+            <td><b>#${s.id}</b></td>
+            <td>${formatBytes(downloadedSeg)}</td>
+            <td><b>${s.progress || 0}%</b></td>
+            <td style="color:${s.status === 'completed' ? 'var(--green)' : (s.status === 'downloading' ? 'var(--accent)' : 'var(--text-muted)')};">${stText}</td>
+          </tr>
         `;
       }).join('');
+
+      const prBtn = document.getElementById('dlgPauseResumeBtn');
+      if (job.status === 'downloading' || job.status === 'probing') {
+        prBtn.textContent = '⏸ Tạm dừng';
+      } else {
+        prBtn.textContent = '▶ Tiếp tục tải';
+      }
     }
+
+    async function dialogTogglePauseResume() {
+      const job = currentJobs.find(j => j.id === activeDialogJobId);
+      if (!job) return;
+      if (job.status === 'downloading' || job.status === 'probing') {
+        await jobAction(job.id, 'pause');
+      } else {
+        await jobAction(job.id, 'resume');
+      }
+    }
+
+    async function dialogJobAction(action) {
+      if (!activeDialogJobId) return;
+      await jobAction(activeDialogJobId, action);
+    }
+
+    async function dialogRefreshUrl() {
+      if (!activeDialogJobId) return;
+      await promptRefreshUrl(activeDialogJobId);
+    }
+
+    async function applyPerJobSpeedLimit() {
+      if (!activeDialogJobId) return;
+      const kb = parseInt(document.getElementById('dlgJobLimitInput').value || '0', 10);
+      await fetch('/api/limit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jobId: activeDialogJobId, bps: kb > 0 ? kb * 1024 : 0 })
+      });
+    }
+
+    // Toolbar & API Actions
+    async function startQuickBarDownload() {
+      const input = document.getElementById('quickUrlInput');
+      const url = input.value.trim();
+      if (!url) {
+        openAddUrlModal();
+        return;
+      }
+      const maxConnections = parseInt(document.getElementById('quickConnSelect').value, 10) || 64;
+      input.value = '';
+      await createJob({ url, saveDir: defaultSaveDir, maxConnections });
+    }
+
+    async function quickDownload(url, fileName, maxConnections = 64) {
+      document.getElementById('testMenuWrap').classList.remove('open');
+      await createJob({ url, fileName, saveDir: defaultSaveDir, maxConnections });
+    }
+
+    async function runStressBenchmark(sizeMB = 512, maxConnections = 64) {
+      document.getElementById('testMenuWrap').classList.remove('open');
+      const url = `${window.location.origin}/benchmark-payload/${sizeMB}MB.bin`;
+      await createJob({
+        url,
+        fileName: `HyperIDM_Engine_Benchmark_${sizeMB}MB.bin`,
+        saveDir: defaultSaveDir,
+        maxConnections
+      });
+    }
+
+    async function createJob(payload) {
+      const res = await fetch('/api/jobs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json().catch(() => null);
+      if (data && data.id) {
+        selectedJobId = data.id;
+        openProgressDialog(data.id);
+      }
+    }
+
+    async function jobAction(id, action) {
+      await fetch(`/api/jobs/${id}/${action}`, { method: 'POST' });
+    }
+
+    async function deleteJob(id, deleteFile = false) {
+      await fetch(`/api/jobs/${id}?deleteFile=${deleteFile}`, { method: 'DELETE' });
+      if (selectedJobId === id) selectedJobId = null;
+      if (activeDialogJobId === id) closeProgressDialog();
+    }
+
+    async function toolbarAction(action) {
+      if (!selectedJobId && currentJobs.length > 0) selectedJobId = currentJobs[0].id;
+      if (!selectedJobId) return;
+      if (action === 'delete') {
+        await deleteJob(selectedJobId, false);
+      } else {
+        await jobAction(selectedJobId, action);
+      }
+    }
+
+    async function pauseAllJobs() {
+      const running = currentJobs.filter(j => j.status === 'downloading' || j.status === 'probing');
+      await Promise.all(running.map(j => jobAction(j.id, 'pause')));
+    }
+
+    async function startAllQueue() {
+      const waiting = currentJobs.filter(j => j.status === 'paused' || j.status === 'queued' || j.status === 'error');
+      for (const j of waiting) {
+        await jobAction(j.id, 'resume');
+      }
+    }
+
+    async function cleanCompletedJobs() {
+      const done = currentJobs.filter(j => j.status === 'completed');
+      await Promise.all(done.map(j => deleteJob(j.id, false)));
+    }
+
+    async function promptRefreshUrl(id) {
+      const newUrl = prompt('Nhập địa chỉ URL mới (đã làm mới token CDN) để tiếp tục tải từ tiến độ hiện tại:');
+      if (!newUrl || !newUrl.trim()) return;
+      const res = await fetch(`/api/jobs/${id}/refresh-url`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: newUrl.trim() })
+      });
+      const data = await res.json();
+      if (!res.ok) alert('Lỗi đổi link: ' + (data.error || 'Không xác định'));
+    }
+
+    // Modals management
+    function closeModal(id) {
+      document.getElementById(id).classList.remove('open');
+    }
+
+    async function openAddUrlModal() {
+      document.getElementById('addUrlModalBackdrop').classList.add('open');
+      const urlField = document.getElementById('modalUrlInput');
+      if (autoCaptureEnabled && navigator.clipboard && navigator.clipboard.readText) {
+        try {
+          const clip = (await navigator.clipboard.readText()).trim();
+          if (/^https?:\/\//i.test(clip) && !urlField.value) {
+            urlField.value = clip;
+          }
+        } catch {}
+      }
+      urlField.focus();
+    }
+
+    async function submitAddUrlModal() {
+      const url = document.getElementById('modalUrlInput').value.trim();
+      if (!url) {
+        alert('Vui lòng nhập URL tải xuống!');
+        return;
+      }
+      const fileName = document.getElementById('modalFileNameInput').value.trim();
+      const maxConnections = parseInt(document.getElementById('modalConnSelect').value, 10) || 64;
+      const saveDir = document.getElementById('modalSaveDirInput').value.trim() || defaultSaveDir;
+      const cookieRaw = document.getElementById('modalCookieInput').value.trim();
+      const expectedHash = document.getElementById('modalHashInput').value.trim();
+      const headers = {};
+      if (cookieRaw) {
+        if (cookieRaw.includes(':')) {
+          const idx = cookieRaw.indexOf(':');
+          headers[cookieRaw.slice(0, idx).trim()] = cookieRaw.slice(idx + 1).trim();
+        } else {
+          headers['Cookie'] = cookieRaw;
+        }
+      }
+      document.getElementById('modalUrlInput').value = '';
+      document.getElementById('modalFileNameInput').value = '';
+      closeModal('addUrlModalBackdrop');
+      await createJob({ url, fileName, saveDir, maxConnections, headers, expectedHash });
+    }
+
+    function openBatchModal() {
+      document.getElementById('batchModalBackdrop').classList.add('open');
+    }
+
+    async function submitBatchModal() {
+      const text = document.getElementById('batchUrlsInput').value.trim();
+      if (!text) return;
+      const maxConnections = parseInt(document.getElementById('batchConnSelect').value, 10) || 64;
+      await fetch('/api/batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, maxConnections, saveDir: defaultSaveDir })
+      });
+      document.getElementById('batchUrlsInput').value = '';
+      closeModal('batchModalBackdrop');
+    }
+
+    function openOptionsModal() {
+      document.getElementById('optionsModalBackdrop').classList.add('open');
+    }
+
+    async function saveOptionsModal() {
+      const defConns = document.getElementById('optDefaultConns').value;
+      document.getElementById('quickConnSelect').value = defConns;
+      document.getElementById('modalConnSelect').value = defConns;
+
+      const limitKB = parseInt(document.getElementById('optGlobalLimitKB').value || '0', 10);
+      await fetch('/api/limit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bps: limitKB > 0 ? limitKB * 1024 : 0 })
+      });
+      closeModal('optionsModalBackdrop');
+    }
+
+    function openCompareModal() {
+      document.getElementById('compareModalBackdrop').classList.add('open');
+    }
+
+    // Keyboard shortcuts (Ctrl+N, Delete, Escape)
+    window.addEventListener('keydown', (e) => {
+      if (e.ctrlKey && e.key.toLowerCase() === 'n') {
+        e.preventDefault();
+        openAddUrlModal();
+      } else if (e.key === 'Escape') {
+        closeProgressDialog();
+        ['addUrlModalBackdrop', 'batchModalBackdrop', 'optionsModalBackdrop', 'compareModalBackdrop'].forEach(closeModal);
+      }
+    });
 
     function escapeHtml(str) {
       return String(str || '').replace(/[&<>"']/g, m => ({
@@ -1060,6 +2365,7 @@
       };
     }
 
+    renderCategoryTree();
     connectSSE();
   </script>
 </body>

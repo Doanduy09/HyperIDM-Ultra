@@ -51,10 +51,12 @@ if ($ffmpegLocal -and -not (Test-Path "$binDir\ffmpeg.exe")) {
     Copy-Item -Path $ffmpegLocal.FullName -Destination "$binDir\ffmpeg.exe" -Force
 }
 
-Write-Host "[3/6] Compiling Native 64-Bit Windows Executable (HyperIDM.exe)..." -ForegroundColor Yellow
+Write-Host "[3/6] Compiling Native 64-Bit Windows System Tray Executable (HyperIDM.exe)..." -ForegroundColor Yellow
+Stop-Process -Name "HyperIDM" -Force -ErrorAction SilentlyContinue
+Start-Sleep -Milliseconds 300
 $csc = "$env:SystemRoot\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
 if (Test-Path $csc) {
-    & $csc /nologo /target:winexe /platform:x64 /optimize+ "/out:$installDir\HyperIDM.exe" "$installDir\HyperIDM.cs"
+    & $csc /nologo /target:winexe /platform:x64 /optimize+ /r:System.Windows.Forms.dll /r:System.Drawing.dll /r:System.Core.dll /r:System.Web.Extensions.dll "/out:$installDir\HyperIDM.exe" "$installDir\HyperIDM.cs"
 } elseif (Test-Path "$sourceDir\HyperIDM.exe") {
     Copy-Item -Path "$sourceDir\HyperIDM.exe" -Destination "$installDir\HyperIDM.exe" -Force
 }
@@ -88,11 +90,15 @@ if ($userPath -notlike "*$installDir*") {
     [Environment]::SetEnvironmentVariable("Path", "$userPath;$installDir", "User")
 }
 
+# Register Windows Startup System Tray Agent (like IDM)
+New-Item -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Force | Out-Null
+Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "HyperIDMUltra" -Value "`"$installDir\HyperIDM.exe`" --tray" -Force
+
 # Register Uninstall entry in Windows Settings (Installed Apps)
 $uninstKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\HyperIDMUltra"
 New-Item -Path $uninstKey -Force | Out-Null
-Set-ItemProperty -Path $uninstKey -Name "DisplayName" -Value "HyperIDM Ultra 64-Bit v3.0 (TitanFetch Engine)" -Force
-Set-ItemProperty -Path $uninstKey -Name "DisplayVersion" -Value "3.0.0" -Force
+Set-ItemProperty -Path $uninstKey -Name "DisplayName" -Value "HyperIDM Ultra 64-Bit v4.0 (IDM Pro Edition)" -Force
+Set-ItemProperty -Path $uninstKey -Name "DisplayVersion" -Value "4.0.0" -Force
 Set-ItemProperty -Path $uninstKey -Name "Publisher" -Value "DOANDUY / Antigravity" -Force
 Set-ItemProperty -Path $uninstKey -Name "InstallLocation" -Value $installDir -Force
 Set-ItemProperty -Path $uninstKey -Name "DisplayIcon" -Value "$installDir\HyperIDM.exe" -Force
