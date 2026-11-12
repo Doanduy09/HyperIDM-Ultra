@@ -66,7 +66,9 @@ class DownloadJob extends EventEmitter {
     this._rateLimitUntil = 0;
     this._rateLimitTimer = null;
     this._badIps = new Map();
+    this._ipStats = new Map();
     this._completedSinceDecrease = 0;
+    this.hedgeWins = 0;
     this.headers = options.headers || {};
     this.videoQuality = options.videoQuality || 'best'; // best | 1080p | 720p | 480p | 360p
     this.maxBytesLimit = options.maxBytesLimit || 0; // Optional cap for partial benchmark tests
@@ -557,17 +559,37 @@ class DownloadJob extends EventEmitter {
     }
   }
 
-  _pickHealthyIp(seg) {
+  _pickHealthyIp(seg, excludeIp = '') {
     const pool = this.cdnIps;
     if (!pool || pool.length === 0) return '';
     const now = Date.now();
-    const startIdx = (seg.id + (seg.retries || 0)) % pool.length;
-    for (let offset = 0; offset < pool.length; offset++) {
-      const candidate = pool[(startIdx + offset) % pool.length];
-      const cooldownUntil = this._badIps.get(candidate) || 0;
-      if (now >= cooldownUntil) return candidate;
+    const healthy = [];
+    for (const ip of pool) {
+      if (now >= (this._badIps.get(ip) || 0)) healthy.push(ip);
     }
-    return pool[startIdx];
+    const candidates = healthy.length > 0 ? healthy : pool;
+    const filtered = (excludeIp && candidates.length > 1)
+      ? candidates.filter(ip => ip !== excludeIp)
+      : candidates;
+    if (filtered.length === 1) return filtered[0];
+
+    // Epsilon-greedy (85% fastest EWMA IP, 15% explore other PoPs)
+    const explore = ((seg.id + (seg.retries || 0)) % 7) === 0;
+    if (!explore && this._ipStats.size > 0) {
+      let bestIp = null;
+      let bestScore = -1;
+      for (const ip of filtered) {
+        const st = this._ipStats.get(ip);
+        if (!st) return ip; // Optimistically probe unmeasured IP first
+        if (st.ewmaBps > bestScore) {
+          bestScore = st.ewmaBps;
+          bestIp = ip;
+        }
+      }
+      if (bestIp && bestScore > 0) return bestIp;
+    }
+    const startIdx = (seg.id + (seg.retries || 0)) % filtered.length;
+    return filtered[startIdx];
   }
 
   _initializeSegments() {
@@ -736,23 +758,9 @@ class DownloadJob extends EventEmitter {
     return newSeg;
   }
 
-  _spawnWorker(seg) {
-    if (this.status !== 'downloading') return;
-    if (seg.end >= 0 && seg.current > seg.end) {
-      seg.status = 'completed';
-      seg.speedBps = 0;
-      return;
-    }
-
-    seg.status = 'downloading';
-    seg.lastDataTime = Date.now();
+  _buildRequestOptions(seg, targetIp, rangeStart) {
     const parsed = new URL(this.finalUrl);
     const isHttps = parsed.protocol === 'https:';
-    const transport = isHttps ? https : http;
-
-    const targetIp = this._pickHealthyIp(seg) || parsed.hostname;
-    seg.ip = targetIp;
-
     const headers = {
       'User-Agent': this.userAgent,
       'Accept': '*/*',
@@ -760,49 +768,75 @@ class DownloadJob extends EventEmitter {
       'Connection': 'keep-alive',
       ...this.headers
     };
-
-    if (this.acceptRanges && seg.end >= seg.current) {
-      headers['Range'] = `bytes=${seg.current}-${seg.end}`;
+    if (this.acceptRanges && seg.end >= rangeStart) {
+      headers['Range'] = `bytes=${rangeStart}-${seg.end}`;
     }
-
-    const reqOptions = {
-      protocol: parsed.protocol,
-      hostname: netIsIp(targetIp) ? targetIp : parsed.hostname,
-      port: parsed.port || (isHttps ? 443 : 80),
-      path: parsed.pathname + parsed.search,
-      method: 'GET',
-      agent: isHttps ? sharedHttpsAgent : sharedHttpAgent,
-      headers,
-      servername: parsed.hostname,
-      rejectUnauthorized: false,
-      highWaterMark: this._writeBufferSize
+    return {
+      isHttps,
+      transport: isHttps ? https : http,
+      reqOptions: {
+        protocol: parsed.protocol,
+        hostname: netIsIp(targetIp) ? targetIp : parsed.hostname,
+        port: parsed.port || (isHttps ? 443 : 80),
+        path: parsed.pathname + parsed.search,
+        method: 'GET',
+        agent: isHttps ? sharedHttpsAgent : sharedHttpAgent,
+        headers,
+        servername: parsed.hostname,
+        rejectUnauthorized: false,
+        highWaterMark: this._writeBufferSize
+      }
     };
+  }
 
+  async _writeVectorAtOffset(buffers, totalBytes, offsetToWrite) {
+    let idx = 0;
+    let writtenTotal = 0;
+    while (writtenTotal < totalBytes) {
+      const slice = idx === 0 ? buffers : buffers.slice(idx);
+      const { bytesWritten } = await this.fileHandle.writev(slice, offsetToWrite + writtenTotal);
+      if (!bytesWritten || bytesWritten <= 0) {
+        throw new Error('Zero-byte scatter writev stalled');
+      }
+      writtenTotal += bytesWritten;
+      let rem = bytesWritten;
+      while (idx < buffers.length && rem > 0) {
+        if (rem >= buffers[idx].length) {
+          rem -= buffers[idx].length;
+          idx++;
+        } else {
+          buffers[idx] = buffers[idx].subarray(rem);
+          rem = 0;
+        }
+      }
+    }
+  }
+
+  _consumeSegmentStream(seg, req, res, initialChain = Promise.resolve(), initialChunk = null) {
     let writeBuffers = [];
     let bufferedBytes = 0;
     let pendingWriteBytes = 0;
     let writeOffset = seg.current;
-    let writeChain = Promise.resolve();
+    let writeChain = initialChain || Promise.resolve();
     let finalized = false;
     let workerSettled = false;
     let pausedForDisk = false;
-    let activeRes = null;
     const diskWriteError = { err: null };
 
     const maybeResumeDisk = () => {
-      if (pausedForDisk && activeRes && !activeRes.destroyed &&
+      if (pausedForDisk && res && !res.destroyed &&
           pendingWriteBytes <= (this._maxWorkerPendingWriteBytes >> 1) &&
           this._globalPendingWriteBytes <= (this._maxGlobalPendingWriteBytes >> 1)) {
         pausedForDisk = false;
-        activeRes.resume();
+        res.resume();
       }
     };
 
     const flushBuffer = () => {
       if (bufferedBytes === 0 || !this.fileHandle || diskWriteError.err) return writeChain;
-      const combined = writeBuffers.length === 1 ? writeBuffers[0] : Buffer.concat(writeBuffers, bufferedBytes);
+      const bufs = writeBuffers;
       const offsetToWrite = writeOffset;
-      const lenToWrite = combined.length;
+      const lenToWrite = bufferedBytes;
 
       writeBuffers = [];
       bufferedBytes = 0;
@@ -814,7 +848,7 @@ class DownloadJob extends EventEmitter {
         try {
           if (diskWriteError.err) return;
           if (this.fileHandle && (this.status === 'downloading' || this.status === 'paused')) {
-            await this.fileHandle.write(combined, 0, lenToWrite, offsetToWrite);
+            await this._writeVectorAtOffset(bufs, lenToWrite, offsetToWrite);
           }
         } catch (err) {
           diskWriteError.err = err;
@@ -839,11 +873,19 @@ class DownloadJob extends EventEmitter {
     };
 
     const workerEntry = {
-      req: null,
+      req,
       flushBuffer,
       getWriteChain: () => writeChain,
       isDiskPaused: () => pausedForDisk,
-      maybeResumeDisk
+      maybeResumeDisk,
+      abortSilently: () => {
+        if (finalized || workerSettled) return writeChain;
+        finalized = true;
+        workerSettled = true;
+        try { if (res && !res.destroyed) res.destroy(); } catch {}
+        try { if (req && !req.destroyed) req.destroy(); } catch {}
+        return flushBuffer();
+      }
     };
     this.activeWorkers.set(seg.id, workerEntry);
 
@@ -858,8 +900,101 @@ class DownloadJob extends EventEmitter {
       });
     };
 
+    const onChunk = (chunk) => {
+      if (this.status !== 'downloading' || finalized || workerSettled) {
+        if (res && !res.destroyed) res.destroy();
+        return;
+      }
+
+      let usableLen = chunk.length;
+      if (seg.end >= 0) {
+        const remainingAllowed = seg.end - seg.current + 1;
+        if (remainingAllowed <= 0) {
+          finalized = true;
+          if (res && !res.destroyed) res.destroy();
+          this._completeSegment(seg, flushBuffer, workerEntry);
+          return;
+        }
+        if (usableLen > remainingAllowed) {
+          usableLen = remainingAllowed;
+        }
+      }
+
+      const slice = usableLen === chunk.length ? chunk : chunk.subarray(0, usableLen);
+      writeBuffers.push(slice);
+      bufferedBytes += usableLen;
+
+      seg.current += usableLen;
+      seg.bytesInWindow += usableLen;
+      seg.lastDataTime = Date.now();
+      this.downloadedBytes += usableLen;
+
+      if (bufferedBytes >= this._writeBufferSize) {
+        flushBuffer();
+        if (this.fileHandle && res && !res.destroyed &&
+            (pendingWriteBytes >= this._maxWorkerPendingWriteBytes ||
+             this._globalPendingWriteBytes >= this._maxGlobalPendingWriteBytes)) {
+          pausedForDisk = true;
+          res.pause();
+        }
+      }
+
+      if (seg.end >= 0 && seg.current > seg.end) {
+        finalized = true;
+        if (res && !res.destroyed) res.destroy();
+        this._completeSegment(seg, flushBuffer, workerEntry);
+      }
+    };
+
+    if (initialChunk && initialChunk.length > 0) {
+      onChunk(initialChunk);
+      if (finalized) return workerEntry;
+    }
+
+    res.on('data', onChunk);
+    res.on('end', () => {
+      if (finalized || workerSettled || this.status !== 'downloading') return;
+      if (seg.end < 0 || seg.current > seg.end) {
+        finalized = true;
+        this._completeSegment(seg, flushBuffer, workerEntry);
+      } else {
+        settleFailure(new Error('Stream ended prematurely'));
+      }
+    });
+    res.on('error', settleFailure);
+    req.on('error', settleFailure);
+    return workerEntry;
+  }
+
+  _spawnWorker(seg) {
+    if (this.status !== 'downloading') return;
+    if (seg.end >= 0 && seg.current > seg.end) {
+      seg.status = 'completed';
+      seg.speedBps = 0;
+      return;
+    }
+
+    seg.status = 'downloading';
+    seg.lastDataTime = Date.now();
+    const parsed = new URL(this.finalUrl);
+    const targetIp = this._pickHealthyIp(seg) || parsed.hostname;
+    seg.ip = targetIp;
+
+    const { transport, reqOptions } = this._buildRequestOptions(seg, targetIp, seg.current);
+    let workerEntry = null;
+    let settledEarly = false;
+
+    const failEarly = (err) => {
+      if (settledEarly) return;
+      settledEarly = true;
+      if (workerEntry) return;
+      if (this.activeWorkers.get(seg.id)?.req === req) {
+        this.activeWorkers.delete(seg.id);
+        this._handleWorkerFailure(seg, err);
+      }
+    };
+
     const req = transport.request(reqOptions, (res) => {
-      activeRes = res;
       const code = res.statusCode || 0;
       if (code < 200 || code >= 300) {
         const retryAfterRaw = res.headers['retry-after'];
@@ -870,72 +1005,17 @@ class DownloadJob extends EventEmitter {
           const sec = parseInt(String(retryAfterRaw), 10);
           if (!Number.isNaN(sec) && sec > 0) err.retryAfterMs = Math.min(15000, sec * 1000);
         }
-        settleFailure(err);
+        failEarly(err);
         return;
       }
-
-      res.on('data', (chunk) => {
-        if (this.status !== 'downloading' || finalized || workerSettled) {
-          res.destroy();
-          return;
-        }
-
-        let usableLen = chunk.length;
-        if (seg.end >= 0) {
-          const remainingAllowed = seg.end - seg.current + 1;
-          if (remainingAllowed <= 0) {
-            finalized = true;
-            res.destroy();
-            this._completeSegment(seg, flushBuffer, workerEntry);
-            return;
-          }
-          if (usableLen > remainingAllowed) {
-            usableLen = remainingAllowed;
-          }
-        }
-
-        const slice = usableLen === chunk.length ? chunk : chunk.subarray(0, usableLen);
-        writeBuffers.push(slice);
-        bufferedBytes += usableLen;
-
-        seg.current += usableLen;
-        seg.bytesInWindow += usableLen;
-        seg.lastDataTime = Date.now();
-        this.downloadedBytes += usableLen;
-
-        if (bufferedBytes >= this._writeBufferSize) {
-          flushBuffer();
-          if (this.fileHandle && !res.destroyed &&
-              (pendingWriteBytes >= this._maxWorkerPendingWriteBytes ||
-               this._globalPendingWriteBytes >= this._maxGlobalPendingWriteBytes)) {
-            pausedForDisk = true;
-            res.pause();
-          }
-        }
-
-        if (seg.end >= 0 && seg.current > seg.end) {
-          finalized = true;
-          res.destroy();
-          this._completeSegment(seg, flushBuffer, workerEntry);
-        }
-      });
-
-      res.on('end', () => {
-        if (finalized || workerSettled || this.status !== 'downloading') return;
-        if (seg.end < 0 || seg.current > seg.end) {
-          finalized = true;
-          this._completeSegment(seg, flushBuffer, workerEntry);
-        } else {
-          settleFailure(new Error('Stream ended prematurely'));
-        }
-      });
-
-      res.on('error', (err) => {
-        settleFailure(err);
-      });
+      if (this.status !== 'downloading' || seg.status !== 'downloading') {
+        res.destroy();
+        return;
+      }
+      workerEntry = this._consumeSegmentStream(seg, req, res);
     });
 
-    workerEntry.req = req;
+    this.activeWorkers.set(seg.id, { req, isDiskPaused: () => false });
 
     req.on('socket', (sock) => {
       try {
@@ -944,16 +1024,86 @@ class DownloadJob extends EventEmitter {
       } catch {}
     });
 
-    req.on('error', (err) => {
-      settleFailure(err);
-    });
-
+    req.on('error', failEarly);
     req.setTimeout(12000, () => {
-      if (!finalized && !workerSettled && this.status === 'downloading') {
+      if (this.status === 'downloading') {
         req.destroy(new Error('Socket read timeout'));
       }
     });
 
+    req.end();
+  }
+
+  // Google "The Tail at Scale" Hedged Race: phóng request song song trên CDN IP khác nếu 1 kết nối kẹt
+  _spawnHedgedRace(seg) {
+    if (this.status !== 'downloading' || seg.status !== 'downloading' || !this.acceptRanges || seg._hedging) return;
+    if (seg.end >= 0 && seg.current >= seg.end) return;
+
+    seg._hedging = true;
+    const expectedStart = seg.current;
+    const altIp = this._pickHealthyIp(seg, seg.ip);
+    const { transport, reqOptions } = this._buildRequestOptions(seg, altIp || seg.ip, expectedStart);
+
+    let claimed = false;
+    let streamPos = expectedStart;
+
+    const stopHedge = (res) => {
+      seg._hedging = false;
+      try { if (res && !res.destroyed) res.destroy(); } catch {}
+      try { if (!req.destroyed) req.destroy(); } catch {}
+    };
+
+    const req = transport.request(reqOptions, (res) => {
+      const code = res.statusCode || 0;
+      if (code < 200 || code >= 300 || this.status !== 'downloading' || seg.status !== 'downloading') {
+        return stopHedge(res);
+      }
+
+      const onFirstHedgeData = (chunk) => {
+        if (claimed) return;
+        if (this.status !== 'downloading' || seg.status !== 'downloading') {
+          return stopHedge(res);
+        }
+        const curr = seg.current;
+        if (seg.end >= 0 && curr > seg.end) {
+          return stopHedge(res);
+        }
+        const endOfChunk = streamPos + chunk.length;
+        if (endOfChunk <= curr) {
+          streamPos = endOfChunk;
+          return;
+        }
+        // Hedge đến điểm mới trước primary -> chiếm quyền ghi nguyên tử
+        claimed = true;
+        seg._hedging = false;
+        res.removeListener('data', onFirstHedgeData);
+        const firstSlice = curr > streamPos ? chunk.subarray(curr - streamPos) : chunk;
+        const oldW = this.activeWorkers.get(seg.id);
+        let priorChain = Promise.resolve();
+        if (oldW && oldW.abortSilently) {
+          priorChain = oldW.abortSilently();
+        } else if (oldW && oldW.req) {
+          try { oldW.req.destroy(); } catch {}
+        }
+        if (altIp) seg.ip = altIp;
+        this.hedgeWins++;
+        this.recycleCount++;
+        this._consumeSegmentStream(seg, req, res, priorChain, firstSlice);
+      };
+
+      res.on('data', onFirstHedgeData);
+      res.once('end', () => { if (!claimed) stopHedge(res); });
+      res.once('error', () => { if (!claimed) stopHedge(res); });
+    });
+
+    req.on('socket', (sock) => {
+      try {
+        sock.setNoDelay(true);
+        sock.setKeepAlive(true, 2000);
+      } catch {}
+    });
+    req.on('error', () => { if (!claimed) seg._hedging = false; });
+    req.setTimeout(3500, () => { if (!claimed) stopHedge(null); });
     req.end();
   }
 
@@ -1053,18 +1203,40 @@ class DownloadJob extends EventEmitter {
       if (this.speedHistory.length > 60) this.speedHistory.shift();
 
       const activeSegs = [];
+      const ipAgg = new Map();
       for (const seg of this.segments) {
         if (seg.status === 'downloading') {
           seg.speedBps = Math.round(seg.bytesInWindow / dt);
           seg.bytesInWindow = 0;
           activeSegs.push(seg);
+          if (seg.ip) {
+            ipAgg.set(seg.ip, (ipAgg.get(seg.ip) || 0) + seg.speedBps);
+          }
         } else {
           seg.speedBps = 0;
           seg.bytesInWindow = 0;
         }
       }
 
-      // Tail-Latency & Anti-Throttle Straggler Watchdog
+      // Update EWMA per CDN Edge IP
+      for (const [ip, bps] of ipAgg) {
+        const prev = this._ipStats.get(ip);
+        const ewma = prev ? Math.round(prev.ewmaBps * 0.7 + bps * 0.3) : bps;
+        this._ipStats.set(ip, { ewmaBps: ewma, updatedAt: now });
+      }
+
+      // Dynamic BDP Write-Coalescing Buffer Auto-Tuner
+      if (this.currentSpeedBps > 150 * 1024 * 1024) {
+        this._writeBufferSize = 2 * 1024 * 1024;
+      } else if (this.currentSpeedBps > 25 * 1024 * 1024) {
+        this._writeBufferSize = 1024 * 1024;
+      } else {
+        this._writeBufferSize = 256 * 1024;
+      }
+
+      const connLimit = this.effectiveMaxConnections || this.maxConnections;
+
+      // Tail-Latency, Hedged Racing & Anti-Throttle Straggler Watchdog
       for (const seg of activeSegs) {
         const w = this.activeWorkers.get(seg.id);
         if (w && w.isDiskPaused && w.isDiskPaused()) {
@@ -1074,6 +1246,20 @@ class DownloadJob extends EventEmitter {
         }
         const idleMs = now - (seg.lastDataTime || now);
         const rem = seg.end - seg.current + 1;
+
+        // 0) Google "The Tail at Scale" Hedged Request nếu có slot nhàn rỗi hoặc sắp xong 95%+
+        const avgSegSpeed = (activeSegs.length >= 2 && this.currentSpeedBps > 512 * 1024)
+          ? (this.currentSpeedBps / activeSegs.length)
+          : 0;
+        const inTailZone = this.totalBytes > 0 && (this.downloadedBytes / this.totalBytes) >= 0.94;
+        const hedgeTrigger = (idleMs > 900 && rem > 64 * 1024) ||
+          (inTailZone && rem > 128 * 1024 && avgSegSpeed > 0 && seg.speedBps < avgSegSpeed * 0.35);
+
+        if (this.acceptRanges && !seg._hedging && hedgeTrigger &&
+            (this.activeWorkers.size < connLimit || this.cdnIps.length > 1)) {
+          this._spawnHedgedRace(seg);
+        }
+
         // 1) Recycle any socket stalled with 0 bytes for > 2.2 seconds
         if (idleMs > 2200 && rem > 0) {
           seg.lastDataTime = now;
@@ -1085,7 +1271,6 @@ class DownloadJob extends EventEmitter {
         }
         // 2) Recycle heavily throttled socket compared to sibling connections
         if (activeSegs.length >= 2 && this.currentSpeedBps > 1024 * 1024) {
-          const avgSegSpeed = this.currentSpeedBps / activeSegs.length;
           if (rem > 512 * 1024 && seg.speedBps < avgSegSpeed * 0.10) {
             seg.slowTicks = (seg.slowTicks || 0) + 1;
             if (seg.slowTicks >= 3) {
@@ -1101,7 +1286,7 @@ class DownloadJob extends EventEmitter {
         }
       }
 
-      if (this.acceptRanges && this.activeWorkers.size < this.maxConnections) {
+      if (this.acceptRanges && this.activeWorkers.size < connLimit) {
         this._scheduleWorkers();
       }
 

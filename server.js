@@ -977,6 +977,6 @@ loadHistory().then(() => {
   startBrowserSqliteDownloadWatcher();
   startIdmSchedulerDaemon();
   server.listen(PORT, '127.0.0.1', () => {
-    console.log(`[Duytai v7.1 64-Bit Engine] Listening on http://127.0.0.1:${PORT}`);
+    console.log(`[Duytai v7.3 64-Bit Engine] Listening on http://127.0.0.1:${PORT}`);
   });
 });
