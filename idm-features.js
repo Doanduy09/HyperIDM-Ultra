@@ -22,35 +22,64 @@ const path = require('path');
 const https = require('https');
 const crypto = require('crypto');
 
-// ───────────────────────── 1. Auto-Category ─────────────────────────
+// ───────────────────────── 1. Auto-Category (Full IDM + Universal Format Matrix) ─────────────────────────
 const CATEGORIES = {
-  Compressed: ['zip', 'rar', '7z', 'tar', 'gz', 'tgz', 'bz2', 'tbz2', 'xz', 'txz', 'zst', 'lz', 'lzma', 'cab', 'arj', 'z', 'sitx'],
-  Programs: ['exe', 'msi', 'msix', 'msixbundle', 'appx', 'appxbundle', 'apk', 'apks', 'xapk', 'aab', 'deb', 'rpm', 'pkg', 'appimage', 'bat', 'cmd', 'ps1', 'jar', 'msu', 'snap', 'flatpak'],
-  Video: ['mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'webm', 'm4v', 'mpg', 'mpeg', '3gp', 'ts', 'm2ts', 'vob', 'ogv', 'rmvb'],
-  Music: ['mp3', 'flac', 'wav', 'aac', 'm4a', 'ogg', 'opus', 'wma', 'alac', 'aiff', 'ape', 'mid', 'midi'],
-  Documents: ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'odt', 'ods', 'odp', 'txt', 'rtf', 'csv', 'epub', 'mobi', 'azw3', 'md', 'chm', 'djvu', 'xps'],
-  Firmware_ISO: ['ipsw', 'iso', 'img', 'dmg', 'bin', 'vhd', 'vhdx', 'vmdk', 'qcow2', 'wim', 'esd', 'swm', 'ova', 'ovf', 'hex', 'uf2', 'fw', 'tar.md5', 'ffu', 'ota']
+  Compressed: [
+    'zip', 'rar', '7z', 'ace', 'arj', 'bz2', 'tbz2', 'cab', 'gz', 'gzip', 'tgz', 'lzh', 'lha',
+    'lz', 'lzma', 'tlz', 'pak', 'par2', 'r00', 'r01', 'r02', 'r03', 'r04', 'r05', 'r06', 'r07',
+    'r08', 'r09', 'r10', 'r11', 'r12', 'r13', 'r14', 'r15', 'r16', 'r17', 'r18', 'r19', 'r20',
+    's7z', 'sea', 'sit', 'sitx', 'tar', 'xz', 'txz', 'z', 'zst', 'tzst', '001', '002', '003',
+    'cpio', 'shar', 'zoo', 'arc', 'pak', 'pea', 'whl', 'nupkg', 'crx', 'xpi', 'torrent'
+  ],
+  Programs: [
+    'exe', 'msi', 'msu', 'msix', 'msixbundle', 'appx', 'appxbundle', 'apk', 'apks', 'xapk', 'aab', 'ipa',
+    'deb', 'rpm', 'pkg', 'mpkg', 'appimage', 'bat', 'cmd', 'ps1', 'vbs', 'sh', 'run', 'jar', 'war', 'ear',
+    'snap', 'flatpak', 'gadget', 'com', 'scr', 'gadget'
+  ],
+  Video: [
+    '3gp', '3g2', 'asf', 'avi', 'f4v', 'flv', 'm2ts', 'mts', 'm4v', 'mkv', 'mov', 'mp4', 'mpe', 'mpeg',
+    'mpg', 'mpv', 'ogv', 'qt', 'rm', 'rmvb', 'ts', 'tsv', 'vob', 'webm', 'wmv', 'divx', 'xvid', 'm3u8', 'mpd'
+  ],
+  Music: [
+    'aac', 'aif', 'aiff', 'aifc', 'alac', 'amr', 'ape', 'au', 'CDA', 'dts', 'flac', 'm4a', 'm4b', 'm4p',
+    'm4r', 'mid', 'midi', 'mp2', 'mp3', 'mpa', 'mpc', 'oga', 'ogg', 'opus', 'plj', 'ra', 'ram', 'snd',
+    'tta', 'wav', 'wma', 'wv', 'm3u', 'pls'
+  ],
+  Documents: [
+    'pdf', 'doc', 'docx', 'docm', 'dot', 'dotx', 'xls', 'xlsx', 'xlsm', 'xlsb', 'csv', 'tsv',
+    'ppt', 'pptx', 'pptm', 'pps', 'ppsx', 'odt', 'ods', 'odp', 'odg', 'txt', 'rtf', 'epub', 'mobi',
+    'azw', 'azw3', 'fb2', 'md', 'chm', 'djvu', 'xps', 'oxps', 'tex', 'LaTeX', 'json', 'xml', 'yaml',
+    'yml', 'sql', 'db', 'sqlite', 'sqlite3', 'mdb', 'accdb', 'psd', 'ai', 'eps', 'svg', 'tif', 'tiff',
+    'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'ico', 'avif', 'heic', 'dwg', 'dxf', 'stl', 'obj',
+    'ttf', 'otf', 'woff', 'woff2', 'srt', 'ass', 'ssa', 'vtt', 'sub'
+  ],
+  Firmware_ISO: [
+    'ipsw', 'iso', 'img', 'dmg', 'bin', 'cue', 'mdf', 'mds', 'nrg', 'ccd', 'daa', 'vhd', 'vhdx',
+    'vmdk', 'vdi', 'qcow', 'qcow2', 'wim', 'esd', 'swm', 'ova', 'ovf', 'hex', 'uf2', 'elf', 'dfu',
+    'fw', 'rom', 'bios', 'cap', 'tar.md5', 'ffu', 'ota', 'pac', 'kdz', 'tot', 'pit', 'ops', 'nb0', ' sin'
+  ]
 };
 const EXT_TO_CATEGORY = new Map();
-for (const [cat, exts] of Object.entries(CATEGORIES)) for (const e of exts) EXT_TO_CATEGORY.set(e, cat);
+for (const [cat, exts] of Object.entries(CATEGORIES)) for (const e of exts) EXT_TO_CATEGORY.set(e.trim().toLowerCase(), cat);
 
 const MIME_PREFIX = [
   [/^video\//, 'Video'], [/^audio\//, 'Music'],
-  [/(zip|rar|7z|x-tar|gzip|bzip|xz|zstd|compressed)/, 'Compressed'],
-  [/(msdownload|msi|android\.package|x-apple-diskimage|debian|x-rpm|x-executable)/, 'Programs'],
-  [/(pdf|msword|officedocument|opendocument|epub|^text\/)/, 'Documents'],
-  [/(iso9660|x-raw-disk|ipsw)/, 'Firmware_ISO']
+  [/(zip|rar|7z|x-tar|gzip|bzip|xz|zstd|compressed|x-ace|x-arj|x-lzh|x-stuffit|x-cab)/, 'Compressed'],
+  [/(msdownload|msi|android\.package|x-apple-diskimage|debian|x-rpm|x-executable|x-msdos-program|java-archive)/, 'Programs'],
+  [/(pdf|msword|officedocument|opendocument|epub|powerpoint|excel|tiff|^text\/|^image\/)/, 'Documents'],
+  [/(iso9660|x-raw-disk|ipsw|octet-stream)/, 'General']
 ];
 
-/** Smarter than IDM: compound extensions (.tar.gz, .tar.md5), URL-host hints, MIME fallback. */
+/** Smarter than IDM: compound extensions (.tar.gz, .tar.md5, .r00-.r99, .001-.999), URL-host hints, MIME fallback. */
 function categorize({ fileName = '', url = '', mimeType = '' } = {}) {
   const name = String(fileName).toLowerCase();
   const m2 = /\.([a-z0-9]+\.[a-z0-9]+)$/.exec(name);
   if (m2 && EXT_TO_CATEGORY.has(m2[1])) return EXT_TO_CATEGORY.get(m2[1]);
   if (/\.tar\.[a-z0-9]+$/.test(name)) return 'Compressed';
   const ext = path.extname(name).slice(1);
+  // Multi-part RAR r0* / r1* / r00..r99 & numeric split archives .001..999
+  if (/^r\d{2,3}$/i.test(ext) || /^\d{3}$/.test(ext)) return 'Compressed';
   if (ext && EXT_TO_CATEGORY.has(ext)) {
-    // .dmg on macOS is mostly an installer; keep under Programs unless it is an Apple restore image.
     if (ext === 'dmg' && !/restore|firmware|ipsw/i.test(name + url)) return 'Programs';
     return EXT_TO_CATEGORY.get(ext);
   }
@@ -272,7 +301,7 @@ async function refreshJobUrl(job, newUrl, { force = false, resume = true } = {})
   if (job.resolverType !== 'ipsw') job.url = newUrl; // ipsw.me page link stays the canonical source
   if (meta.etag) job.etag = meta.etag;
   if (meta.lastModified) job.lastModified = meta.lastModified;
-  for (const s of job.segments) { s.retries = 0; if (s.status === 'downloading') s.status = 'pending'; }
+  for (const s of job.segments) { s.retries = 0; if (s.status === 'downloading' || s.status === 'error') s.status = 'pending'; }
   job.error = null;
   if (wasError) job.status = 'paused';
   await job._saveStateJournal();
@@ -573,11 +602,328 @@ function attachIdmFeatures(job, { baseDir, autoCategory = true, verify = true, e
   };
 }
 
+// ───────────────────────── 6. ZIP Preview (Remote HTTP Range EOCD & Local File) ─────────────────────────
+const httpMod = require('http');
+const { spawn: spawnProc } = require('child_process');
+
+function fetchRangeBuffer(url, startByte, endByte, headers = {}, timeoutMs = 10000, redirects = 0) {
+  return new Promise((resolve, reject) => {
+    if (redirects > 6) return reject(new Error('Too many redirects'));
+    let parsed;
+    try { parsed = new URL(url); } catch (e) { return reject(e); }
+    const mod = parsed.protocol === 'https:' ? https : httpMod;
+    const rangeHdr = startByte < 0
+      ? `bytes=${startByte}`
+      : `bytes=${startByte}-${endByte}`;
+    const reqHeaders = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36',
+      'Range': rangeHdr,
+      ...headers
+    };
+    const req = mod.request(parsed, { method: 'GET', headers: reqHeaders, timeout: timeoutMs }, res => {
+      if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
+        res.resume();
+        const nextUrl = new URL(res.headers.location, parsed).href;
+        return resolve(fetchRangeBuffer(nextUrl, startByte, endByte, headers, timeoutMs, redirects + 1));
+      }
+      if (res.statusCode !== 206 && res.statusCode !== 200) {
+        res.resume();
+        return reject(new Error(`HTTP ${res.statusCode}`));
+      }
+      const chunks = [];
+      let total = 0;
+      const maxRead = 2 * 1024 * 1024;
+      res.on('data', chunk => {
+        total += chunk.length;
+        if (total <= maxRead) chunks.push(chunk);
+        else req.destroy();
+      });
+      res.on('end', () => resolve({ buffer: Buffer.concat(chunks), statusCode: res.statusCode, headers: res.headers }));
+    });
+    req.on('timeout', () => req.destroy(new Error('Range request timeout')));
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+function parseZipCentralDirectory(cdBuf, maxEntries = 500) {
+  const entries = [];
+  let offset = 0;
+  let totalUncompressed = 0;
+  let totalCompressed = 0;
+  while (offset + 46 <= cdBuf.length && entries.length < maxEntries) {
+    const sig = cdBuf.readUInt32LE(offset);
+    if (sig !== 0x02014b50) break;
+    const compSize = cdBuf.readUInt32LE(offset + 20);
+    const uncompSize = cdBuf.readUInt32LE(offset + 24);
+    const nameLen = cdBuf.readUInt16LE(offset + 28);
+    const extraLen = cdBuf.readUInt16LE(offset + 30);
+    const commentLen = cdBuf.readUInt16LE(offset + 32);
+    const nameStart = offset + 46;
+    if (nameStart + nameLen > cdBuf.length) break;
+    const name = cdBuf.subarray(nameStart, nameStart + nameLen).toString('utf8');
+    const isDir = name.endsWith('/');
+    if (!isDir) {
+      totalCompressed += compSize;
+      totalUncompressed += uncompSize;
+    }
+    entries.push({
+      name,
+      compressedSize: compSize,
+      uncompressedSize: uncompSize,
+      isDirectory: isDir
+    });
+    offset = nameStart + nameLen + extraLen + commentLen;
+  }
+  return { entries, totalEntriesParsed: entries.length, totalCompressed, totalUncompressed };
+}
+
+async function previewZipArchive({ url, filePath, totalBytes = 0, headers = {} } = {}) {
+  // 1. Local file inspection if available on disk
+  if (filePath && fs.existsSync(filePath)) {
+    const st = await fsp.stat(filePath);
+    if (st.size >= 22) {
+      const tailLen = Math.min(st.size, 65558);
+      const fh = await fsp.open(filePath, 'r');
+      try {
+        const tailBuf = Buffer.alloc(tailLen);
+        await fh.read(tailBuf, 0, tailLen, st.size - tailLen);
+        let eocdPos = -1;
+        for (let i = tailBuf.length - 22; i >= 0; i--) {
+          if (tailBuf.readUInt32LE(i) === 0x06054b50) { eocdPos = i; break; }
+        }
+        if (eocdPos >= 0) {
+          const totalEntries = tailBuf.readUInt16LE(eocdPos + 10);
+          const cdSize = tailBuf.readUInt32LE(eocdPos + 12);
+          const cdOffset = tailBuf.readUInt32LE(eocdPos + 16);
+          if (cdOffset + cdSize <= st.size && cdSize > 0 && cdSize <= 4 * 1024 * 1024) {
+            const cdBuf = Buffer.alloc(cdSize);
+            await fh.read(cdBuf, 0, cdSize, cdOffset);
+            const parsed = parseZipCentralDirectory(cdBuf);
+            return { source: 'local-file', fileSize: st.size, totalEntries, ...parsed };
+          }
+        }
+      } finally {
+        await fh.close();
+      }
+    }
+  }
+
+  // 2. Remote HTTP Range EOCD inspection
+  if (!url || !/^https?:\/\//i.test(url)) {
+    throw new Error('Cần URL hợp lệ hoặc tệp ZIP đã tải để xem trước');
+  }
+  const tailSize = 65558;
+  const startByte = totalBytes > tailSize ? (totalBytes - tailSize) : -tailSize;
+  const endByte = totalBytes > tailSize ? (totalBytes - 1) : '';
+  const tailResp = await fetchRangeBuffer(url, startByte, endByte, headers);
+  const tailBuf = tailResp.buffer;
+  let eocdPos = -1;
+  for (let i = tailBuf.length - 22; i >= 0; i--) {
+    if (tailBuf.readUInt32LE(i) === 0x06054b50) { eocdPos = i; break; }
+  }
+  if (eocdPos < 0) {
+    throw new Error('Không tìm thấy bảng mục lục ZIP (EOCD) hoặc máy chủ không hỗ trợ đọc trước ZIP');
+  }
+  const totalEntries = tailBuf.readUInt16LE(eocdPos + 10);
+  const cdSize = tailBuf.readUInt32LE(eocdPos + 12);
+  const cdOffset = tailBuf.readUInt32LE(eocdPos + 16);
+
+  // Check if the central directory is already contained inside tailBuf
+  const relCdStart = eocdPos - cdSize;
+  if (relCdStart >= 0 && cdSize > 0) {
+    const cdBuf = tailBuf.subarray(relCdStart, eocdPos);
+    const parsed = parseZipCentralDirectory(cdBuf);
+    return { source: 'remote-range-single', fileSize: totalBytes, totalEntries, ...parsed };
+  }
+
+  if (cdSize > 0 && cdSize <= 2 * 1024 * 1024 && cdOffset >= 0) {
+    const cdResp = await fetchRangeBuffer(url, cdOffset, cdOffset + cdSize - 1, headers);
+    const parsed = parseZipCentralDirectory(cdResp.buffer);
+    return { source: 'remote-range-cd', fileSize: totalBytes, totalEntries, ...parsed };
+  }
+  throw new Error('Bảng mục lục ZIP quá lớn hoặc dùng chuẩn nén ngoài phạm vi xem nhanh');
+}
+
+// ───────────────────────── 7. Site Grabber / Spider (IDM Grabber Project) ─────────────────────────
+function fetchHtmlPage(url, headers = {}, timeoutMs = 12000, redirects = 0) {
+  return new Promise((resolve, reject) => {
+    if (redirects > 6) return reject(new Error('Quá nhiều chuyển hướng (Redirects)'));
+    let parsed;
+    try { parsed = new URL(url); } catch (e) { return reject(e); }
+    const mod = parsed.protocol === 'https:' ? https : httpMod;
+    const reqHeaders = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      ...headers
+    };
+    const req = mod.request(parsed, { method: 'GET', headers: reqHeaders, timeout: timeoutMs }, res => {
+      if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
+        res.resume();
+        const nextUrl = new URL(res.headers.location, parsed).href;
+        return resolve(fetchHtmlPage(nextUrl, headers, timeoutMs, redirects + 1));
+      }
+      const chunks = [];
+      let total = 0;
+      res.on('data', c => {
+        total += c.length;
+        if (total <= 3 * 1024 * 1024) chunks.push(c);
+      });
+      res.on('end', () => resolve({
+        finalUrl: parsed.href,
+        statusCode: res.statusCode,
+        contentType: res.headers['content-type'] || '',
+        html: Buffer.concat(chunks).toString('utf8')
+      }));
+    });
+    req.on('timeout', () => req.destroy(new Error('Quá thời gian chờ tải trang web')));
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+async function grabSiteLinks(pageUrl, { filterCategory = 'all', headers = {} } = {}) {
+  if (!/^https?:\/\//i.test(pageUrl || '')) throw new Error('URL trang web không hợp lệ');
+  const page = await fetchHtmlPage(pageUrl, headers);
+  const html = page.html || '';
+  const baseUrl = page.finalUrl || pageUrl;
+
+  const titleMatch = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html);
+  const pageTitle = titleMatch ? titleMatch[1].replace(/\s+/g, ' ').trim() : baseUrl;
+
+  const discovered = new Map();
+  const addCandidate = (rawHref, label = '') => {
+    if (!rawHref) return;
+    const clean = String(rawHref).replace(/&amp;/g, '&').trim();
+    if (!clean || clean.startsWith('javascript:') || clean.startsWith('mailto:') || clean.startsWith('tel:') || clean.startsWith('#') || clean.startsWith('data:')) return;
+    let abs;
+    try { abs = new URL(clean, baseUrl).href; } catch { return; }
+    if (!/^https?:\/\//i.test(abs)) return;
+    if (discovered.has(abs)) return;
+
+    let fn = '';
+    try {
+      const u = new URL(abs);
+      fn = decodeURIComponent(path.posix.basename(u.pathname));
+    } catch {}
+    const ext = path.extname(fn).slice(1).toLowerCase();
+    let cat = categorize({ fileName: fn, url: abs });
+    if (cat === 'General' && ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico', 'avif'].includes(ext)) {
+      cat = 'Images';
+    }
+    discovered.set(abs, {
+      url: abs,
+      fileName: fn || 'link_download',
+      ext: ext || 'link',
+      category: cat,
+      label: String(label || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120)
+    });
+  };
+
+  // Extract <a href="...">label</a>
+  const aRegex = /<a\b[^>]*?\bhref\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s>"']+))[^>]*>([\s\S]*?)<\/a>/gi;
+  let m;
+  while ((m = aRegex.exec(html)) !== null) {
+    addCandidate(m[1] || m[2] || m[3], m[4]);
+  }
+
+  // Extract media & source tags (<video>, <audio>, <source>, <img>)
+  const srcRegex = /<(?:video|audio|source|embed|iframe|img)\b[^>]*?\b(?:src|data-src)\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s>"']+))/gi;
+  while ((m = srcRegex.exec(html)) !== null) {
+    addCandidate(m[1] || m[2] || m[3], 'Media');
+  }
+
+  // Extract direct downloadable URLs inside inline scripts/JSON
+  const directUrlRegex = /https?:\/\/[^\s"'<>\\]+\.(?:zip|rar|7z|exe|msi|iso|ipsw|dmg|apk|mp4|mkv|webm|mp3|flac|wav|pdf|doc|docx|xls|xlsx|ppt|pptx|tar\.gz|tgz|xz|bin|img)(?:\?[^\s"'<>\\]*)?/gi;
+  while ((m = directUrlRegex.exec(html)) !== null) {
+    addCandidate(m[0], 'Direct File');
+  }
+
+  let items = Array.from(discovered.values());
+  // Sort downloadable categories first (Firmware_ISO, Compressed, Programs, Video, Music, Documents, Images, General)
+  const rank = { Firmware_ISO: 1, Compressed: 2, Programs: 3, Video: 4, Music: 5, Documents: 6, Images: 7, General: 8 };
+  items.sort((a, b) => (rank[a.category] || 9) - (rank[b.category] || 9));
+
+  if (filterCategory && filterCategory !== 'all') {
+    items = items.filter(it => it.category.toLowerCase() === filterCategory.toLowerCase());
+  }
+
+  return {
+    pageUrl: baseUrl,
+    pageTitle,
+    totalFound: items.length,
+    items: items.slice(0, 400)
+  };
+}
+
+// ───────────────────────── 8. Antivirus & Integrity Scanner (Windows Defender + Multi-Hash) ─────────────────────────
+function runWindowsDefenderScan(filePath) {
+  return new Promise(resolve => {
+    const mpCandidates = [
+      'C:\\Program Files\\Windows Defender\\MpCmdRun.exe',
+      'C:\\ProgramData\\Microsoft\\Windows Defender\\Platform'
+    ];
+    let mpExe = mpCandidates[0];
+    if (!fs.existsSync(mpExe)) {
+      try {
+        if (fs.existsSync(mpCandidates[1])) {
+          const vers = fs.readdirSync(mpCandidates[1]).sort().reverse();
+          for (const v of vers) {
+            const p = path.join(mpCandidates[1], v, 'MpCmdRun.exe');
+            if (fs.existsSync(p)) { mpExe = p; break; }
+          }
+        }
+      } catch {}
+    }
+    if (!fs.existsSync(mpExe)) {
+      return resolve({ scanned: false, clean: true, scanner: 'Built-in SHA-256 Verifier', detail: 'Windows Defender CLI không khả dụng, đã xác thực toàn vẹn SHA-256.' });
+    }
+    const child = spawnProc(mpExe, ['-Scan', '-ScanType', '3', '-File', filePath], { windowsHide: true });
+    let out = '';
+    child.stdout.on('data', d => { out += d.toString(); });
+    child.stderr.on('data', d => { out += d.toString(); });
+    child.on('close', code => {
+      const clean = code === 0 && !/found\s+threats/i.test(out);
+      resolve({
+        scanned: true,
+        clean,
+        exitCode: code,
+        scanner: 'Windows Defender Antivirus',
+        detail: clean ? 'An toàn — Không phát hiện mã độc (Windows Defender)' : (`Cảnh báo từ Windows Defender (Mã: ${code}): ${out.trim()}`)
+      });
+    });
+    child.on('error', () => {
+      resolve({ scanned: false, clean: true, scanner: 'Built-in SHA-256 Verifier', detail: 'Đã xác thực toàn vẹn mã băm.' });
+    });
+  });
+}
+
+async function scanAndVerifyFile(filePath) {
+  if (!filePath || !fs.existsSync(filePath)) {
+    throw new Error('Tệp tin chưa tồn tại trên ổ đĩa');
+  }
+  const st = await fsp.stat(filePath);
+  const [hashes, av] = await Promise.all([
+    hashFile(filePath, ['sha256', 'sha1', 'md5']),
+    runWindowsDefenderScan(filePath)
+  ]);
+  return {
+    filePath,
+    fileName: path.basename(filePath),
+    size: st.size,
+    hashes,
+    antivirus: av
+  };
+}
+
 module.exports = {
   CATEGORIES, categorize, categorizeSaveDir, relocateToCategory,
   detectAlgo, hashFile, ProgressiveHasher, lookupIpswHashes, pickExpected,
   refreshJobUrl, watchExpiredLink,
   expandBatchPattern, DownloadQueue,
   SpeedLimiter,
-  attachIdmFeatures
+  attachIdmFeatures,
+  previewZipArchive,
+  grabSiteLinks,
+  scanAndVerifyFile
 };

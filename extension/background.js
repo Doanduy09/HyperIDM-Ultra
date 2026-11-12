@@ -1,7 +1,8 @@
-const API = 'http://127.0.0.1:17890/api/jobs';
-const EXT_RE = /\.(zip|rar|7z|tar|gz|bz2|xz|exe|msi|iso|ipsw|img|dmg|pkg|apk|deb|rpm|mp4|mkv|avi|mov|webm|mp3|flac|pdf)(?:$|[?#])/i;
-const MIN_BYTES = 1024 * 1024;
-const MENU_ID = 'hyperidm-download';
+const API_INTERCEPT = 'http://127.0.0.1:17890/api/intercept';
+const API_JOBS = 'http://127.0.0.1:17890/api/jobs';
+const EXT_RE = /\.(3gp|7z|aac|ace|aif|aiff|apk|apks|xapk|aab|ipa|arj|asf|avi|bin|bz2|tbz2|cab|crx|xpi|csv|dat|db|sqlite|deb|dmg|doc|docx|dwg|dxf|epub|mobi|azw3|esd|wim|swm|exe|f4v|ffu|flac|flv|fw|gz|gzip|tgz|hex|uf2|img|ipsw|iso|jar|war|jpg|jpeg|png|gif|webp|svg|avif|ico|bmp|json|xml|yaml|yml|lzh|lha|lz|lzma|tlz|m2ts|mts|m3u8|mpd|m4a|m4b|m4p|m4r|m4v|mkv|mov|mp2|mp3|mp4|mpa|mpe|mpeg|mpg|msi|msix|msu|nupkg|whl|odt|ods|odp|oga|ogg|ogv|opus|ota|ova|ovf|pak|par2|pdf|pkg|plj|pps|ppt|pptx|psd|ai|qcow2|qt|r\d{2,3}|ra|ram|rar|rm|rmvb|rom|rpm|appimage|rtf|s7z|sea|sit|sitx|sql|srt|ass|vtt|stl|tar|tif|tiff|torrent|ts|tsv|txt|vhd|vhdx|vmdk|vdi|vob|wav|webm|wma|wmv|xls|xlsx|xps|xz|txz|z|zip|zst|\d{3})(?:$|[?#])/i;
+const MENU_ID = 'duytai-download';
+const MENU_GRABBER_ID = 'duytai-grabber';
 
 async function enabled() {
   const { autoCapture = true } = await chrome.storage.local.get('autoCapture');
@@ -18,15 +19,17 @@ async function buildHeaders(url, referrer) {
   return headers;
 }
 
-async function sendToHyper(url, { referrer, fileName } = {}) {
-  const body = { url, maxConnections: 64, headers: await buildHeaders(url, referrer) };
+async function sendToDuytai(url, { referrer, fileName, source = 'Browser Extension', direct = false } = {}) {
+  const headers = await buildHeaders(url, referrer);
+  const endpoint = direct ? API_JOBS : API_INTERCEPT;
+  const body = { url, maxConnections: 64, headers, source };
   if (fileName) body.fileName = fileName;
-  const res = await fetch(API, {
+  const res = await fetch(endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
   });
-  if (!res.ok) throw new Error(`HyperIDM HTTP ${res.status}`);
+  if (!res.ok) throw new Error(`Duytai HTTP ${res.status}`);
   return res.json();
 }
 
@@ -40,10 +43,10 @@ function notify(title, message) {
 
 async function handoff(url, opts) {
   try {
-    await sendToHyper(url, opts);
+    await sendToDuytai(url, opts);
     return { ok: true };
   } catch (e) {
-    notify('HyperIDM Ultra', 'Không kết nối được HyperIDM (127.0.0.1:17890). Hãy chạy HyperIDM trước.');
+    notify('Duytai 64-Bit', 'Không kết nối được Duytai (127.0.0.1:17890). Hãy mở ứng dụng Duytai.');
     return { ok: false, error: e.message };
   }
 }
@@ -51,25 +54,35 @@ async function handoff(url, opts) {
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.create({
     id: MENU_ID,
-    title: '⚡ Tải siêu tốc bằng HyperIDM Ultra (64 Luồng)',
-    contexts: ['link', 'video', 'audio', 'page']
+    title: '⚡ Tải xuống bằng Duytai (64/128 Luồng)',
+    contexts: ['link', 'video', 'audio', 'image', 'page']
+  });
+  chrome.contextMenus.create({
+    id: MENU_GRABBER_ID,
+    title: '🕷️ Tải tất cả liên kết trên trang với Duytai',
+    contexts: ['page']
   });
 });
 
 chrome.contextMenus.onClicked.addListener((info, tab) => {
-  if (info.menuItemId !== MENU_ID) return;
-  const url = info.linkUrl || info.srcUrl || info.pageUrl;
-  if (url) handoff(url, { referrer: tab && tab.url });
+  if (info.menuItemId === MENU_ID) {
+    const url = info.linkUrl || info.srcUrl || info.pageUrl;
+    if (url) handoff(url, { referrer: tab && tab.url, source: 'Menu chuột phải Trình duyệt' });
+  } else if (info.menuItemId === MENU_GRABBER_ID && tab && tab.url) {
+    handoff(tab.url, { referrer: tab.url, source: 'Duytai Site Grabber' });
+  }
 });
 
-// Tự động bắt link: huỷ tải của trình duyệt và chuyển cho HyperIDM.
+// Tự động bắt MỌI định dạng tệp tải xuống từ trình duyệt và chuyển về Duytai.
 chrome.downloads.onCreated.addListener(async item => {
   if (!(await enabled())) return;
   const url = item.finalUrl || item.url;
   if (!/^https?:/i.test(url)) return;
-  const bigEnough = item.fileSize > MIN_BYTES || item.totalBytes > MIN_BYTES;
-  if (!EXT_RE.test(url) && !EXT_RE.test(item.filename || '') && !bigEnough) return;
-  const r = await handoff(url, { referrer: item.referrer });
+  if (/^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?\//i.test(url)) return;
+  const isHtmlOnly = item.mime && /^(text\/html|application\/xhtml\+xml)$/i.test(item.mime) && !EXT_RE.test(url) && !EXT_RE.test(item.filename || '');
+  if (isHtmlOnly) return;
+  const fname = item.filename ? item.filename.split(/[\\/]/).pop() : '';
+  const r = await handoff(url, { referrer: item.referrer, fileName: fname, source: 'Tự động bắt link Trình duyệt' });
   if (r.ok) {
     chrome.downloads.cancel(item.id, () => chrome.downloads.erase({ id: item.id }));
   }
@@ -77,7 +90,11 @@ chrome.downloads.onCreated.addListener(async item => {
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg && msg.type === 'download' && msg.url) {
-    handoff(msg.url, { referrer: msg.referrer || (sender.tab && sender.tab.url) }).then(sendResponse);
+    handoff(msg.url, {
+      referrer: msg.referrer || (sender.tab && sender.tab.url),
+      fileName: msg.fileName,
+      source: msg.source || 'Thanh nổi Bắt Video/Link Duytai'
+    }).then(sendResponse);
     return true;
   }
 });

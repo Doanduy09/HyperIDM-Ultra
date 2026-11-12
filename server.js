@@ -3,6 +3,7 @@ const fs = require('fs');
 const fsp = require('fs').promises;
 const path = require('path');
 const { spawn } = require('child_process');
+const crypto = require('crypto');
 const { DownloadJob } = require('./engine');
 const idmFeatures = require('./idm-features');
 
@@ -51,8 +52,19 @@ function createAndRegisterJob(opts, startImmediately = true) {
 
 const batchQueue = new idmFeatures.DownloadQueue({
   createJob: (url, opts) => createAndRegisterJob({ ...opts, url }, false),
-  maxConcurrent: 3
+  maxConcurrent: 4
 });
+
+const schedulerConfig = {
+  enabled: false,
+  maxConcurrent: 4,
+  autoRetryIntervalSec: 30,
+  startAtTime: '',
+  stopAtTime: '',
+  onCompleteAction: 'none',
+  autoAntivirusScan: true,
+  lastRetryTick: 0
+};
 
 async function loadHistory() {
   try {
@@ -67,7 +79,8 @@ async function loadHistory() {
             url: item.url,
             saveDir: item.saveDir || DEFAULT_SAVE_DIR,
             fileName: item.fileName,
-            maxConnections: item.maxConnections || 64
+            maxConnections: item.maxConnections || 64,
+            headers: item.headers || {}
           });
           job.finalUrl = item.finalUrl || item.url;
           job.filePath = item.filePath || path.join(job.saveDir, item.fileName || '');
@@ -219,7 +232,7 @@ async function syncExistingDownloads() {
     for (const f of foundFiles.slice(0, 25)) {
       if (existingPaths.has(f.fullPath.toLowerCase())) continue;
       existingPaths.add(f.fullPath.toLowerCase());
-      const id = 'local-' + Buffer.from(f.name).toString('hex').slice(0, 16);
+      const id = 'local-' + crypto.createHash('sha1').update(f.fullPath.toLowerCase()).digest('hex').slice(0, 16);
       if (jobs.has(id)) continue;
       const job = new DownloadJob({
         id,
@@ -426,10 +439,132 @@ const server = http.createServer(async (req, res) => {
         const created = batchQueue.add(expanded, body);
         return sendJson(res, 201, { batchCount: created.length, jobs: created.map(j => j.toJSON()) });
       }
-      const job = createAndRegisterJob(body, true);
+      const startNow = !body.paused;
+      const job = createAndRegisterJob(body, startNow);
+      if (!startNow) {
+        job.status = 'paused';
+      }
       return sendJson(res, 201, job.toJSON());
     } catch (e) {
       return sendJson(res, 500, { error: e.message });
+    }
+  }
+
+  // Live Pre-Download URL Probe (IDM File Info Dialog Size/Resume/ZIP Probe)
+  if (pathname === '/api/probe' && req.method === 'POST') {
+    try {
+      const body = await readJsonBody(req);
+      const rawUrl = String(body.url || '').trim();
+      if (!/^https?:\/\//i.test(rawUrl)) return sendJson(res, 400, { error: 'URL không hợp lệ' });
+      const tmpJob = new DownloadJob({ url: rawUrl, saveDir: DEFAULT_SAVE_DIR, headers: body.headers || {} });
+      let targetUrl = rawUrl;
+      let resolvedName = '';
+      if (/^https?:\/\/(?:www\.)?ipsw\.me\/download\//i.test(rawUrl)) {
+        const ipsw = await tmpJob._resolveIpswMeUrl(rawUrl);
+        targetUrl = ipsw.url;
+        resolvedName = ipsw.fileName || '';
+      } else if (/(?:youtube\.com\/(?:watch\?v=|shorts\/)|youtu\.be\/)/i.test(rawUrl)) {
+        const cat = 'Video';
+        return sendJson(res, 200, {
+          url: rawUrl,
+          finalUrl: rawUrl,
+          fileName: body.fileName || '',
+          totalBytes: 0,
+          acceptRanges: true,
+          resolverType: 'youtube',
+          category: cat,
+          isZip: false
+        });
+      }
+      const meta = await tmpJob._probeUrl(targetUrl);
+      let urlFileName = '';
+      try { urlFileName = decodeURIComponent(path.posix.basename(new URL(meta.finalUrl || targetUrl).pathname)); } catch {}
+      const fileName = resolvedName || meta.suggestedFileName || body.fileName || urlFileName || '';
+      const category = idmFeatures.categorize({ fileName, url: meta.finalUrl || rawUrl });
+      const isZip = /\.zip$/i.test(fileName) || /\.zip(\?|$)/i.test(meta.finalUrl || rawUrl);
+      return sendJson(res, 200, {
+        url: rawUrl,
+        finalUrl: meta.finalUrl || targetUrl,
+        fileName,
+        totalBytes: meta.totalBytes || 0,
+        acceptRanges: Boolean(meta.acceptRanges),
+        etag: meta.etag || '',
+        category,
+        isZip
+      });
+    } catch (e) {
+      return sendJson(res, 500, { error: e.message });
+    }
+  }
+
+  // ZIP Preview Endpoint (Remote HTTP Range EOCD & Local File)
+  if (pathname === '/api/zip-preview' && req.method === 'POST') {
+    try {
+      const body = await readJsonBody(req);
+      let url = body.url || '';
+      let filePath = body.filePath || '';
+      let totalBytes = Number(body.totalBytes || 0);
+      let headers = body.headers || {};
+      if (body.jobId) {
+        const job = jobs.get(String(body.jobId));
+        if (job) {
+          url = job.finalUrl || job.url;
+          filePath = job.filePath || '';
+          totalBytes = job.totalBytes || 0;
+          headers = job.headers || {};
+        }
+      }
+      if (!totalBytes && url && /^https?:\/\//i.test(url)) {
+        const tmpJob = new DownloadJob({ url, saveDir: DEFAULT_SAVE_DIR, headers });
+        const meta = await tmpJob._probeUrl(url).catch(() => null);
+        if (meta) {
+          url = meta.finalUrl || url;
+          totalBytes = meta.totalBytes || 0;
+        }
+      }
+      const preview = await idmFeatures.previewZipArchive({ url, filePath, totalBytes, headers });
+      return sendJson(res, 200, { ok: true, ...preview });
+    } catch (e) {
+      return sendJson(res, 400, { error: e.message });
+    }
+  }
+
+  // Site Grabber / Spider Endpoint (IDM Grabber Project)
+  if (pathname === '/api/grabber' && req.method === 'POST') {
+    try {
+      const body = await readJsonBody(req);
+      const result = await idmFeatures.grabSiteLinks(body.url, {
+        filterCategory: body.filterCategory || 'all',
+        headers: body.headers || {}
+      });
+      return sendJson(res, 200, { ok: true, ...result });
+    } catch (e) {
+      return sendJson(res, 400, { error: e.message });
+    }
+  }
+
+  // Built-in Scheduler & Synchronization Queue Endpoint
+  if (pathname === '/api/scheduler' && req.method === 'GET') {
+    return sendJson(res, 200, { ok: true, scheduler: schedulerConfig });
+  }
+  if (pathname === '/api/scheduler' && req.method === 'POST') {
+    try {
+      const body = await readJsonBody(req);
+      if (body.enabled !== undefined) schedulerConfig.enabled = Boolean(body.enabled);
+      if (body.maxConcurrent !== undefined) {
+        schedulerConfig.maxConcurrent = Math.max(1, Math.min(16, parseInt(body.maxConcurrent, 10) || 4));
+        batchQueue.setMaxConcurrent(schedulerConfig.maxConcurrent);
+      }
+      if (body.autoRetryIntervalSec !== undefined) {
+        schedulerConfig.autoRetryIntervalSec = Math.max(10, parseInt(body.autoRetryIntervalSec, 10) || 30);
+      }
+      if (body.startAtTime !== undefined) schedulerConfig.startAtTime = String(body.startAtTime || '').trim();
+      if (body.stopAtTime !== undefined) schedulerConfig.stopAtTime = String(body.stopAtTime || '').trim();
+      if (body.onCompleteAction !== undefined) schedulerConfig.onCompleteAction = String(body.onCompleteAction || 'none');
+      if (body.autoAntivirusScan !== undefined) schedulerConfig.autoAntivirusScan = Boolean(body.autoAntivirusScan);
+      return sendJson(res, 200, { ok: true, scheduler: schedulerConfig });
+    } catch (e) {
+      return sendJson(res, 400, { error: e.message });
     }
   }
 
@@ -537,9 +672,10 @@ const server = http.createServer(async (req, res) => {
     return sendJson(res, 200, { ok: true, removedCount });
   }
 
-  const actionMatch = /^\/api\/jobs\/([^/]+)\/(pause|resume|open-folder|open-file|refresh-url)$/.exec(pathname);
+  const actionMatch = /^\/api\/jobs\/([^/]+)\/(pause|resume|open-folder|open-file|refresh-url|antivirus-scan)$/.exec(pathname);
   if (actionMatch && req.method === 'POST') {
-    const [, id, action] = actionMatch;
+    const id = decodeURIComponent(actionMatch[1]);
+    const action = actionMatch[2];
     const job = jobs.get(id);
     if (!job) return sendJson(res, 404, { error: 'Không tìm thấy tác vụ tải' });
 
@@ -556,6 +692,21 @@ const server = http.createServer(async (req, res) => {
         const body = await readJsonBody(req);
         const result = await idmFeatures.refreshJobUrl(job, body.url, { force: Boolean(body.force), resume: true });
         return sendJson(res, 200, { ok: true, ...result, job: job.toJSON() });
+      } catch (e) {
+        return sendJson(res, 400, { error: e.message });
+      }
+    }
+    if (action === 'antivirus-scan') {
+      try {
+        const report = await idmFeatures.scanAndVerifyFile(job.filePath);
+        job.idmChecksum = {
+          status: report.antivirus.clean ? 'ok' : 'mismatch',
+          algo: 'SHA-256 + Defender',
+          actual: report.hashes.sha256
+        };
+        broadcastState();
+        scheduleSaveHistory();
+        return sendJson(res, 200, { ok: true, ...report });
       } catch (e) {
         return sendJson(res, 400, { error: e.message });
       }
@@ -578,7 +729,7 @@ const server = http.createServer(async (req, res) => {
 
   const deleteMatch = /^\/api\/jobs\/([^/]+)$/.exec(pathname);
   if (deleteMatch && req.method === 'DELETE') {
-    const id = deleteMatch[1];
+    const id = decodeURIComponent(deleteMatch[1]);
     const job = jobs.get(id);
     if (!job) return sendJson(res, 404, { error: 'Không tìm thấy tác vụ tải' });
     const deleteFile = parsedUrl.searchParams.get('deleteFile') === 'true';
@@ -680,9 +831,48 @@ function startBrowserSqliteDownloadWatcher() {
   }, 900);
 }
 
+function startIdmSchedulerDaemon() {
+  setInterval(() => {
+    const now = new Date();
+    const hhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    if (schedulerConfig.enabled) {
+      if (schedulerConfig.startAtTime && schedulerConfig.startAtTime === hhmm) {
+        let active = 0;
+        for (const j of jobs.values()) {
+          if (['downloading', 'probing', 'resolving'].includes(j.status)) active++;
+        }
+        for (const j of jobs.values()) {
+          if (active >= schedulerConfig.maxConcurrent) break;
+          if (j.status === 'paused' || j.status === 'queued') {
+            j.start();
+            active++;
+          }
+        }
+      }
+      if (schedulerConfig.stopAtTime && schedulerConfig.stopAtTime === hhmm) {
+        for (const j of jobs.values()) {
+          if (['downloading', 'probing', 'resolving'].includes(j.status)) {
+            j.pause();
+          }
+        }
+      }
+      const nowMs = Date.now();
+      if (nowMs - schedulerConfig.lastRetryTick >= schedulerConfig.autoRetryIntervalSec * 1000) {
+        schedulerConfig.lastRetryTick = nowMs;
+        for (const j of jobs.values()) {
+          if (j.status === 'error') {
+            j.start();
+          }
+        }
+      }
+    }
+  }, 10000).unref();
+}
+
 loadHistory().then(() => {
   startBrowserSqliteDownloadWatcher();
+  startIdmSchedulerDaemon();
   server.listen(PORT, '127.0.0.1', () => {
-    console.log(`[HyperIDM Ultra v4.0 64-Bit Engine] Listening on http://127.0.0.1:${PORT}`);
+    console.log(`[Duytai v7.0 64-Bit Engine] Listening on http://127.0.0.1:${PORT}`);
   });
 });

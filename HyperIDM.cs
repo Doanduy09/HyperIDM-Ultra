@@ -452,33 +452,56 @@ namespace HyperIDM
             catch { }
 
             if (Regex.IsMatch(target, @"ipsw\.me/|updates\.cdn-apple\.com/.*\.ipsw") ||
-                ext == "ipsw" || ext == "iso" || ext == "img" || ext == "bin" || ext == "vhd" || ext == "vhdx" || ext == "wim" || ext == "esd" || ext == "ova")
+                ext == "ipsw" || ext == "iso" || ext == "img" || ext == "bin" || ext == "vhd" || ext == "vhdx" ||
+                ext == "vmdk" || ext == "vdi" || ext == "qcow2" || ext == "wim" || ext == "esd" || ext == "swm" ||
+                ext == "ova" || ext == "ovf" || ext == "hex" || ext == "uf2" || ext == "fw" || ext == "rom" ||
+                ext == "ffu" || ext == "ota" || ext == "kdz" || ext == "pac")
             {
                 return new CategoryInfo("Firmware / ISO", "Firmware_ISO", Color.FromArgb(14, 116, 144));
             }
 
-            if (ext == "zip" || ext == "rar" || ext == "7z" || ext == "tar" || ext == "gz" || ext == "tgz" || ext == "bz2" || ext == "xz" || ext == "zst" || ext == "cab")
+            if (ext == "zip" || ext == "rar" || ext == "7z" || ext == "ace" || ext == "arj" || ext == "bz2" ||
+                ext == "tbz2" || ext == "cab" || ext == "gz" || ext == "gzip" || ext == "tgz" || ext == "lzh" ||
+                ext == "lha" || ext == "lz" || ext == "lzma" || ext == "tlz" || ext == "pak" || ext == "par2" ||
+                ext == "sea" || ext == "sit" || ext == "sitx" || ext == "tar" || ext == "xz" || ext == "txz" ||
+                ext == "z" || ext == "zst" || ext == "whl" || ext == "nupkg" || ext == "crx" || ext == "xpi" ||
+                ext == "torrent" || Regex.IsMatch(ext, @"^r\d{2,3}$") || Regex.IsMatch(ext, @"^\d{3}$"))
             {
                 return new CategoryInfo("Dữ liệu nén", "Compressed", Color.FromArgb(180, 83, 9));
             }
 
-            if (ext == "exe" || ext == "msi" || ext == "msix" || ext == "apk" || ext == "dmg" || ext == "pkg" || ext == "deb" || ext == "rpm" || ext == "appimage")
+            if (ext == "exe" || ext == "msi" || ext == "msu" || ext == "msix" || ext == "msixbundle" ||
+                ext == "appx" || ext == "apk" || ext == "apks" || ext == "xapk" || ext == "aab" || ext == "ipa" ||
+                ext == "dmg" || ext == "pkg" || ext == "deb" || ext == "rpm" || ext == "appimage" || ext == "jar" ||
+                ext == "war" || ext == "bat" || ext == "cmd" || ext == "ps1" || ext == "sh" || ext == "run")
             {
                 return new CategoryInfo("Chương trình", "Programs", Color.FromArgb(37, 99, 235));
             }
 
             if (Regex.IsMatch(target, @"youtube\.com/(watch|shorts)|youtu\.be/") ||
-                ext == "mp4" || ext == "mkv" || ext == "avi" || ext == "mov" || ext == "webm" || ext == "flv" || ext == "m4v" || ext == "ts")
+                ext == "3gp" || ext == "3g2" || ext == "asf" || ext == "avi" || ext == "f4v" || ext == "flv" ||
+                ext == "m2ts" || ext == "mts" || ext == "m4v" || ext == "mkv" || ext == "mov" || ext == "mp4" ||
+                ext == "mpe" || ext == "mpeg" || ext == "mpg" || ext == "ogv" || ext == "qt" || ext == "rm" ||
+                ext == "rmvb" || ext == "ts" || ext == "tsv" || ext == "vob" || ext == "webm" || ext == "wmv" ||
+                ext == "m3u8" || ext == "mpd")
             {
                 return new CategoryInfo("Video", "Video", Color.FromArgb(147, 51, 234));
             }
 
-            if (ext == "mp3" || ext == "flac" || ext == "wav" || ext == "aac" || ext == "m4a" || ext == "ogg" || ext == "opus")
+            if (ext == "aac" || ext == "aif" || ext == "aiff" || ext == "alac" || ext == "amr" || ext == "ape" ||
+                ext == "flac" || ext == "m4a" || ext == "m4b" || ext == "m4p" || ext == "m4r" || ext == "mid" ||
+                ext == "midi" || ext == "mp2" || ext == "mp3" || ext == "mpa" || ext == "oga" || ext == "ogg" ||
+                ext == "opus" || ext == "plj" || ext == "ra" || ext == "ram" || ext == "wav" || ext == "wma")
             {
                 return new CategoryInfo("Âm nhạc", "Music", Color.FromArgb(219, 39, 119));
             }
 
-            if (ext == "pdf" || ext == "doc" || ext == "docx" || ext == "xls" || ext == "xlsx" || ext == "ppt" || ext == "pptx" || ext == "epub" || ext == "txt" || ext == "csv")
+            if (ext == "pdf" || ext == "doc" || ext == "docx" || ext == "xls" || ext == "xlsx" || ext == "ppt" ||
+                ext == "pptx" || ext == "pps" || ext == "ppsx" || ext == "odt" || ext == "ods" || ext == "odp" ||
+                ext == "epub" || ext == "mobi" || ext == "azw3" || ext == "txt" || ext == "rtf" || ext == "csv" ||
+                ext == "chm" || ext == "djvu" || ext == "xps" || ext == "tif" || ext == "tiff" || ext == "psd" ||
+                ext == "ai" || ext == "svg" || ext == "jpg" || ext == "jpeg" || ext == "png" || ext == "webp" ||
+                ext == "gif" || ext == "json" || ext == "xml" || ext == "sql" || ext == "db" || ext == "sqlite")
             {
                 return new CategoryInfo("Tài liệu", "Documents", Color.FromArgb(5, 150, 105));
             }
@@ -587,6 +610,8 @@ namespace HyperIDM
         }
 
         private MainIdmForm mainForm;
+        private FloatingDropBoxForm dropBoxForm;
+        private SiteGrabberForm siteGrabberForm;
 
         private bool clipboardEnabled = true;
         private bool browserInterceptEnabled = true;
@@ -602,12 +627,18 @@ namespace HyperIDM
         private DateTime lastServerStartAttempt = DateTime.MinValue;
         private Thread pipeThread;
 
+        internal const string DefaultIdmFileTypes =
+            "3GP 7Z AAC ACE AIF AIFF APK APKS XAPK ARJ ASF AVI BIN BZ2 CAB CRX CSV DEB DMG DOC DOCX EPUB ESD EXE F4V FLAC FLV GZ GZIP HEX IMG IPA IPSW ISO JAR JPG JPEG JSON LHA LZH LZMA M2TS M3U8 M4A M4V MKV MOBI MOV MP3 MP4 MPA MPD MPE MPEG MPG MSI MSIX MSU NUPKG OGG OGV OPUS OTA OVA OVF PDF PKG PLJ PNG PPS PPT PPTX PSD QCOW2 QT R0* R1* RA RAM RAR RM RMVB ROM RPM RTF SEA SIT SITX SQL SQLITE SVG TAR TBZ2 TGZ TIF TIFF TORRENT TS TXT UF2 VHD VHDX VMDK VOB WAV WEBM WEBP WHL WIM WMA WMV XLS XLSX XML XZ Z ZIP ZST";
+
+        private string customFileTypes = DefaultIdmFileTypes;
+        private bool catchAllFileFormats = true;
+
         private static readonly Regex DownloadExtRegex = new Regex(
-            @"\.(zip|rar|7z|exe|msi|msix|iso|ipsw|dmg|apk|mp4|mkv|pdf|bin|img|tar|gz|bz2|xz|tgz|zst|deb|rpm|pkg|avi|mov|webm|flv|m4v|ts|mp3|flac|wav|aac|m4a|ogg|opus|doc|docx|xls|xlsx|ppt|pptx|epub|vhd|vhdx|wim|esd|ova)(?:$|[?#])",
+            @"\.(3gp|3g2|7z|aac|ace|aif|aiff|alac|apk|apks|xapk|aab|ipa|arj|asf|avi|bin|bz2|tbz2|cab|crx|xpi|csv|dat|db|sqlite|deb|dmg|doc|docx|dwg|dxf|epub|mobi|azw3|esd|wim|swm|exe|f4v|ffu|flac|flv|fw|gz|gzip|tgz|hex|uf2|img|ipsw|iso|jar|war|jpg|jpeg|png|gif|webp|svg|avif|ico|bmp|json|xml|yaml|yml|lzh|lha|lz|lzma|tlz|m2ts|mts|m3u8|mpd|m4a|m4b|m4p|m4r|m4v|mkv|mov|mp2|mp3|mp4|mpa|mpe|mpeg|mpg|msi|msix|msixbundle|appx|msu|nupkg|whl|odt|ods|odp|oga|ogg|ogv|opus|ota|ova|ovf|pak|par2|pdf|pkg|plj|pps|ppsx|ppt|pptx|psd|ai|qcow2|qt|r\d{2,3}|\d{3}|ra|ram|rar|rm|rmvb|rom|rpm|appimage|rtf|s7z|sea|sit|sitx|sql|srt|ass|vtt|stl|tar|tif|tiff|torrent|ts|tsv|txt|vhd|vhdx|vmdk|vdi|vob|wav|webm|wma|wmv|xls|xlsx|xps|xz|txz|z|zip|zst)(?:$|[?#&])",
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
         private static readonly Regex SpecialHostRegex = new Regex(
-            @"^https?://(?:(?:www\.)?(?:ipsw\.me/download/|youtube\.com/(?:watch\?v=|shorts/)|youtu\.be/)|updates\.cdn-apple\.com/|appldnld\.apple\.com/|github\.com/.+/releases/download/|huggingface\.co/.+/resolve/)",
+            @"^https?://(?:(?:www\.)?(?:ipsw\.me/download/|youtube\.com/(?:watch\?v=|shorts/)|youtu\.be/)|updates\.cdn-apple\.com/|appldnld\.apple\.com/|github\.com/.+/releases/download/|objects\.githubusercontent\.com/|huggingface\.co/.+/resolve/|drive\.usercontent\.google\.com/download|drive\.google\.com/uc\?|onedrive\.live\.com/download|dl\.dropboxusercontent\.com/|download\.microsoft\.com/)",
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
         [DllImport("user32.dll", CharSet = CharSet.Auto)]
@@ -641,6 +672,12 @@ namespace HyperIDM
             ToolStripMenuItem menuAddUrl = new ToolStripMenuItem("Thêm URL tải xuống mới...");
             menuAddUrl.Click += delegate { ShowDownloadDialog("", null, null, null, "Thêm URL thủ công"); };
 
+            ToolStripMenuItem menuGrabber = new ToolStripMenuItem("Duytai Site Grabber (Quét toàn bộ tệp trên trang web)...");
+            menuGrabber.Click += delegate { ShowSiteGrabberDialog(""); };
+
+            ToolStripMenuItem menuDropBox = new ToolStripMenuItem("Hiện/Ẩn Giỏ thả link nổi (Floating Drop Target)");
+            menuDropBox.Click += delegate { ToggleFloatingDropBox(); };
+
             menuClipboard = new ToolStripMenuItem("Tự động bắt link khi Copy (Clipboard) [Bật]");
             menuClipboard.Checked = true;
             menuClipboard.Click += delegate { SetClipboardEnabled(!clipboardEnabled); };
@@ -660,6 +697,8 @@ namespace HyperIDM
 
             trayMenu.Items.Add(menuOpen);
             trayMenu.Items.Add(menuAddUrl);
+            trayMenu.Items.Add(menuGrabber);
+            trayMenu.Items.Add(menuDropBox);
             trayMenu.Items.Add(new ToolStripSeparator());
             trayMenu.Items.Add(menuClipboard);
             trayMenu.Items.Add(menuBrowser);
@@ -722,6 +761,8 @@ namespace HyperIDM
         internal bool BrowserInterceptEnabled { get { return browserInterceptEnabled; } }
         internal bool AutoShowProgress { get { return autoShowProgress; } set { autoShowProgress = value; } }
         internal int DefaultThreads { get { return defaultThreads; } set { defaultThreads = (value == 128) ? 128 : 64; } }
+        internal string CustomFileTypes { get { return customFileTypes; } set { customFileTypes = string.IsNullOrEmpty(value) ? DefaultIdmFileTypes : value; } }
+        internal bool CatchAllFileFormats { get { return catchAllFileFormats; } set { catchAllFileFormats = value; } }
 
         internal void SetClipboardEnabled(bool value)
         {
@@ -761,6 +802,43 @@ namespace HyperIDM
             mainForm.Activate();
             mainForm.BringToFront();
             mainForm.TriggerImmediateRefresh();
+        }
+
+        internal void ShowSiteGrabberDialog(string initialUrl)
+        {
+            if (isExiting) return;
+            if (siteGrabberForm == null || siteGrabberForm.IsDisposed)
+            {
+                siteGrabberForm = new SiteGrabberForm(this, initialUrl);
+            }
+            siteGrabberForm.Show();
+            siteGrabberForm.WindowState = FormWindowState.Normal;
+            siteGrabberForm.Activate();
+            siteGrabberForm.BringToFront();
+        }
+
+        internal void ToggleFloatingDropBox()
+        {
+            if (isExiting) return;
+            if (dropBoxForm != null && !dropBoxForm.IsDisposed && dropBoxForm.Visible)
+            {
+                dropBoxForm.Hide();
+                return;
+            }
+            if (dropBoxForm == null || dropBoxForm.IsDisposed)
+            {
+                dropBoxForm = new FloatingDropBoxForm(this);
+            }
+            dropBoxForm.Show();
+            dropBoxForm.BringToFront();
+        }
+
+        internal void UpdateFloatingDropBox(long totalSpeedBps, int activeCount)
+        {
+            if (dropBoxForm != null && !dropBoxForm.IsDisposed && dropBoxForm.Visible)
+            {
+                dropBoxForm.UpdateTelemetry(totalSpeedBps, activeCount);
+            }
         }
 
         internal void NotifyHiddenToTray()
@@ -1233,6 +1311,7 @@ namespace HyperIDM
 
             if (SpecialHostRegex.IsMatch(text)) return true;
             if (DownloadExtRegex.IsMatch(uri.AbsolutePath) || DownloadExtRegex.IsMatch(text)) return true;
+            if (Regex.IsMatch(uri.Query, @"(?:^|[?&])(?:download|dl|attachment|export=download|file|filename)=", RegexOptions.IgnoreCase)) return true;
 
             return false;
         }
@@ -1822,14 +1901,15 @@ namespace HyperIDM
             buttons.Add(new IdmToolbarButtonDef { Label = "Lập lịch", Tooltip = "Tải hàng loạt & Test nhanh IPSW.me / YouTube", IconKind = 7, FillColor = Color.FromArgb(255, 228, 230), RingColor = Color.FromArgb(225, 29, 72), GlyphColor = Color.FromArgb(190, 18, 60) });
             buttons.Add(new IdmToolbarButtonDef { Label = "Bắt đầu ...", Tooltip = "Bắt đầu tải toàn bộ mục đang chờ", IconKind = 8, FillColor = Color.FromArgb(220, 252, 231), RingColor = Color.FromArgb(22, 163, 74), GlyphColor = Color.FromArgb(21, 128, 61) });
             buttons.Add(new IdmToolbarButtonDef { Label = "Dừng da...", Tooltip = "Dừng toàn bộ hàng đợi tải", IconKind = 9, FillColor = Color.FromArgb(255, 237, 213), RingColor = Color.FromArgb(217, 119, 6), GlyphColor = Color.FromArgb(180, 83, 9) });
-            buttons.Add(new IdmToolbarButtonDef { Label = "Nói với bạ...", Tooltip = "Test tải nhanh IPSW.me Mac15,12 • YouTube • Node.js ZIP", IconKind = 10, FillColor = Color.FromArgb(219, 234, 254), RingColor = Color.FromArgb(37, 99, 235), GlyphColor = Color.FromArgb(37, 99, 235) });
+            buttons.Add(new IdmToolbarButtonDef { Label = "Grabber", Tooltip = "Duytai Site Grabber — Quét & tải toàn bộ tệp trên trang web", IconKind = 11, FillColor = Color.FromArgb(224, 242, 254), RingColor = Color.FromArgb(2, 132, 199), GlyphColor = Color.FromArgb(3, 105, 161) });
+            buttons.Add(new IdmToolbarButtonDef { Label = "Test nhanh", Tooltip = "Test tải nhanh IPSW.me Mac15,12 • YouTube • Node.js ZIP", IconKind = 10, FillColor = Color.FromArgb(219, 234, 254), RingColor = Color.FromArgb(37, 99, 235), GlyphColor = Color.FromArgb(37, 99, 235) });
         }
 
         private Rectangle GetSlotRect(int idx)
         {
             int marginX = 6;
             int avail = Math.Max(660, Width - marginX * 2);
-            int slotW = Math.Min(88, Math.Max(62, avail / buttons.Count));
+            int slotW = Math.Min(82, Math.Max(58, avail / buttons.Count));
             return new Rectangle(marginX + idx * slotW, 3, slotW - 2, Height - 7);
         }
 
@@ -2096,7 +2176,7 @@ namespace HyperIDM
                     }
                     break;
 
-                case 10: // Nói với bạn bè: Thumbs Up
+                case 10: // Test nhanh: Thumbs Up
                     using (SolidBrush b = new SolidBrush(c))
                     {
                         g.FillRectangle(b, mx - 7f, my - 1f, 3.5f, 8f);
@@ -2111,6 +2191,16 @@ namespace HyperIDM
                             new PointF(mx - 2.5f, my + 7f)
                         };
                         g.FillPolygon(b, thumb);
+                    }
+                    break;
+
+                case 11: // Grabber: Globe + Spider Radar
+                    using (Pen p = new Pen(c, 1.7f))
+                    {
+                        g.DrawEllipse(p, mx - 7f, my - 7f, 14f, 14f);
+                        g.DrawEllipse(p, mx - 3.5f, my - 7f, 7f, 14f);
+                        g.DrawLine(p, mx - 7f, my, mx + 7f, my);
+                        g.DrawLine(p, mx, my - 7f, mx, my + 7f);
                     }
                     break;
             }
@@ -2226,9 +2316,11 @@ namespace HyperIDM
 
             ToolStripMenuItem mTasks = new ToolStripMenuItem("Công việc");
             mTasks.DropDownItems.Add("Thêm tác vụ tải mới (Thêm URL)...", null, delegate { agent.ShowDownloadDialog("", null, null, null, "Thêm URL thủ công"); });
-            mTasks.DropDownItems.Add("Nhập danh sách tải hàng loạt / Lập lịch...", null, delegate { OpenBatchDialog(); });
-            mTasks.DropDownItems.Add("Mở thư mục Tải xuống (Downloads\\Duytai)", null, delegate { TrayAgentContext.OpenDownloadsFolder(); });
+            mTasks.DropDownItems.Add("Duytai Site Grabber (Quét & tải toàn bộ tệp trên trang web)...", null, delegate { agent.ShowSiteGrabberDialog(""); });
+            mTasks.DropDownItems.Add("Bộ lập lịch & Tải hàng loạt (IDM Scheduler)...", null, delegate { OpenBatchDialog(); });
+            mTasks.DropDownItems.Add("Hiện/Ẩn Giỏ thả link nổi (Floating Drop Target)", null, delegate { agent.ToggleFloatingDropBox(); });
             mTasks.DropDownItems.Add(new ToolStripSeparator());
+            mTasks.DropDownItems.Add("Mở thư mục Tải xuống (Downloads\\Duytai)", null, delegate { TrayAgentContext.OpenDownloadsFolder(); });
             mTasks.DropDownItems.Add("Mở trình duyệt Web UI (127.0.0.1:17890)", null, delegate { Program.OpenWebBrowserFallback(); });
             mTasks.DropDownItems.Add(new ToolStripSeparator());
             mTasks.DropDownItems.Add("Ẩn xuống khay hệ thống", null, delegate { Hide(); });
@@ -2237,7 +2329,11 @@ namespace HyperIDM
             ToolStripMenuItem mFile = new ToolStripMenuItem("Tệp tin");
             mFile.DropDownItems.Add("Mở tệp đã tải", null, delegate { OpenSelectedFile(); });
             mFile.DropDownItems.Add("Mở thư mục chứa tệp", null, delegate { OpenSelectedFolder(); });
-            mFile.DropDownItems.Add("Mở cửa sổ tiến trình tải (64 Luồng)", null, delegate { OpenSelectedProgress(); });
+            mFile.DropDownItems.Add("Mở cửa sổ tiến trình tải (64/128 Luồng)", null, delegate { OpenSelectedProgress(); });
+            mFile.DropDownItems.Add(new ToolStripSeparator());
+            mFile.DropDownItems.Add("Làm mới địa chỉ tải (Refresh Expired URL)...", null, delegate { OpenRefreshUrlSelected(); });
+            mFile.DropDownItems.Add("Xem trước nội dung tệp nén ZIP (ZIP Preview)...", null, delegate { OpenZipPreviewSelected(); });
+            mFile.DropDownItems.Add("Quét Virus (Windows Defender) & Kiểm tra SHA-256", null, delegate { ScanAntivirusSelected(); });
             mFile.DropDownItems.Add(new ToolStripSeparator());
             mFile.DropDownItems.Add("Tải tiếp", null, delegate { ResumeSelectedJob(); });
             mFile.DropDownItems.Add("Dừng tải", null, delegate { PauseSelectedJob(); });
@@ -2270,7 +2366,10 @@ namespace HyperIDM
                 split.Panel1Collapsed = !show;
             };
             mView.DropDownItems.Add(menuViewSidebar);
-            mView.DropDownItems.Add("Làm mới danh sách ngay", null, delegate { TriggerImmediateRefresh(); });
+            mView.DropDownItems.Add("Hiện/Ẩn Giỏ thả link nổi (Floating Drop Target)", null, delegate { agent.ToggleFloatingDropBox(); });
+            mView.DropDownItems.Add("Chế độ Giao diện Tối / Sáng (IDM Dark Mode)", null, delegate { ToggleDarkTheme(); });
+            mView.DropDownItems.Add(new ToolStripSeparator());
+            mView.DropDownItems.Add("Làm mới danh sách ngay (F5)", null, delegate { TriggerImmediateRefresh(); });
 
             ToolStripMenuItem mHelp = new ToolStripMenuItem("Trợ giúp");
             mHelp.DropDownItems.Add("Test tải IPSW.me Mac15,12 (Apple Firmware)", null, delegate
@@ -2338,7 +2437,10 @@ namespace HyperIDM
                     case 9: // Dừng da...
                         agent.PauseAllActiveJobsAsync();
                         break;
-                    case 10: // Nói với bạn bè / Menu test nhanh
+                    case 10: // Grabber
+                        agent.ShowSiteGrabberDialog("");
+                        break;
+                    case 11: // Test nhanh
                         quickTestMenu.Show(toolbar, new Point(slotRect.Left, toolbar.Height - 2));
                         break;
                 }
@@ -2436,6 +2538,13 @@ namespace HyperIDM
                 {
                     currentFilterTag = e.Node.Tag.ToString();
                     RenderJobsGrid(lastJobs);
+                }
+            };
+            treeCategories.NodeMouseDoubleClick += delegate(object s, TreeNodeMouseClickEventArgs e)
+            {
+                if (e.Node != null && string.Equals(e.Node.Tag as string, "grabber", StringComparison.Ordinal))
+                {
+                    agent.ShowSiteGrabberDialog("");
                 }
             };
 
@@ -2612,6 +2721,10 @@ namespace HyperIDM
             rowContextMenu.Items.Add("Tải tiếp", null, delegate { ResumeSelectedJob(); });
             rowContextMenu.Items.Add("Tạm dừng", null, delegate { PauseSelectedJob(); });
             rowContextMenu.Items.Add(new ToolStripSeparator());
+            rowContextMenu.Items.Add("Làm mới địa chỉ tải (Refresh Expired URL)...", null, delegate { OpenRefreshUrlSelected(); });
+            rowContextMenu.Items.Add("Xem trước nội dung tệp ZIP (ZIP Preview)...", null, delegate { OpenZipPreviewSelected(); });
+            rowContextMenu.Items.Add("Quét Virus (Windows Defender) & Kiểm tra SHA-256", null, delegate { ScanAntivirusSelected(); });
+            rowContextMenu.Items.Add(new ToolStripSeparator());
             rowContextMenu.Items.Add("Sao chép URL", null, delegate
             {
                 JobSnapshot job = GetSelectedJob();
@@ -2713,6 +2826,7 @@ namespace HyperIDM
             string speedStr = totalSpeed > 0 ? (" • Tổng tốc độ: " + IdmFormat.FormatSpeed(totalSpeed, false)) : "";
             string limitStr = snap.GlobalLimitBps > 0 ? (" • Giới hạn: " + IdmFormat.FormatSpeed(snap.GlobalLimitBps, false)) : "";
             lblStatusSummary.Text = string.Format("Tổng: {0} tệp ({1} đang tải){2}{3}", snap.Jobs.Count, activeCount, speedStr, limitStr);
+            agent.UpdateFloatingDropBox(totalSpeed, activeCount);
         }
 
         private List<JobSnapshot> FilterJobs(List<JobSnapshot> jobs)
@@ -3045,6 +3159,90 @@ namespace HyperIDM
             };
             dlg.Show();
             dlg.Activate();
+        }
+
+        private void OpenRefreshUrlSelected()
+        {
+            JobSnapshot job = GetSelectedJob();
+            if (job == null) return;
+            RefreshUrlForm dlg = new RefreshUrlForm(agent, job);
+            dlg.TopMost = true;
+            dlg.FormClosed += delegate { TriggerImmediateRefresh(); };
+            dlg.Show();
+            dlg.Activate();
+        }
+
+        private void OpenZipPreviewSelected()
+        {
+            JobSnapshot job = GetSelectedJob();
+            if (job == null) return;
+            ZipPreviewForm dlg = new ZipPreviewForm(agent, job.Id, job.Url, job.FileName);
+            dlg.TopMost = true;
+            dlg.Show();
+            dlg.Activate();
+        }
+
+        private void ScanAntivirusSelected()
+        {
+            JobSnapshot job = GetSelectedJob();
+            if (job == null) return;
+            agent.ShowBalloon("Duytai — Quét Virus & SHA-256", "Đang quét Windows Defender & tính SHA-256 cho: " + job.FileName, ToolTipIcon.Info);
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                try
+                {
+                    string json = TrayAgentContext.HttpRequest("POST", Program.AppUrl + "/api/jobs/" + Uri.EscapeDataString(job.Id) + "/antivirus-scan", "{}", 25000);
+                    JavaScriptSerializer js = new JavaScriptSerializer();
+                    Dictionary<string, object> d = js.DeserializeObject(json) as Dictionary<string, object>;
+                    string detail = "Hoàn tất xác thực SHA-256 & Windows Defender.";
+                    if (d != null)
+                    {
+                        object avObj;
+                        if (d.TryGetValue("antivirus", out avObj))
+                        {
+                            Dictionary<string, object> av = avObj as Dictionary<string, object>;
+                            if (av != null) detail = TrayAgentContext.GetDictString(av, "detail") ?? detail;
+                        }
+                    }
+                    agent.RunOnUiThread(new MethodInvoker(delegate
+                    {
+                        agent.ShowBalloon("Duytai — Kết quả Bảo mật", job.FileName + ": " + detail, ToolTipIcon.Info);
+                        TriggerImmediateRefresh();
+                    }));
+                }
+                catch (Exception ex)
+                {
+                    agent.RunOnUiThread(new MethodInvoker(delegate
+                    {
+                        agent.ShowBalloon("Duytai — Quét Bảo mật", "Không thể quét tệp: " + ex.Message, ToolTipIcon.Warning);
+                    }));
+                }
+            });
+        }
+
+        private bool isDarkMode = false;
+        private void ToggleDarkTheme()
+        {
+            isDarkMode = !isDarkMode;
+            Color bg = isDarkMode ? Color.FromArgb(15, 23, 42) : Color.White;
+            Color fg = isDarkMode ? Color.FromArgb(241, 245, 249) : Color.FromArgb(15, 23, 42);
+            Color hdrBg = isDarkMode ? Color.FromArgb(30, 41, 59) : Color.FromArgb(248, 249, 251);
+            Color gridLine = isDarkMode ? Color.FromArgb(51, 65, 85) : Color.FromArgb(234, 234, 234);
+
+            BackColor = bg;
+            toolbar.BackColor = isDarkMode ? Color.FromArgb(241, 245, 249) : Color.White;
+            treeCategories.BackColor = bg;
+            treeCategories.ForeColor = fg;
+            gridJobs.BackgroundColor = bg;
+            gridJobs.GridColor = gridLine;
+            gridJobs.DefaultCellStyle.BackColor = bg;
+            gridJobs.DefaultCellStyle.ForeColor = fg;
+            gridJobs.ColumnHeadersDefaultCellStyle.BackColor = hdrBg;
+            gridJobs.ColumnHeadersDefaultCellStyle.ForeColor = fg;
+            statusStrip.BackColor = hdrBg;
+            lblStatusSummary.ForeColor = fg;
+            lblStatusCapture.ForeColor = fg;
+            Invalidate(true);
         }
 
         protected override void Dispose(bool disposing)
@@ -3867,8 +4065,8 @@ namespace HyperIDM
             btnStart = new Button();
             btnStart.Text = "⚡ Bắt đầu tải ngay";
             btnStart.Location = new Point(20, 14);
-            btnStart.Size = new Size(210, 36);
-            btnStart.Font = new Font("Segoe UI", 9.75f, FontStyle.Bold);
+            btnStart.Size = new Size(195, 36);
+            btnStart.Font = new Font("Segoe UI", 9.5f, FontStyle.Bold);
             btnStart.FlatStyle = FlatStyle.Flat;
             btnStart.FlatAppearance.BorderSize = 0;
             btnStart.BackColor = Color.FromArgb(0, 120, 215);
@@ -3877,24 +4075,44 @@ namespace HyperIDM
             btnStart.Click += delegate { SubmitJob(false); };
 
             btnLater = new Button();
-            btnLater.Text = "🕒 Tải sau (Danh sách chờ)";
-            btnLater.Location = new Point(242, 14);
-            btnLater.Size = new Size(258, 36);
-            btnLater.Font = new Font("Segoe UI", 9.25f, FontStyle.Regular);
+            btnLater.Text = "🕒 Tải sau (Hàng đợi)";
+            btnLater.Location = new Point(223, 14);
+            btnLater.Size = new Size(165, 36);
+            btnLater.Font = new Font("Segoe UI", 9f, FontStyle.Regular);
             btnLater.UseVisualStyleBackColor = true;
             btnLater.Cursor = Cursors.Hand;
             btnLater.Click += delegate { SubmitJob(true); };
 
+            Button btnZipPreview = new Button();
+            btnZipPreview.Text = "📦 Xem ZIP";
+            btnZipPreview.Location = new Point(396, 14);
+            btnZipPreview.Size = new Size(110, 36);
+            btnZipPreview.Font = new Font("Segoe UI", 9f, FontStyle.Regular);
+            btnZipPreview.UseVisualStyleBackColor = true;
+            btnZipPreview.Cursor = Cursors.Hand;
+            btnZipPreview.Click += delegate
+            {
+                string u = (txtUrl.Text ?? "").Trim();
+                if (!string.IsNullOrEmpty(u))
+                {
+                    ZipPreviewForm zp = new ZipPreviewForm(agent, null, u, txtFileName.Text);
+                    zp.TopMost = true;
+                    zp.Show();
+                    zp.Activate();
+                }
+            };
+
             btnCancel = new Button();
             btnCancel.Text = "Hủy bỏ";
-            btnCancel.Location = new Point(512, 14);
-            btnCancel.Size = new Size(106, 36);
+            btnCancel.Location = new Point(514, 14);
+            btnCancel.Size = new Size(104, 36);
             btnCancel.UseVisualStyleBackColor = true;
             btnCancel.Cursor = Cursors.Hand;
             btnCancel.Click += delegate { Close(); };
 
             footer.Controls.Add(btnStart);
             footer.Controls.Add(btnLater);
+            footer.Controls.Add(btnZipPreview);
             footer.Controls.Add(btnCancel);
             Controls.Add(footer);
 
@@ -3923,6 +4141,7 @@ namespace HyperIDM
             return tb;
         }
 
+        private string lastProbedUrl = "";
         private void RefreshMetadataFromUrl()
         {
             string url = (txtUrl.Text ?? "").Trim();
@@ -3933,6 +4152,67 @@ namespace HyperIDM
                 programmaticUpdate = false;
             }
             UpdateCategoryAndDir(url, txtFileName.Text);
+
+            if ((url.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+                 url.StartsWith("https://", StringComparison.OrdinalIgnoreCase)) &&
+                !string.Equals(url, lastProbedUrl, StringComparison.Ordinal))
+            {
+                lastProbedUrl = url;
+                ProbeUrlMetadataAsync(url);
+            }
+        }
+
+        private void ProbeUrlMetadataAsync(string urlToProbe)
+        {
+            lblStatus.ForeColor = Color.FromArgb(0, 102, 204);
+            lblStatus.Text = "Đang thăm dò máy chủ (Kích thước thực & Khả năng Resume 64/128 luồng)...";
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                try
+                {
+                    JavaScriptSerializer js = new JavaScriptSerializer();
+                    Dictionary<string, object> p = new Dictionary<string, object>();
+                    p["url"] = urlToProbe;
+                    if (headers != null && headers.Count > 0) p["headers"] = headers;
+                    string respJson = TrayAgentContext.HttpRequest("POST", Program.AppUrl + "/api/probe", js.Serialize(p), 5000);
+                    Dictionary<string, object> d = js.DeserializeObject(respJson) as Dictionary<string, object>;
+                    if (d == null) return;
+
+                    long totalBytes = TrayAgentContext.GetDictLong(d, "totalBytes", 0);
+                    bool acceptRanges = TrayAgentContext.GetDictBool(d, "acceptRanges", false);
+                    string srvName = TrayAgentContext.GetDictString(d, "fileName") ?? "";
+                    bool isZip = TrayAgentContext.GetDictBool(d, "isZip", false);
+
+                    agent.RunOnUiThread(new MethodInvoker(delegate
+                    {
+                        if (IsDisposed) return;
+                        if (!string.Equals((txtUrl.Text ?? "").Trim(), urlToProbe, StringComparison.Ordinal)) return;
+                        if (!userEditedFileName && !string.IsNullOrEmpty(srvName) && srvName != "download_file")
+                        {
+                            programmaticUpdate = true;
+                            txtFileName.Text = IdmFormat.SanitizeFileName(srvName);
+                            programmaticUpdate = false;
+                            UpdateCategoryAndDir(urlToProbe, txtFileName.Text);
+                        }
+                        string sizeTxt = totalBytes > 0 ? IdmFormat.FormatBytes(totalBytes) : "Luồng động (Stream)";
+                        string resumeTxt = acceptRanges ? "Hỗ trợ Resume 64/128 Luồng" : "1 Luồng";
+                        string zipTxt = isZip ? " • Có hỗ trợ Xem trước ZIP" : "";
+                        lblStatus.ForeColor = Color.FromArgb(5, 150, 105);
+                        lblStatus.Text = string.Format("✓ Dung lượng: {0} • {1}{2}", sizeTxt, resumeTxt, zipTxt);
+                    }));
+                }
+                catch
+                {
+                    agent.RunOnUiThread(new MethodInvoker(delegate
+                    {
+                        if (!IsDisposed)
+                        {
+                            lblStatus.ForeColor = Color.FromArgb(100, 116, 139);
+                            lblStatus.Text = "Sẵn sàng tải xuống với mọi định dạng tệp (64/128 Luồng).";
+                        }
+                    }));
+                }
+            });
         }
 
         private void UpdateCategoryAndDir(string url, string fileName)
@@ -4073,13 +4353,15 @@ namespace HyperIDM
         private CheckBox chkClipboard;
         private CheckBox chkBrowser;
         private CheckBox chkAutoProgress;
+        private CheckBox chkCatchAllFormats;
+        private TextBox txtFileTypes;
         private NumericUpDown numGlobalLimit;
 
         public OptionsForm(TrayAgentContext ownerAgent)
         {
             agent = ownerAgent;
-            Text = "Tùy chọn — Duytai 64-Bit";
-            ClientSize = new Size(460, 275);
+            Text = "Tùy chọn & Định dạng tệp — Duytai 64-Bit";
+            ClientSize = new Size(540, 415);
             StartPosition = FormStartPosition.CenterParent;
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
@@ -4088,8 +4370,8 @@ namespace HyperIDM
             Font = new Font("Segoe UI", 9f, FontStyle.Regular);
             try { Icon = agent.SharedIcon; } catch { }
 
-            Label l1 = new Label { Text = "Số luồng tải mặc định:", Location = new Point(20, 22), AutoSize = true };
-            cmbThreads = new ComboBox { Location = new Point(190, 18), Size = new Size(240, 24), DropDownStyle = ComboBoxStyle.DropDownList };
+            Label l1 = new Label { Text = "Số luồng tải mặc định:", Location = new Point(20, 20), AutoSize = true };
+            cmbThreads = new ComboBox { Location = new Point(195, 16), Size = new Size(320, 24), DropDownStyle = ComboBoxStyle.DropDownList };
             cmbThreads.Items.Add("64 Luồng (Hyper-Turbo)");
             cmbThreads.Items.Add("128 Luồng (Max Speed)");
             cmbThreads.SelectedIndex = agent.DefaultThreads == 128 ? 1 : 0;
@@ -4097,38 +4379,68 @@ namespace HyperIDM
             chkClipboard = new CheckBox
             {
                 Text = "Tự động bắt link khi Copy (Clipboard)",
-                Location = new Point(20, 60),
+                Location = new Point(20, 54),
                 AutoSize = true,
                 Checked = agent.ClipboardEnabled
             };
 
             chkBrowser = new CheckBox
             {
-                Text = "Tự động bắt link từ Trình duyệt (Chrome / Edge / Extension)",
-                Location = new Point(20, 90),
+                Text = "Tự động bắt link từ mọi Trình duyệt (Chrome / Edge / Cốc Cốc / Firefox)",
+                Location = new Point(20, 82),
                 AutoSize = true,
                 Checked = agent.BrowserInterceptEnabled
             };
 
             chkAutoProgress = new CheckBox
             {
-                Text = "Tự động mở hộp thoại Tiến trình tải (IdmProgressForm)",
-                Location = new Point(20, 120),
+                Text = "Tự động mở hộp thoại Tiến trình tải 64/128 luồng (IdmProgressForm)",
+                Location = new Point(20, 110),
                 AutoSize = true,
                 Checked = agent.AutoShowProgress
             };
 
-            Label lLimit = new Label { Text = "Giới hạn tốc độ toàn cục (KB/s, 0 = Không giới hạn):", Location = new Point(20, 158), AutoSize = true };
+            chkCatchAllFormats = new CheckBox
+            {
+                Text = "Bắt & tải TẤT CẢ mọi định dạng tệp trên Internet (Không giới hạn đuôi file)",
+                Location = new Point(20, 138),
+                AutoSize = true,
+                Font = new Font("Segoe UI", 9f, FontStyle.Bold),
+                ForeColor = Color.FromArgb(5, 150, 105),
+                Checked = agent.CatchAllFileFormats
+            };
+
+            Label lTypes = new Label
+            {
+                Text = "Danh sách các loại tệp tự động bắt đầu tải xuống (Chuẩn IDM + Mở rộng):",
+                Location = new Point(20, 168),
+                AutoSize = true
+            };
+
+            txtFileTypes = new TextBox
+            {
+                Location = new Point(20, 190),
+                Size = new Size(495, 110),
+                Multiline = true,
+                ScrollBars = ScrollBars.Vertical,
+                BorderStyle = BorderStyle.FixedSingle,
+                Text = agent.CustomFileTypes
+            };
+
+            Label lLimit = new Label { Text = "Giới hạn tốc độ toàn cục (KB/s, 0 = Không giới hạn):", Location = new Point(20, 316), AutoSize = true };
             numGlobalLimit = new NumericUpDown
             {
-                Location = new Point(320, 155),
-                Size = new Size(110, 24),
+                Location = new Point(385, 313),
+                Size = new Size(130, 24),
                 Minimum = 0,
                 Maximum = 1048576,
                 Value = 0
             };
 
-            Button btnOk = new Button { Text = "Lưu cấu hình", Location = new Point(242, 220), Size = new Size(100, 30), BackColor = Color.FromArgb(0, 120, 215), ForeColor = Color.White, FlatStyle = FlatStyle.Flat };
+            Button btnDefaultTypes = new Button { Text = "Khôi phục mặc định", Location = new Point(20, 362), Size = new Size(150, 32), UseVisualStyleBackColor = true };
+            btnDefaultTypes.Click += delegate { txtFileTypes.Text = TrayAgentContext.DefaultIdmFileTypes; };
+
+            Button btnOk = new Button { Text = "Lưu cấu hình", Location = new Point(315, 362), Size = new Size(110, 32), BackColor = Color.FromArgb(0, 120, 215), ForeColor = Color.White, FlatStyle = FlatStyle.Flat };
             btnOk.FlatAppearance.BorderSize = 0;
             btnOk.Click += delegate
             {
@@ -4136,6 +4448,8 @@ namespace HyperIDM
                 agent.SetClipboardEnabled(chkClipboard.Checked);
                 agent.SetBrowserInterceptEnabled(chkBrowser.Checked);
                 agent.AutoShowProgress = chkAutoProgress.Checked;
+                agent.CatchAllFileFormats = chkCatchAllFormats.Checked;
+                agent.CustomFileTypes = txtFileTypes.Text;
 
                 long bps = (long)numGlobalLimit.Value * 1024L;
                 ThreadPool.QueueUserWorkItem(delegate
@@ -4153,10 +4467,10 @@ namespace HyperIDM
                 Close();
             };
 
-            Button btnCancel = new Button { Text = "Hủy", Location = new Point(352, 220), Size = new Size(80, 30), UseVisualStyleBackColor = true };
+            Button btnCancel = new Button { Text = "Hủy", Location = new Point(435, 362), Size = new Size(80, 32), UseVisualStyleBackColor = true };
             btnCancel.Click += delegate { Close(); };
 
-            Controls.AddRange(new Control[] { l1, cmbThreads, chkClipboard, chkBrowser, chkAutoProgress, lLimit, numGlobalLimit, btnOk, btnCancel });
+            Controls.AddRange(new Control[] { l1, cmbThreads, chkClipboard, chkBrowser, chkAutoProgress, chkCatchAllFormats, lTypes, txtFileTypes, lLimit, numGlobalLimit, btnDefaultTypes, btnOk, btnCancel });
             AcceptButton = btnOk;
             CancelButton = btnCancel;
         }
@@ -4165,14 +4479,22 @@ namespace HyperIDM
     internal sealed class BatchSchedulerForm : Form
     {
         private readonly TrayAgentContext agent;
+        private TabControl tabs;
         private TextBox txtUrls;
         private ComboBox cmbThreads;
+        private CheckBox chkEnableScheduler;
+        private NumericUpDown numMaxConcurrent;
+        private NumericUpDown numRetrySec;
+        private TextBox txtStartAt;
+        private TextBox txtStopAt;
+        private CheckBox chkAutoDefender;
+        private ComboBox cmbDoneAction;
 
         public BatchSchedulerForm(TrayAgentContext ownerAgent)
         {
             agent = ownerAgent;
-            Text = "Lập lịch & Tải hàng loạt — Duytai";
-            ClientSize = new Size(560, 360);
+            Text = "Bộ lập lịch Hẹn giờ & Tải hàng loạt (IDM Scheduler) — Duytai";
+            ClientSize = new Size(590, 405);
             StartPosition = FormStartPosition.CenterParent;
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
@@ -4181,54 +4503,105 @@ namespace HyperIDM
             Font = new Font("Segoe UI", 9f, FontStyle.Regular);
             try { Icon = agent.SharedIcon; } catch { }
 
+            tabs = new TabControl { Location = new Point(12, 12), Size = new Size(566, 338) };
+
+            // Tab 1: Tải hàng loạt (Batch URL & Wildcard Pattern)
+            TabPage tabBatch = new TabPage("Tải hàng loạt & Mẫu URL [01-10]") { BackColor = Color.White };
             Label lblHint = new Label
             {
-                Text = "Nhập danh sách URL (mỗi dòng 1 link) hoặc mẫu hàng loạt (vd: https://host/file_[01-10].zip):",
-                Location = new Point(16, 14),
+                Text = "Nhập danh sách URL (mỗi dòng 1 link) hoặc mẫu tự sinh (vd: https://host/file_[01-10].zip):",
+                Location = new Point(14, 14),
                 AutoSize = true
             };
 
             txtUrls = new TextBox
             {
-                Location = new Point(16, 38),
-                Size = new Size(528, 190),
+                Location = new Point(14, 38),
+                Size = new Size(530, 175),
                 Multiline = true,
                 ScrollBars = ScrollBars.Vertical,
                 BorderStyle = BorderStyle.FixedSingle
             };
 
-            Label lThreads = new Label { Text = "Số luồng mỗi tệp:", Location = new Point(16, 242), AutoSize = true };
-            cmbThreads = new ComboBox { Location = new Point(135, 238), Size = new Size(190, 24), DropDownStyle = ComboBoxStyle.DropDownList };
+            Label lThreads = new Label { Text = "Số luồng mỗi tệp:", Location = new Point(14, 226), AutoSize = true };
+            cmbThreads = new ComboBox { Location = new Point(135, 222), Size = new Size(195, 24), DropDownStyle = ComboBoxStyle.DropDownList };
             cmbThreads.Items.Add("64 Luồng (Hyper-Turbo)");
             cmbThreads.Items.Add("128 Luồng (Max Speed)");
             cmbThreads.SelectedIndex = agent.DefaultThreads == 128 ? 1 : 0;
 
-            Button btnTestIpsw = new Button { Text = "+ Chèn Test IPSW.me", Location = new Point(16, 275), Size = new Size(160, 26), UseVisualStyleBackColor = true };
+            Button btnTestIpsw = new Button { Text = "+ Chèn Test IPSW.me", Location = new Point(14, 260), Size = new Size(168, 28), UseVisualStyleBackColor = true };
             btnTestIpsw.Click += delegate { AppendLine("https://ipsw.me/download/Mac15,12/23F79/"); };
 
-            Button btnTestYt = new Button { Text = "+ Chèn Test YouTube", Location = new Point(184, 275), Size = new Size(160, 26), UseVisualStyleBackColor = true };
+            Button btnTestYt = new Button { Text = "+ Chèn Test YouTube", Location = new Point(192, 260), Size = new Size(168, 28), UseVisualStyleBackColor = true };
             btnTestYt.Click += delegate { AppendLine("https://www.youtube.com/watch?v=KxMqSz8qVSg"); };
 
-            Button btnTestNode = new Button { Text = "+ Chèn Node.js ZIP", Location = new Point(352, 275), Size = new Size(160, 26), UseVisualStyleBackColor = true };
+            Button btnTestNode = new Button { Text = "+ Chèn Node.js ZIP", Location = new Point(370, 260), Size = new Size(174, 28), UseVisualStyleBackColor = true };
             btnTestNode.Click += delegate { AppendLine("https://nodejs.org/dist/v22.14.0/node-v22.14.0-win-x64.zip"); };
+
+            tabBatch.Controls.AddRange(new Control[] { lblHint, txtUrls, lThreads, cmbThreads, btnTestIpsw, btnTestYt, btnTestNode });
+
+            // Tab 2: Lập lịch Hẹn giờ & Hàng đợi (IDM Scheduler)
+            TabPage tabSched = new TabPage("Lập lịch Hẹn giờ & Hàng đợi (Scheduler)") { BackColor = Color.White };
+
+            chkEnableScheduler = new CheckBox
+            {
+                Text = "Bật Bộ lập lịch tự động & Đồng bộ hóa Hàng đợi (IDM Scheduler)",
+                Location = new Point(18, 18),
+                AutoSize = true,
+                Font = new Font("Segoe UI", 9f, FontStyle.Bold),
+                Checked = true
+            };
+
+            Label lConc = new Label { Text = "Số tệp tải đồng thời tối đa trong hàng đợi (1 - 16):", Location = new Point(18, 56), AutoSize = true };
+            numMaxConcurrent = new NumericUpDown { Location = new Point(365, 53), Size = new Size(90, 24), Minimum = 1, Maximum = 16, Value = 4 };
+
+            Label lRetry = new Label { Text = "Tự động thử tải lại tệp bị lỗi sau mỗi (giây, chuẩn IDM = 30s):", Location = new Point(18, 92), AutoSize = true };
+            numRetrySec = new NumericUpDown { Location = new Point(365, 89), Size = new Size(90, 24), Minimum = 10, Maximum = 3600, Value = 30 };
+
+            Label lStartAt = new Label { Text = "Giờ tự động bắt đầu hàng đợi (HH:mm, để trống = chạy ngay):", Location = new Point(18, 128), AutoSize = true };
+            txtStartAt = new TextBox { Location = new Point(365, 125), Size = new Size(90, 24), BorderStyle = BorderStyle.FixedSingle, Text = "" };
+
+            Label lStopAt = new Label { Text = "Giờ tự động tạm dừng hàng đợi (HH:mm, để trống = không dừng):", Location = new Point(18, 164), AutoSize = true };
+            txtStopAt = new TextBox { Location = new Point(365, 161), Size = new Size(90, 24), BorderStyle = BorderStyle.FixedSingle, Text = "" };
+
+            chkAutoDefender = new CheckBox
+            {
+                Text = "Tự động quét Virus bằng Windows Defender & kiểm tra SHA-256 khi tải xong",
+                Location = new Point(18, 202),
+                AutoSize = true,
+                Checked = true
+            };
+
+            Label lDoneAct = new Label { Text = "Hành động khi hoàn tất toàn bộ hàng đợi:", Location = new Point(18, 240), AutoSize = true };
+            cmbDoneAction = new ComboBox { Location = new Point(265, 236), Size = new Size(270, 24), DropDownStyle = ComboBoxStyle.DropDownList };
+            cmbDoneAction.Items.Add("Không làm gì (Giữ ứng dụng chạy)");
+            cmbDoneAction.Items.Add("Tự động mở thư mục Tải xuống");
+            cmbDoneAction.Items.Add("Đưa máy tính vào chế độ Ngủ (Sleep)");
+            cmbDoneAction.Items.Add("Tắt máy tính khi tải xong (Shutdown PC)");
+            cmbDoneAction.SelectedIndex = 0;
+
+            tabSched.Controls.AddRange(new Control[] { chkEnableScheduler, lConc, numMaxConcurrent, lRetry, numRetrySec, lStartAt, txtStartAt, lStopAt, txtStopAt, chkAutoDefender, lDoneAct, cmbDoneAction });
+
+            tabs.TabPages.Add(tabBatch);
+            tabs.TabPages.Add(tabSched);
 
             Button btnGo = new Button
             {
-                Text = "⚡ Thêm & Bắt đầu tải hàng loạt",
-                Location = new Point(210, 315),
-                Size = new Size(235, 32),
+                Text = "⚡ Lưu Lập Lịch & Bắt Đầu Tải",
+                Location = new Point(235, 360),
+                Size = new Size(245, 34),
                 BackColor = Color.FromArgb(0, 120, 215),
                 ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat,
                 Font = new Font("Segoe UI", 9.25f, FontStyle.Bold)
             };
             btnGo.FlatAppearance.BorderSize = 0;
-            btnGo.Click += delegate { SubmitBatch(); };
+            btnGo.Click += delegate { SubmitBatchAndScheduler(); };
 
-            Button btnClose = new Button { Text = "Đóng", Location = new Point(456, 315), Size = new Size(88, 32), UseVisualStyleBackColor = true };
+            Button btnClose = new Button { Text = "Đóng", Location = new Point(490, 360), Size = new Size(88, 34), UseVisualStyleBackColor = true };
             btnClose.Click += delegate { Close(); };
 
-            Controls.AddRange(new Control[] { lblHint, txtUrls, lThreads, cmbThreads, btnTestIpsw, btnTestYt, btnTestNode, btnGo, btnClose });
+            Controls.AddRange(new Control[] { tabs, btnGo, btnClose });
         }
 
         private void AppendLine(string url)
@@ -4237,11 +4610,16 @@ namespace HyperIDM
             else txtUrls.AppendText(Environment.NewLine + url);
         }
 
-        private void SubmitBatch()
+        private void SubmitBatchAndScheduler()
         {
             string raw = (txtUrls.Text ?? "").Trim();
-            if (string.IsNullOrEmpty(raw)) return;
             int threads = cmbThreads.SelectedIndex == 1 ? 128 : 64;
+            bool schedEnabled = chkEnableScheduler.Checked;
+            int maxConc = (int)numMaxConcurrent.Value;
+            int retrySec = (int)numRetrySec.Value;
+            string startAt = (txtStartAt.Text ?? "").Trim();
+            string stopAt = (txtStopAt.Text ?? "").Trim();
+            bool autoAv = chkAutoDefender.Checked;
 
             ThreadPool.QueueUserWorkItem(delegate
             {
@@ -4249,10 +4627,23 @@ namespace HyperIDM
                 {
                     agent.EnsureServerRunningSync(4000);
                     JavaScriptSerializer js = new JavaScriptSerializer();
-                    Dictionary<string, object> p = new Dictionary<string, object>();
-                    p["text"] = raw;
-                    p["maxConnections"] = threads;
-                    TrayAgentContext.HttpRequest("POST", Program.AppUrl + "/api/batch", js.Serialize(p), 5000);
+
+                    Dictionary<string, object> sp = new Dictionary<string, object>();
+                    sp["enabled"] = schedEnabled;
+                    sp["maxConcurrent"] = maxConc;
+                    sp["autoRetryIntervalSec"] = retrySec;
+                    sp["startAtTime"] = startAt;
+                    sp["stopAtTime"] = stopAt;
+                    sp["autoAntivirusScan"] = autoAv;
+                    TrayAgentContext.HttpRequest("POST", Program.AppUrl + "/api/scheduler", js.Serialize(sp), 4000);
+
+                    if (!string.IsNullOrEmpty(raw))
+                    {
+                        Dictionary<string, object> p = new Dictionary<string, object>();
+                        p["text"] = raw;
+                        p["maxConnections"] = threads;
+                        TrayAgentContext.HttpRequest("POST", Program.AppUrl + "/api/batch", js.Serialize(p), 5000);
+                    }
                 }
                 catch { }
                 try
@@ -4266,6 +4657,559 @@ namespace HyperIDM
                 }
                 catch { }
             });
+        }
+    }
+
+    internal sealed class SiteGrabberForm : Form
+    {
+        private readonly TrayAgentContext agent;
+        private TextBox txtPageUrl;
+        private ComboBox cmbFilter;
+        private Button btnScan;
+        private Label lblStatus;
+        private DoubleBufferedListView listLinks;
+
+        public SiteGrabberForm(TrayAgentContext ownerAgent, string initialUrl)
+        {
+            agent = ownerAgent;
+            Text = "Duytai Site Grabber — Quét & Tải Toàn Bộ Tệp Trên Trang Web (IDM Spider)";
+            ClientSize = new Size(780, 500);
+            MinimumSize = new Size(680, 420);
+            StartPosition = FormStartPosition.CenterScreen;
+            BackColor = Color.White;
+            Font = new Font("Segoe UI", 9f, FontStyle.Regular);
+            TopMost = true;
+            try { Icon = agent.SharedIcon; } catch { }
+
+            Label lUrl = new Label { Text = "URL Trang web cần quét:", Location = new Point(14, 18), AutoSize = true };
+            txtPageUrl = new TextBox
+            {
+                Location = new Point(165, 14),
+                Size = new Size(340, 24),
+                BorderStyle = BorderStyle.FixedSingle,
+                Text = string.IsNullOrEmpty(initialUrl) ? "https://nodejs.org/dist/v22.14.0/" : initialUrl
+            };
+
+            cmbFilter = new ComboBox { Location = new Point(512, 14), Size = new Size(145, 24), DropDownStyle = ComboBoxStyle.DropDownList };
+            cmbFilter.Items.Add("Tất cả định dạng");
+            cmbFilter.Items.Add("Compressed (Nén)");
+            cmbFilter.Items.Add("Programs (PM)");
+            cmbFilter.Items.Add("Video");
+            cmbFilter.Items.Add("Music (Âm nhạc)");
+            cmbFilter.Items.Add("Documents (Tài liệu)");
+            cmbFilter.Items.Add("Firmware_ISO");
+            cmbFilter.Items.Add("Images (Hình ảnh)");
+            cmbFilter.SelectedIndex = 0;
+
+            btnScan = new Button
+            {
+                Text = "🔍 Quét Ngay",
+                Location = new Point(664, 12),
+                Size = new Size(102, 28),
+                BackColor = Color.FromArgb(0, 120, 215),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
+                Font = new Font("Segoe UI", 9f, FontStyle.Bold)
+            };
+            btnScan.FlatAppearance.BorderSize = 0;
+            btnScan.Click += delegate { RunGrabberScan(); };
+
+            lblStatus = new Label
+            {
+                Text = "Nhập URL bất kỳ để quét toàn bộ tệp (ZIP, RAR, 7Z, EXE, MSI, ISO, IPSW, MP4, MP3, PDF, DOC, XLS...) trên trang.",
+                Location = new Point(14, 46),
+                Size = new Size(750, 20),
+                ForeColor = Color.FromArgb(5, 150, 105)
+            };
+
+            listLinks = new DoubleBufferedListView
+            {
+                Location = new Point(14, 70),
+                Size = new Size(752, 372),
+                Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
+                View = View.Details,
+                CheckBoxes = true,
+                FullRowSelect = true,
+                GridLines = true
+            };
+            listLinks.Columns.Add("Tên tệp phát hiện", 230);
+            listLinks.Columns.Add("Thể loại", 110);
+            listLinks.Columns.Add("Định dạng", 75);
+            listLinks.Columns.Add("Địa chỉ URL đầy đủ", 315);
+
+            Button btnCheckAll = new Button { Text = "Chọn tất cả", Location = new Point(14, 454), Size = new Size(105, 34), Anchor = AnchorStyles.Bottom | AnchorStyles.Left, UseVisualStyleBackColor = true };
+            btnCheckAll.Click += delegate { foreach (ListViewItem it in listLinks.Items) it.Checked = true; };
+
+            Button btnUncheckAll = new Button { Text = "Bỏ chọn", Location = new Point(126, 454), Size = new Size(95, 34), Anchor = AnchorStyles.Bottom | AnchorStyles.Left, UseVisualStyleBackColor = true };
+            btnUncheckAll.Click += delegate { foreach (ListViewItem it in listLinks.Items) it.Checked = false; };
+
+            Button btnDownloadChecked = new Button
+            {
+                Text = "⚡ Tải các mục đã chọn (64/128 Luồng)",
+                Location = new Point(415, 454),
+                Size = new Size(255, 34),
+                Anchor = AnchorStyles.Bottom | AnchorStyles.Right,
+                BackColor = Color.FromArgb(5, 150, 105),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
+                Font = new Font("Segoe UI", 9.25f, FontStyle.Bold)
+            };
+            btnDownloadChecked.FlatAppearance.BorderSize = 0;
+            btnDownloadChecked.Click += delegate { DownloadCheckedItems(); };
+
+            Button btnClose = new Button { Text = "Đóng", Location = new Point(678, 454), Size = new Size(88, 34), Anchor = AnchorStyles.Bottom | AnchorStyles.Right, UseVisualStyleBackColor = true };
+            btnClose.Click += delegate { Close(); };
+
+            Controls.AddRange(new Control[] { lUrl, txtPageUrl, cmbFilter, btnScan, lblStatus, listLinks, btnCheckAll, btnUncheckAll, btnDownloadChecked, btnClose });
+        }
+
+        private void RunGrabberScan()
+        {
+            string url = (txtPageUrl.Text ?? "").Trim();
+            if (string.IsNullOrEmpty(url)) return;
+            string[] catMap = new string[] { "all", "Compressed", "Programs", "Video", "Music", "Documents", "Firmware_ISO", "Images" };
+            string filterCat = cmbFilter.SelectedIndex >= 0 && cmbFilter.SelectedIndex < catMap.Length ? catMap[cmbFilter.SelectedIndex] : "all";
+
+            btnScan.Enabled = false;
+            lblStatus.ForeColor = Color.FromArgb(0, 102, 204);
+            lblStatus.Text = "Đang quét trang web và phân tích toàn bộ liên kết tệp tải xuống...";
+            listLinks.Items.Clear();
+
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                try
+                {
+                    agent.EnsureServerRunningSync(4000);
+                    JavaScriptSerializer js = new JavaScriptSerializer();
+                    Dictionary<string, object> p = new Dictionary<string, object>();
+                    p["url"] = url;
+                    p["filterCategory"] = filterCat;
+                    string json = TrayAgentContext.HttpRequest("POST", Program.AppUrl + "/api/grabber", js.Serialize(p), 15000);
+                    Dictionary<string, object> d = js.DeserializeObject(json) as Dictionary<string, object>;
+                    object[] arr = null;
+                    if (d != null)
+                    {
+                        object itemsObj;
+                        if (d.TryGetValue("items", out itemsObj)) arr = itemsObj as object[];
+                    }
+
+                    agent.RunOnUiThread(new MethodInvoker(delegate
+                    {
+                        if (IsDisposed) return;
+                        btnScan.Enabled = true;
+                        listLinks.BeginUpdate();
+                        try
+                        {
+                            if (arr != null)
+                            {
+                                for (int i = 0; i < arr.Length; i++)
+                                {
+                                    Dictionary<string, object> item = arr[i] as Dictionary<string, object>;
+                                    if (item == null) continue;
+                                    string fn = TrayAgentContext.GetDictString(item, "fileName") ?? "file";
+                                    string cat = TrayAgentContext.GetDictString(item, "category") ?? "General";
+                                    string ext = (TrayAgentContext.GetDictString(item, "ext") ?? "").ToUpperInvariant();
+                                    string itemUrl = TrayAgentContext.GetDictString(item, "url") ?? "";
+                                    ListViewItem lvi = new ListViewItem(fn);
+                                    lvi.SubItems.Add(cat);
+                                    lvi.SubItems.Add(ext);
+                                    lvi.SubItems.Add(itemUrl);
+                                    lvi.Tag = itemUrl;
+                                    lvi.Checked = cat != "General" && cat != "Images";
+                                    listLinks.Items.Add(lvi);
+                                }
+                            }
+                        }
+                        finally
+                        {
+                            listLinks.EndUpdate();
+                        }
+                        lblStatus.ForeColor = Color.FromArgb(5, 150, 105);
+                        lblStatus.Text = string.Format("✓ Đã tìm thấy {0} liên kết trên trang. Tích chọn các tệp cần tải rồi bấm 'Tải các mục đã chọn'.", listLinks.Items.Count);
+                    }));
+                }
+                catch (Exception ex)
+                {
+                    agent.RunOnUiThread(new MethodInvoker(delegate
+                    {
+                        if (IsDisposed) return;
+                        btnScan.Enabled = true;
+                        lblStatus.ForeColor = Color.FromArgb(220, 38, 38);
+                        lblStatus.Text = "Lỗi quét trang web: " + ex.Message;
+                    }));
+                }
+            });
+        }
+
+        private void DownloadCheckedItems()
+        {
+            List<string> urls = new List<string>();
+            foreach (ListViewItem it in listLinks.Items)
+            {
+                if (it.Checked && it.Tag is string)
+                {
+                    urls.Add((string)it.Tag);
+                }
+            }
+            if (urls.Count == 0) return;
+
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                try
+                {
+                    JavaScriptSerializer js = new JavaScriptSerializer();
+                    Dictionary<string, object> p = new Dictionary<string, object>();
+                    p["urls"] = urls.ToArray();
+                    p["maxConnections"] = agent.DefaultThreads;
+                    TrayAgentContext.HttpRequest("POST", Program.AppUrl + "/api/batch", js.Serialize(p), 6000);
+                }
+                catch { }
+                agent.RunOnUiThread(new MethodInvoker(delegate
+                {
+                    if (!IsDisposed)
+                    {
+                        agent.RefreshMainFormNow();
+                        Close();
+                    }
+                }));
+            });
+        }
+    }
+
+    internal sealed class ZipPreviewForm : Form
+    {
+        private readonly TrayAgentContext agent;
+        private readonly string jobId;
+        private readonly string targetUrl;
+        private Label lblSummary;
+        private DoubleBufferedListView listEntries;
+
+        public ZipPreviewForm(TrayAgentContext ownerAgent, string id, string url, string fileName)
+        {
+            agent = ownerAgent;
+            jobId = id;
+            targetUrl = url;
+
+            Text = "Xem trước nội dung tệp ZIP — " + (string.IsNullOrEmpty(fileName) ? "Duytai 64-Bit" : fileName);
+            ClientSize = new Size(660, 420);
+            StartPosition = FormStartPosition.CenterScreen;
+            BackColor = Color.White;
+            Font = new Font("Segoe UI", 9f, FontStyle.Regular);
+            TopMost = true;
+            try { Icon = agent.SharedIcon; } catch { }
+
+            lblSummary = new Label
+            {
+                Text = "Đang đọc mục lục tệp ZIP (HTTP Range End-of-Central-Directory)...",
+                Location = new Point(14, 14),
+                Size = new Size(630, 22),
+                ForeColor = Color.FromArgb(0, 102, 204),
+                Font = new Font("Segoe UI", 9f, FontStyle.Bold)
+            };
+
+            listEntries = new DoubleBufferedListView
+            {
+                Location = new Point(14, 42),
+                Size = new Size(632, 325),
+                Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
+                View = View.Details,
+                FullRowSelect = true,
+                GridLines = true
+            };
+            listEntries.Columns.Add("Đường dẫn tệp bên trong gói ZIP", 360);
+            listEntries.Columns.Add("Kích thước gốc", 125, HorizontalAlignment.Right);
+            listEntries.Columns.Add("Kích thước nén", 125, HorizontalAlignment.Right);
+
+            Button btnClose = new Button { Text = "Đóng", Location = new Point(556, 376), Size = new Size(90, 32), Anchor = AnchorStyles.Bottom | AnchorStyles.Right, UseVisualStyleBackColor = true };
+            btnClose.Click += delegate { Close(); };
+
+            Controls.AddRange(new Control[] { lblSummary, listEntries, btnClose });
+            LoadZipPreviewAsync();
+        }
+
+        private void LoadZipPreviewAsync()
+        {
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                try
+                {
+                    JavaScriptSerializer js = new JavaScriptSerializer();
+                    Dictionary<string, object> p = new Dictionary<string, object>();
+                    if (!string.IsNullOrEmpty(jobId)) p["jobId"] = jobId;
+                    if (!string.IsNullOrEmpty(targetUrl)) p["url"] = targetUrl;
+
+                    string json = TrayAgentContext.HttpRequest("POST", Program.AppUrl + "/api/zip-preview", js.Serialize(p), 12000);
+                    Dictionary<string, object> d = js.DeserializeObject(json) as Dictionary<string, object>;
+                    object[] entries = null;
+                    long totalEntries = 0;
+                    long totalUncomp = 0;
+                    string src = "";
+                    if (d != null)
+                    {
+                        totalEntries = TrayAgentContext.GetDictLong(d, "totalEntries", 0);
+                        totalUncomp = TrayAgentContext.GetDictLong(d, "totalUncompressed", 0);
+                        src = TrayAgentContext.GetDictString(d, "source") ?? "";
+                        object eObj;
+                        if (d.TryGetValue("entries", out eObj)) entries = eObj as object[];
+                    }
+
+                    agent.RunOnUiThread(new MethodInvoker(delegate
+                    {
+                        if (IsDisposed) return;
+                        listEntries.BeginUpdate();
+                        try
+                        {
+                            if (entries != null)
+                            {
+                                for (int i = 0; i < entries.Length; i++)
+                                {
+                                    Dictionary<string, object> ent = entries[i] as Dictionary<string, object>;
+                                    if (ent == null) continue;
+                                    string name = TrayAgentContext.GetDictString(ent, "name") ?? "";
+                                    long uncomp = TrayAgentContext.GetDictLong(ent, "uncompressedSize", 0);
+                                    long comp = TrayAgentContext.GetDictLong(ent, "compressedSize", 0);
+                                    ListViewItem lvi = new ListViewItem(name);
+                                    lvi.SubItems.Add(IdmFormat.FormatBytes(uncomp));
+                                    lvi.SubItems.Add(IdmFormat.FormatBytes(comp));
+                                    listEntries.Items.Add(lvi);
+                                }
+                            }
+                        }
+                        finally
+                        {
+                            listEntries.EndUpdate();
+                        }
+                        lblSummary.ForeColor = Color.FromArgb(5, 150, 105);
+                        lblSummary.Text = string.Format("✓ Tổng số mục trong ZIP: {0} tệp • Dung lượng giải nén: {1} ({2})", totalEntries, IdmFormat.FormatBytes(totalUncomp), src == "local-file" ? "Đọc từ ổ đĩa" : "Đọc từ xa qua HTTP Range");
+                    }));
+                }
+                catch (Exception ex)
+                {
+                    agent.RunOnUiThread(new MethodInvoker(delegate
+                    {
+                        if (!IsDisposed)
+                        {
+                            lblSummary.ForeColor = Color.FromArgb(220, 38, 38);
+                            lblSummary.Text = "Không thể đọc mục lục ZIP: " + ex.Message;
+                        }
+                    }));
+                }
+            });
+        }
+    }
+
+    internal sealed class RefreshUrlForm : Form
+    {
+        private readonly TrayAgentContext agent;
+        private readonly JobSnapshot job;
+        private TextBox txtNewUrl;
+        private CheckBox chkForce;
+        private Label lblStatus;
+
+        public RefreshUrlForm(TrayAgentContext ownerAgent, JobSnapshot targetJob)
+        {
+            agent = ownerAgent;
+            job = targetJob;
+
+            Text = "Làm mới địa chỉ tải xuống (Refresh Download Address) — Duytai";
+            ClientSize = new Size(560, 225);
+            StartPosition = FormStartPosition.CenterParent;
+            FormBorderStyle = FormBorderStyle.FixedDialog;
+            MaximizeBox = false;
+            MinimizeBox = false;
+            BackColor = Color.White;
+            Font = new Font("Segoe UI", 9f, FontStyle.Regular);
+            try { Icon = agent.SharedIcon; } catch { }
+
+            Label lInfo = new Label
+            {
+                Text = string.Format("Tệp: {0} ({1} / {2} — giữ nguyên 100% dữ liệu đã tải)", job.FileName, IdmFormat.FormatBytes(job.DownloadedBytes), IdmFormat.FormatBytes(job.TotalBytes)),
+                Location = new Point(16, 16),
+                Size = new Size(528, 20),
+                Font = new Font("Segoe UI", 9f, FontStyle.Bold),
+                ForeColor = Color.FromArgb(0, 102, 204)
+            };
+
+            Label lNew = new Label { Text = "Nhập hoặc dán địa chỉ URL mới (Token mới):", Location = new Point(16, 48), AutoSize = true };
+            txtNewUrl = new TextBox
+            {
+                Location = new Point(16, 72),
+                Size = new Size(528, 24),
+                BorderStyle = BorderStyle.FixedSingle,
+                Text = job.Url ?? ""
+            };
+
+            chkForce = new CheckBox
+            {
+                Text = "Bỏ qua kiểm tra ETag nếu máy chủ CDN đổi chữ ký phiên tải",
+                Location = new Point(16, 106),
+                AutoSize = true,
+                Checked = true
+            };
+
+            lblStatus = new Label { Text = "", Location = new Point(16, 136), Size = new Size(528, 20), ForeColor = Color.FromArgb(217, 119, 6) };
+
+            Button btnApply = new Button
+            {
+                Text = "🔄 Cập nhật URL & Tải tiếp ngay",
+                Location = new Point(220, 172),
+                Size = new Size(225, 34),
+                BackColor = Color.FromArgb(0, 120, 215),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
+                Font = new Font("Segoe UI", 9f, FontStyle.Bold)
+            };
+            btnApply.FlatAppearance.BorderSize = 0;
+            btnApply.Click += delegate { ApplyRefresh(); };
+
+            Button btnCancel = new Button { Text = "Đóng", Location = new Point(455, 172), Size = new Size(88, 34), UseVisualStyleBackColor = true };
+            btnCancel.Click += delegate { Close(); };
+
+            Controls.AddRange(new Control[] { lInfo, lNew, txtNewUrl, chkForce, lblStatus, btnApply, btnCancel });
+        }
+
+        private void ApplyRefresh()
+        {
+            string u = (txtNewUrl.Text ?? "").Trim();
+            if (string.IsNullOrEmpty(u)) return;
+            lblStatus.Text = "Đang xác thực URL mới và khôi phục phiên tải...";
+            bool force = chkForce.Checked;
+
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                try
+                {
+                    JavaScriptSerializer js = new JavaScriptSerializer();
+                    Dictionary<string, object> p = new Dictionary<string, object>();
+                    p["url"] = u;
+                    p["force"] = force;
+                    TrayAgentContext.HttpRequest("POST", Program.AppUrl + "/api/jobs/" + Uri.EscapeDataString(job.Id) + "/refresh-url", js.Serialize(p), 8000);
+                    agent.RunOnUiThread(new MethodInvoker(delegate
+                    {
+                        if (!IsDisposed)
+                        {
+                            agent.RefreshMainFormNow();
+                            Close();
+                        }
+                    }));
+                }
+                catch (Exception ex)
+                {
+                    agent.RunOnUiThread(new MethodInvoker(delegate
+                    {
+                        if (!IsDisposed)
+                        {
+                            lblStatus.ForeColor = Color.FromArgb(220, 38, 38);
+                            lblStatus.Text = "Lỗi làm mới URL: " + ex.Message;
+                        }
+                    }));
+                }
+            });
+        }
+    }
+
+    internal sealed class FloatingDropBoxForm : Form
+    {
+        private readonly TrayAgentContext agent;
+        private Point dragStart;
+        private bool dragging = false;
+        private string speedText = "0,00 MB/s";
+        private int activeJobs = 0;
+
+        public FloatingDropBoxForm(TrayAgentContext ownerAgent)
+        {
+            agent = ownerAgent;
+            Text = "Giỏ thả link Duytai";
+            FormBorderStyle = FormBorderStyle.None;
+            StartPosition = FormStartPosition.Manual;
+            Size = new Size(165, 58);
+            TopMost = true;
+            ShowInTaskbar = false;
+            AllowDrop = true;
+            DoubleBuffered = true;
+            BackColor = Color.FromArgb(15, 23, 42);
+
+            Rectangle wa = Screen.PrimaryScreen.WorkingArea;
+            Location = new Point(wa.Right - Width - 18, wa.Bottom - Height - 18);
+
+            ContextMenuStrip cm = new ContextMenuStrip();
+            cm.Items.Add("Mở cửa sổ chính Duytai", null, delegate { agent.ShowMainForm(); });
+            cm.Items.Add("Thêm URL tải xuống...", null, delegate { agent.ShowDownloadDialog("", null, null, null, "Giỏ thả link"); });
+            cm.Items.Add("Mở Duytai Site Grabber...", null, delegate { agent.ShowSiteGrabberDialog(""); });
+            cm.Items.Add(new ToolStripSeparator());
+            cm.Items.Add("Ẩn Giỏ thả link nổi", null, delegate { Hide(); });
+            ContextMenuStrip = cm;
+
+            MouseDown += delegate(object s, MouseEventArgs e)
+            {
+                if (e.Button == MouseButtons.Left) { dragging = true; dragStart = e.Location; }
+            };
+            MouseMove += delegate(object s, MouseEventArgs e)
+            {
+                if (dragging)
+                {
+                    Location = new Point(Left + e.X - dragStart.X, Top + e.Y - dragStart.Y);
+                }
+            };
+            MouseUp += delegate { dragging = false; };
+            DoubleClick += delegate { agent.ShowMainForm(); };
+
+            DragEnter += delegate(object s, DragEventArgs e)
+            {
+                if (e.Data.GetDataPresent(DataFormats.UnicodeText) || e.Data.GetDataPresent(DataFormats.Text) || e.Data.GetDataPresent(DataFormats.FileDrop))
+                {
+                    e.Effect = DragDropEffects.Copy;
+                }
+            };
+            DragDrop += delegate(object s, DragEventArgs e)
+            {
+                try
+                {
+                    string dropped = e.Data.GetData(DataFormats.UnicodeText) as string ?? e.Data.GetData(DataFormats.Text) as string;
+                    if (!string.IsNullOrEmpty(dropped))
+                    {
+                        dropped = dropped.Trim();
+                        if (dropped.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+                            dropped.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                        {
+                            agent.ShowDownloadDialog(dropped, null, null, null, "Kéo-Thả vào Giỏ Duytai");
+                        }
+                    }
+                }
+                catch { }
+            };
+        }
+
+        public void UpdateTelemetry(long bps, int active)
+        {
+            activeJobs = active;
+            speedText = bps > 0 ? IdmFormat.FormatSpeed(bps, false) : "Sẵn sàng";
+            Invalidate();
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            base.OnPaint(e);
+            Graphics g = e.Graphics;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            g.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
+
+            using (Pen borderPen = new Pen(Color.FromArgb(14, 165, 233), 2f))
+            {
+                g.DrawRectangle(borderPen, 1, 1, Width - 2, Height - 2);
+            }
+            if (agent.SharedIcon != null)
+            {
+                g.DrawIcon(agent.SharedIcon, new Rectangle(10, 13, 32, 32));
+            }
+            using (Font fTitle = new Font("Segoe UI", 8.75f, FontStyle.Bold))
+            using (Font fSub = new Font("Segoe UI", 8f, FontStyle.Regular))
+            using (SolidBrush bWhite = new SolidBrush(Color.White))
+            using (SolidBrush bCyan = new SolidBrush(Color.FromArgb(56, 189, 248)))
+            {
+                g.DrawString("DUYTAI DROPBOX", fTitle, bWhite, 48f, 9f);
+                g.DrawString(string.Format("{0} ({1} tải)", speedText, activeJobs), fSub, bCyan, 48f, 29f);
+            }
         }
     }
 }
