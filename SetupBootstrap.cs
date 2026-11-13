@@ -3,6 +3,18 @@ using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
 using System.Reflection;
+using System.Runtime.InteropServices;
+using System.Windows.Forms;
+
+[assembly: AssemblyTitle("Duytai 64-Bit Universal Setup")]
+[assembly: AssemblyDescription("Duytai 64-Bit Official Installer & Browser Integration")]
+[assembly: AssemblyCompany("DOANDUY Software")]
+[assembly: AssemblyProduct("Duytai 64-Bit")]
+[assembly: AssemblyCopyright("Copyright © 2026 DOANDUY. All rights reserved.")]
+[assembly: AssemblyVersion("7.5.0.0")]
+[assembly: AssemblyFileVersion("7.5.0.0")]
+[assembly: AssemblyInformationalVersion("7.5.0")]
+[assembly: ComVisible(false)]
 
 namespace HyperIDMSetup
 {
@@ -17,9 +29,30 @@ namespace HyperIDMSetup
             );
             Directory.CreateDirectory(installDir);
 
-            // 1. Extract embedded payload.zip resource into %LOCALAPPDATA%\Programs\HyperIDM
+            // 0. Stop running Duytai.exe before extracting so binaries are never locked
             try
             {
+                Process[] running = Process.GetProcessesByName("Duytai");
+                for (int i = 0; i < running.Length; i++)
+                {
+                    try
+                    {
+                        if (running[i].Id != Process.GetCurrentProcess().Id)
+                        {
+                            running[i].Kill();
+                            running[i].WaitForExit(2000);
+                        }
+                    }
+                    catch { }
+                    finally { try { running[i].Dispose(); } catch { } }
+                }
+            }
+            catch { }
+
+            // 1. Extract embedded payload.zip resource into %LOCALAPPDATA%\Programs\Duytai with Zip-Slip protection
+            try
+            {
+                string canonicalRoot = Path.GetFullPath(installDir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar);
                 Assembly asm = Assembly.GetExecutingAssembly();
                 using (Stream resStream = asm.GetManifestResourceStream("payload.zip"))
                 {
@@ -29,7 +62,12 @@ namespace HyperIDMSetup
                         {
                             foreach (ZipArchiveEntry entry in archive.Entries)
                             {
-                                string fullPath = Path.Combine(installDir, entry.FullName.Replace('/', '\\'));
+                                string combined = Path.Combine(installDir, entry.FullName.Replace('/', '\\'));
+                                string fullPath = Path.GetFullPath(combined);
+                                if (!fullPath.StartsWith(canonicalRoot, StringComparison.OrdinalIgnoreCase))
+                                {
+                                    continue;
+                                }
                                 string dirName = Path.GetDirectoryName(fullPath);
                                 if (!string.IsNullOrEmpty(dirName))
                                 {
@@ -48,9 +86,9 @@ namespace HyperIDMSetup
                     }
                 }
             }
-            catch
+            catch (Exception ex)
             {
-                // Ignore if files are locked by running instance
+                MessageBox.Show("Không thể giải nén gói cài đặt Duytai: " + ex.Message, "Duytai Setup", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
 
             // 2. Run Install-HyperIDM.ps1 (from baseDir if present, otherwise from extracted installDir)
@@ -70,8 +108,17 @@ namespace HyperIDMSetup
                     WorkingDirectory = Path.GetDirectoryName(ps1),
                     UseShellExecute = false
                 };
-                Process p = Process.Start(psi);
-                if (p != null) p.WaitForExit();
+                using (Process p = Process.Start(psi))
+                {
+                    if (p != null)
+                    {
+                        p.WaitForExit();
+                        if (p.ExitCode != 0)
+                        {
+                            MessageBox.Show("Trình cài đặt trả về mã trạng thái: " + p.ExitCode, "Duytai Setup", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        }
+                    }
+                }
             }
 
             // 3. Launch installed Duytai.exe via Windows Explorer Shell so GUI and System Tray always appear in interactive desktop

@@ -24,10 +24,14 @@ if (-not (Get-Command node -ErrorAction SilentlyContinue) -and -not (Test-Path "
 
 Write-Host "[2/6] Copying Duytai 64-bit engine, Native Host & Browser Extension..." -ForegroundColor Yellow
 if ($sourceDir.TrimEnd('\') -ne $installDir.TrimEnd('\')) {
-    foreach ($f in @("engine.js", "server.js", "idm-features.js", "clipboard-batch.js", "cli.js", "duytai-native-host.js", "HyperIDM.cs", "Install-HyperIDM.ps1")) {
+    foreach ($f in @("package.json", "engine.js", "server.js", "idm-features.js", "clipboard-batch.js", "cli.js", "duytai-native-host.js", "HyperIDM.cs", "app.manifest", "Sign-Duytai.ps1", "Duytai-CodeSigning.cer", "Install-HyperIDM.ps1")) {
         if (Test-Path "$sourceDir\$f") {
             Copy-Item -Path "$sourceDir\$f" -Destination "$installDir\$f" -Force
         }
+    }
+    if (Test-Path "$sourceDir\assets\*") {
+        New-Item -Path "$installDir\assets" -ItemType Directory -Force | Out-Null
+        Copy-Item -Path "$sourceDir\assets\*" -Destination "$installDir\assets" -Recurse -Force
     }
     if (Test-Path "$sourceDir\public\*") {
         Copy-Item -Path "$sourceDir\public\*" -Destination $publicDir -Recurse -Force
@@ -88,19 +92,28 @@ if (($sourceDir.TrimEnd('\') -ne $installDir.TrimEnd('\')) -and (Test-Path "$sou
     & "$env:SystemRoot\System32\curl.exe" -L -s -o "$binDir\yt-dlp.exe" "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
 }
 
+if (($sourceDir.TrimEnd('\') -ne $installDir.TrimEnd('\')) -and (Test-Path "$sourceDir\bin\ffmpeg.exe")) {
+    Copy-Item -Path "$sourceDir\bin\ffmpeg.exe" -Destination "$binDir\ffmpeg.exe" -Force
+}
 $ffmpegLocal = Get-ChildItem "$env:LOCALAPPDATA\hermes\tools" -Recurse -Filter "ffmpeg.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+if (-not $ffmpegLocal) {
+    $ffmpegCmd = Get-Command ffmpeg -ErrorAction SilentlyContinue
+    if ($ffmpegCmd -and (Test-Path $ffmpegCmd.Source)) { $ffmpegLocal = Get-Item $ffmpegCmd.Source }
+}
 if ($ffmpegLocal -and -not (Test-Path "$binDir\ffmpeg.exe")) {
     Copy-Item -Path $ffmpegLocal.FullName -Destination "$binDir\ffmpeg.exe" -Force
 }
 
-Write-Host "[3/6] Compiling Native 64-Bit Windows System Tray Executable (Duytai.exe)..." -ForegroundColor Yellow
-Stop-Process -Name "Duytai", "HyperIDM", "IDMan" -Force -ErrorAction SilentlyContinue
+Write-Host "[3/6] Compiling & Signing Native 64-Bit Windows Executable (Duytai.exe)..." -ForegroundColor Yellow
+Stop-Process -Name "Duytai", "HyperIDM" -Force -ErrorAction SilentlyContinue
 Start-Sleep -Milliseconds 300
 $csc = "$env:SystemRoot\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
 $icoFlag = if (Test-Path "$installDir\assets\Duytai.ico") { "/win32icon:$installDir\assets\Duytai.ico" } elseif (Test-Path "$sourceDir\assets\Duytai.ico") { "/win32icon:$sourceDir\assets\Duytai.ico" } else { $null }
+$manifestFlag = if (Test-Path "$installDir\app.manifest") { "/win32manifest:$installDir\app.manifest" } elseif (Test-Path "$sourceDir\app.manifest") { "/win32manifest:$sourceDir\app.manifest" } else { $null }
 if (Test-Path $csc) {
     $cscArgs = @("/nologo", "/target:winexe", "/platform:x64", "/optimize+", "/r:System.Windows.Forms.dll", "/r:System.Drawing.dll", "/r:System.Core.dll", "/r:System.Web.Extensions.dll")
     if ($icoFlag) { $cscArgs += $icoFlag }
+    if ($manifestFlag) { $cscArgs += $manifestFlag }
     $cscArgs += @("/out:$installDir\Duytai.exe", "$installDir\HyperIDM.cs")
     & $csc @cscArgs
     Copy-Item -Path "$installDir\Duytai.exe" -Destination "$installDir\HyperIDM.exe" -Force
@@ -109,7 +122,13 @@ if (Test-Path $csc) {
     Copy-Item -Path "$sourceDir\Duytai.exe" -Destination "$installDir\HyperIDM.exe" -Force
 }
 
-$cmdContent = "@echo off`r`nnode `"%~dp0cli.js`" %*`r`n"
+if (Test-Path "$installDir\Sign-Duytai.ps1") {
+    & "$installDir\Sign-Duytai.ps1" -TargetPaths @("$installDir\Duytai.exe", "$installDir\HyperIDM.exe")
+} elseif (Test-Path "$sourceDir\Sign-Duytai.ps1") {
+    & "$sourceDir\Sign-Duytai.ps1" -TargetPaths @("$installDir\Duytai.exe", "$installDir\HyperIDM.exe")
+}
+
+$cmdContent = "@echo off`r`n`"$nodeExe`" `"%~dp0cli.js`" %*`r`n"
 Set-Content -Path "$installDir\duytai.cmd" -Value $cmdContent -Encoding ASCII
 
 Write-Host "[4/6] Creating Desktop & Start Menu Shortcuts (Duytai)..." -ForegroundColor Yellow
@@ -145,13 +164,39 @@ New-Item -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Force | Ou
 Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "HyperIDMUltra" -ErrorAction SilentlyContinue
 Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "Duytai" -Value "`"$installDir\Duytai.exe`" --tray" -Force
 
+$uninstScriptPath = Join-Path $installDir "Uninstall-Duytai.ps1"
+$uninstScript = @'
+$ErrorActionPreference = 'SilentlyContinue'
+Stop-Process -Name "Duytai", "HyperIDM" -Force
+Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "Duytai"
+foreach ($proto in @("duytai", "hyperidm")) {
+    Remove-Item -Path "HKCU:\Software\Classes\$proto" -Recurse -Force
+}
+foreach ($regRoot in @(
+    "HKCU:\Software\Google\Chrome\NativeMessagingHosts\com.duytai.idm",
+    "HKCU:\Software\Microsoft\Edge\NativeMessagingHosts\com.duytai.idm",
+    "HKCU:\Software\CocCoc\Browser\NativeMessagingHosts\com.duytai.idm",
+    "HKCU:\Software\BraveSoftware\Brave-Browser\NativeMessagingHosts\com.duytai.idm",
+    "HKCU:\Software\Mozilla\NativeMessagingHosts\com.duytai.idm"
+)) {
+    Remove-Item -Path $regRoot -Recurse -Force
+}
+$desktopLnk = Join-Path ([Environment]::GetFolderPath("Desktop")) "Duytai.lnk"
+$startLnk = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Duytai.lnk"
+Remove-Item -Path $desktopLnk, $startLnk -Force
+Remove-Item -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Duytai" -Recurse -Force
+$installDir = Join-Path $env:LOCALAPPDATA "Programs\Duytai"
+Start-Process -FilePath "cmd.exe" -ArgumentList "/c ping 127.0.0.1 -n 2 > nul & rd /s /q `"$installDir`"" -WindowStyle Hidden
+'@
+Set-Content -Path $uninstScriptPath -Value $uninstScript -Encoding UTF8
+
 $uninstKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Duytai"
 New-Item -Path $uninstKey -Force | Out-Null
 Set-ItemProperty -Path $uninstKey -Name "DisplayName" -Value "Duytai 64-Bit — Trình Tăng Tốc Tải Xuống" -Force
-Set-ItemProperty -Path $uninstKey -Name "DisplayVersion" -Value "7.3.0" -Force
-Set-ItemProperty -Path $uninstKey -Name "Publisher" -Value "DOANDUY" -Force
+Set-ItemProperty -Path $uninstKey -Name "DisplayVersion" -Value "7.5.0" -Force
+Set-ItemProperty -Path $uninstKey -Name "Publisher" -Value "DOANDUY Software" -Force
 Set-ItemProperty -Path $uninstKey -Name "InstallLocation" -Value $installDir -Force
 Set-ItemProperty -Path $uninstKey -Name "DisplayIcon" -Value "$installDir\Duytai.exe" -Force
-Set-ItemProperty -Path $uninstKey -Name "UninstallString" -Value "cmd.exe /c rd /s /q `"$installDir`"" -Force
+Set-ItemProperty -Path $uninstKey -Name "UninstallString" -Value "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$uninstScriptPath`"" -Force
 
-Write-Host "[6/6] Installation Complete! Installed at: $installDir\Duytai.exe" -ForegroundColor Green
+Write-Host "[6/6] Installation Complete! Installed & Signed at: $installDir\Duytai.exe" -ForegroundColor Green

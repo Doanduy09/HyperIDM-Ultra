@@ -60,10 +60,16 @@ cat > "$FF_NMH_DIR/com.duytai.idm.json" << EOF
   "path": "$HOST_SH",
   "type": "stdio",
   "allowed_extensions": [
-    "duytai-idm@hyper.local"
+    "duytai-idm@doanduy.dev"
   ]
 }
 EOF
+
+if [ -d "$APP_SRC" ]; then
+  xattr -cr "$APP_SRC" 2>/dev/null || true
+  codesign --verify --deep --strict "$APP_SRC" 2>/dev/null || codesign --force --deep --sign - "$APP_SRC" 2>/dev/null || true
+fi
+xattr -cr "$SUPPORT_DIR" 2>/dev/null || true
 
 LAUNCH_AGENT="$HOME/Library/LaunchAgents/com.doanduy.duytai.plist"
 mkdir -p "$HOME/Library/LaunchAgents"

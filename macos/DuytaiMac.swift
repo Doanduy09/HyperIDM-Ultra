@@ -10,9 +10,12 @@ final class DuytaiMacApp: NSObject, NSApplicationDelegate, WKNavigationDelegate,
     private var statusItem: NSStatusItem!
     private var serverProcess: Process?
     private var clipboardTimer: Timer?
+    private var sigTermSource: DispatchSourceSignal?
+    private var sigIntSource: DispatchSourceSignal?
     private var lastChangeCount: Int = NSPasteboard.general.changeCount
     private let serverPort: Int = Int(ProcessInfo.processInfo.environment["HYPER_IDM_PORT"] ?? "17890") ?? 17890
     private var coreDir: String = ""
+    private let dataDir: String = NSHomeDirectory() + "/Library/Application Support/Duytai"
 
     private let mediaExts: Set<String> = [
         "3gp","7z","aac","ace","aif","apk","arj","asf","avi","bin","bz2","dmg",
@@ -31,9 +34,11 @@ final class DuytaiMacApp: NSObject, NSApplicationDelegate, WKNavigationDelegate,
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        try? FileManager.default.createDirectory(atPath: dataDir, withIntermediateDirectories: true)
         coreDir = resolveCoreDir()
         installSignalHandlers()
         startNodeCore()
+        setupMainMenu()
         setupStatusBar()
         setupMainWindow()
         startClipboardMonitor()
@@ -73,17 +78,34 @@ final class DuytaiMacApp: NSObject, NSApplicationDelegate, WKNavigationDelegate,
     }
 
     private func findNodeBinary() -> String {
-        let candidates = [
+        var candidates = [
             "/opt/homebrew/bin/node",
             "/usr/local/bin/node",
             "/opt/homebrew/opt/node/bin/node",
+            NSHomeDirectory() + "/.volta/bin/node",
+            NSHomeDirectory() + "/.fnm/current/bin/node",
             NSHomeDirectory() + "/.nvm/versions/node/current/bin/node",
             "/usr/bin/node"
         ]
+        let nvmRoot = NSHomeDirectory() + "/.nvm/versions/node"
+        if let vers = try? FileManager.default.contentsOfDirectory(atPath: nvmRoot).sorted() {
+            for v in vers.reversed() {
+                candidates.append("\(nvmRoot)/\(v)/bin/node")
+            }
+        }
         for c in candidates where FileManager.default.isExecutableFile(atPath: c) {
             return c
         }
         return "/usr/bin/env"
+    }
+
+    private func readAuthToken() -> String {
+        let tokenPath = (dataDir as NSString).appendingPathComponent("auth.token")
+        if let tok = try? String(contentsOfFile: tokenPath, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines),
+           !tok.isEmpty {
+            return tok
+        }
+        return ""
     }
 
     private func startNodeCore() {
@@ -99,6 +121,8 @@ final class DuytaiMacApp: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         proc.currentDirectoryURL = URL(fileURLWithPath: coreDir)
         var env = ProcessInfo.processInfo.environment
         env["HYPER_IDM_PORT"] = String(serverPort)
+        env["DUYTAI_DATA_DIR"] = dataDir
+        env["HYPER_IDM_HISTORY_FILE"] = (dataDir as NSString).appendingPathComponent("history.json")
         let extraPath = "/opt/homebrew/bin:/usr/local/bin:" + (env["PATH"] ?? "/usr/bin:/bin")
         env["PATH"] = extraPath
         proc.environment = env
@@ -113,13 +137,57 @@ final class DuytaiMacApp: NSObject, NSApplicationDelegate, WKNavigationDelegate,
     }
 
     private func stopNodeCore() {
+        if let shutdownURL = URL(string: "http://127.0.0.1:\(serverPort)/api/shutdown") {
+            var req = URLRequest(url: shutdownURL)
+            req.httpMethod = "POST"
+            req.timeoutInterval = 1.0
+            let tok = readAuthToken()
+            if !tok.isEmpty { req.setValue(tok, forHTTPHeaderField: "X-Duytai-Token") }
+            let sem = DispatchSemaphore(value: 0)
+            URLSession.shared.dataTask(with: req) { _, _, _ in sem.signal() }.resume()
+            _ = sem.wait(timeout: .now() + 1.0)
+        }
         guard let proc = serverProcess, proc.isRunning else { return }
         proc.terminate()
     }
 
     private func installSignalHandlers() {
-        signal(SIGTERM) { _ in exit(0) }
-        signal(SIGINT) { _ in exit(0) }
+        signal(SIGTERM, SIG_IGN)
+        signal(SIGINT, SIG_IGN)
+        let termSrc = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+        termSrc.setEventHandler { NSApp.terminate(nil) }
+        termSrc.resume()
+        sigTermSource = termSrc
+
+        let intSrc = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
+        intSrc.setEventHandler { NSApp.terminate(nil) }
+        intSrc.resume()
+        sigIntSource = intSrc
+    }
+
+    private func setupMainMenu() {
+        let mainMenu = NSMenu()
+        let appMenuItem = NSMenuItem()
+        mainMenu.addItem(appMenuItem)
+        let appMenu = NSMenu()
+        appMenu.addItem(NSMenuItem(title: "Mở Duytai Downloader", action: #selector(showMainWindowAction), keyEquivalent: "o"))
+        appMenu.addItem(NSMenuItem.separator())
+        appMenu.addItem(NSMenuItem(title: "Thoát Duytai", action: #selector(quitAppAction), keyEquivalent: "q"))
+        appMenuItem.submenu = appMenu
+
+        let editMenuItem = NSMenuItem()
+        mainMenu.addItem(editMenuItem)
+        let editMenu = NSMenu(title: "Edit")
+        editMenu.addItem(NSMenuItem(title: "Undo", action: Selector(("undo:")), keyEquivalent: "z"))
+        editMenu.addItem(NSMenuItem(title: "Redo", action: Selector(("redo:")), keyEquivalent: "Z"))
+        editMenu.addItem(NSMenuItem.separator())
+        editMenu.addItem(NSMenuItem(title: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x"))
+        editMenu.addItem(NSMenuItem(title: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c"))
+        editMenu.addItem(NSMenuItem(title: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v"))
+        editMenu.addItem(NSMenuItem(title: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a"))
+        editMenuItem.submenu = editMenu
+
+        NSApp.mainMenu = mainMenu
     }
 
     private func setupStatusBar() {
@@ -174,15 +242,32 @@ final class DuytaiMacApp: NSObject, NSApplicationDelegate, WKNavigationDelegate,
                 Thread.sleep(forTimeInterval: 0.15)
             }
             DispatchQueue.main.async { [weak self] in
-                self?.webView.load(URLRequest(url: targetURL))
+                guard let self = self else { return }
+                if ready {
+                    self.webView.load(URLRequest(url: targetURL))
+                } else {
+                    let diagHtml = """
+                    <!doctype html><html lang="vi"><head><meta charset="utf-8"><style>
+                    body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;padding:40px;background:#f8fafc;color:#0f172a}
+                    .card{max-width:620px;margin:40px auto;background:#fff;border:1px solid #cbd5e1;border-radius:10px;padding:24px}
+                    h2{color:#0284c7;margin-top:0} code{background:#f1f5f9;padding:3px 6px;border-radius:4px}
+                    </style></head><body><div class="card">
+                    <h2>⚡ Duytai Downloader v7.5 — Cần Node.js Runtime</h2>
+                    <p>Không tìm thấy hoặc không thể khởi chạy máy chủ Node.js cục bộ tại cổng <code>\(self.serverPort)</code>.</p>
+                    <p>Vui lòng cài đặt Node.js 22+ trên macOS (ví dụ: <code>brew install node</code> hoặc tải từ <code>https://nodejs.org</code>), sau đó khởi động lại ứng dụng <b>Duytai.app</b>.</p>
+                    </div></body></html>
+                    """
+                    self.webView.loadHTMLString(diagHtml, baseURL: nil)
+                }
             }
         }
     }
 
     private func startClipboardMonitor() {
-        clipboardTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+        clipboardTimer = Timer.scheduledTimer(withTimeInterval: 1.2, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.checkClipboardForDownloadableUrl()
+                self?.pollInterceptQueue()
             }
         }
     }
@@ -198,8 +283,39 @@ final class DuytaiMacApp: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         let ext = url.pathExtension.lowercased()
         let isRarPart = ext.range(of: #"^r\d+$"#, options: .regularExpression) != nil
         if mediaExts.contains(ext) || isRarPart || url.host?.contains("ipsw.me") == true {
-            enqueueDownload(urlString: str, source: "macOS Clipboard Auto")
+            let alert = NSAlert()
+            alert.messageText = "Duytai Downloader — Phát hiện link tải trong Clipboard"
+            alert.informativeText = "Bạn có muốn tải tệp này với 64 luồng không?\n\(str)"
+            alert.addButton(withTitle: "Tải ngay")
+            alert.addButton(withTitle: "Bỏ qua")
+            if alert.runModal() == .alertFirstButtonReturn {
+                enqueueDownload(urlString: str, source: "macOS Clipboard")
+                showMainWindow()
+            }
         }
+    }
+
+    private func pollInterceptQueue() {
+        guard let qURL = URL(string: "http://127.0.0.1:\(serverPort)/api/intercept-queue") else { return }
+        var req = URLRequest(url: qURL)
+        req.timeoutInterval = 1.0
+        let tok = readAuthToken()
+        if !tok.isEmpty { req.setValue(tok, forHTTPHeaderField: "X-Duytai-Token") }
+        URLSession.shared.dataTask(with: req) { [weak self] data, resp, _ in
+            guard let self = self,
+                  let http = resp as? HTTPURLResponse, http.statusCode == 200,
+                  let data = data,
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let items = obj["items"] as? [[String: Any]], !items.isEmpty else { return }
+            DispatchQueue.main.async {
+                self.showMainWindow()
+                for item in items {
+                    if let u = item["url"] as? String, !u.isEmpty {
+                        self.enqueueDownload(urlString: u, source: (item["source"] as? String) ?? "Browser Extension")
+                    }
+                }
+            }
+        }.resume()
     }
 
     private func handleCustomScheme(_ url: URL) {
@@ -219,6 +335,8 @@ final class DuytaiMacApp: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         var req = URLRequest(url: apiURL)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let tok = readAuthToken()
+        if !tok.isEmpty { req.setValue(tok, forHTTPHeaderField: "X-Duytai-Token") }
         let payload: [String: Any] = [
             "url": urlString,
             "maxConnections": 64,
@@ -227,6 +345,36 @@ final class DuytaiMacApp: NSObject, NSApplicationDelegate, WKNavigationDelegate,
         ]
         req.httpBody = try? JSONSerialization.data(withJSONObject: payload)
         URLSession.shared.dataTask(with: req).resume()
+    }
+
+    func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
+        let alert = NSAlert()
+        alert.messageText = "Duytai Downloader"
+        alert.informativeText = message
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+        completionHandler()
+    }
+
+    func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
+        let alert = NSAlert()
+        alert.messageText = "Duytai Downloader"
+        alert.informativeText = message
+        alert.addButton(withTitle: "Đồng ý")
+        alert.addButton(withTitle: "Hủy")
+        completionHandler(alert.runModal() == .alertFirstButtonReturn)
+    }
+
+    func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String, defaultText: String?, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (String?) -> Void) {
+        let alert = NSAlert()
+        alert.messageText = "Duytai Downloader"
+        alert.informativeText = prompt
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Hủy")
+        let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
+        input.stringValue = defaultText ?? ""
+        alert.accessoryView = input
+        completionHandler(alert.runModal() == .alertFirstButtonReturn ? input.stringValue : nil)
     }
 
     @objc private func showMainWindowAction() { showMainWindow() }

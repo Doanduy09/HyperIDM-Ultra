@@ -31,6 +31,8 @@ class DownloadForegroundService : Service() {
         private set
 
     private var wakeLock: PowerManager.WakeLock? = null
+    private var idleStopJob: Job? = null
+    private var isInForeground = false
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     override fun onCreate() {
@@ -45,12 +47,7 @@ class DownloadForegroundService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val notification = buildNotification("Duytai Engine v7.4 sẵn sàng (64/128 luồng)")
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIF_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
-        } else {
-            startForeground(NOTIF_ID, notification)
-        }
+        promoteToForeground("Duytai Engine v7.5 sẵn sàng (64/128 luồng)")
 
         val url = intent?.getStringExtra(EXTRA_URL)
         val threads = intent?.getIntExtra(EXTRA_THREADS, 64) ?: 64
@@ -60,10 +57,21 @@ class DownloadForegroundService : Service() {
         return START_STICKY
     }
 
+    private fun promoteToForeground(text: String) {
+        val notification = buildNotification(text)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(NOTIF_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+        } else {
+            startForeground(NOTIF_ID, notification)
+        }
+        isInForeground = true
+    }
+
     override fun onTimeout(startId: Int, fgsType: Int) {
         // Android 15 (API 35) dataSync 6h foreground quota guard
         engine.pauseAll()
         stopForeground(STOP_FOREGROUND_DETACH)
+        isInForeground = false
         stopSelf(startId)
     }
 
@@ -82,13 +90,29 @@ class DownloadForegroundService : Service() {
             engine.jobList.collect { list ->
                 val active = list.filter { it.status.name == "DOWNLOADING" || it.status.name == "PROBING" }
                 if (active.isNotEmpty()) {
+                    idleStopJob?.cancel()
+                    idleStopJob = null
                     acquireWakeLock()
                     val first = active.first()
                     val spd = FormatCatalog.formatBytes(engine.aggregateSpeedBps) + "/s"
                     val summary = "${active.size} file • ${first.progressPercent}% • $spd"
-                    nm.notify(NOTIF_ID, buildNotification(summary))
+                    if (!isInForeground) {
+                        promoteToForeground(summary)
+                    } else {
+                        nm.notify(NOTIF_ID, buildNotification(summary))
+                    }
                 } else {
                     releaseWakeLock()
+                    if (isInForeground && idleStopJob == null) {
+                        idleStopJob = serviceScope.launch {
+                            delay(12_000L)
+                            if (engine.activeDownloadCount == 0) {
+                                runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
+                                isInForeground = false
+                            }
+                            idleStopJob = null
+                        }
+                    }
                 }
             }
         }

@@ -10,7 +10,7 @@ async function main() {
     process.exit(1);
   }
 
-  console.log(`\n⚡ [HyperIDM Ultra 64-Bit] Starting download with ${maxConnections} parallel connections...`);
+  console.log(`\n⚡ [Duytai v7.5 64-Bit] Starting download with ${maxConnections} parallel connections...`);
   console.log(`🔗 URL: ${url}`);
 
   const job = new DownloadJob({ url, maxConnections });

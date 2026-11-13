@@ -5,8 +5,23 @@
   const EXT_RE = /\.(3gp|3g2|7z|aac|ace|aif|aiff|alac|apk|apks|xapk|aab|ipa|arj|asf|avi|bin|bz2|tbz2|cab|crx|xpi|csv|dat|db|sqlite|deb|dmg|doc|docx|dwg|dxf|epub|mobi|azw3|esd|wim|swm|exe|f4v|ffu|flac|flv|fw|gz|gzip|tgz|hex|uf2|img|ipsw|iso|jar|war|lzh|lha|lz|lzma|tlz|m2ts|mts|m3u8|mpd|m4a|m4b|m4p|m4r|m4v|mkv|mov|mp2|mp3|mp4|mpa|mpe|mpeg|mpg|msi|msix|msixbundle|appx|msu|nupkg|whl|odt|ods|odp|oga|ogg|ogv|opus|ota|ova|ovf|pak|par2|pdf|pkg|plj|pps|ppsx|ppt|pptx|psd|ai|qcow2|qt|r\d{2,3}|ra|ram|rar|rm|rmvb|rom|rpm|appimage|rtf|s7z|sea|sit|sitx|sql|tar|tif|tiff|torrent|ts|tsv|vhd|vhdx|vmdk|vdi|vob|wav|webm|wma|wmv|xls|xlsx|xps|xz|txz|z|zip|zst)(?:$|[?#&])/i;
   const DIRECT_DOWNLOAD_RE = /^https?:\/\/(?:(?:www\.)?ipsw\.me\/download\/|updates\.cdn-apple\.com\/|appldnld\.apple\.com\/|github\.com\/[^/]+\/[^/]+\/releases\/download\/|objects\.githubusercontent\.com\/|huggingface\.co\/.+\/resolve\/|drive\.usercontent\.google\.com\/download|drive\.google\.com\/uc\?|mediafire\.com\/file\/|sourceforge\.net\/projects\/.+\/download|download\.microsoft\.com\/)/i;
 
+  const PLATFORM_VIDEO_HOST_RE = /(?:^|\.)(youtube\.com|youtu\.be|tiktok\.com|vimeo\.com|bilibili\.com|dailymotion\.com|twitch\.tv|facebook\.com|fb\.watch|instagram\.com)$/i;
+
+  let autoCaptureEnabled = true;
+  try {
+    chrome.storage.local.get('autoCapture', res => {
+      if (res && typeof res.autoCapture === 'boolean') autoCaptureEnabled = res.autoCapture;
+    });
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area === 'local' && changes.autoCapture) {
+        autoCaptureEnabled = changes.autoCapture.newValue !== false;
+      }
+    });
+  } catch (_) {}
+
   // Tier-1 Pre-Click Capture: intercept link BEFORE Chrome initiates HTTP download (no "Đã hủy" bubble)
   document.addEventListener('click', (e) => {
+    if (!e.isTrusted || !autoCaptureEnabled) return;
     if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
     const anchor = e.target && e.target.closest ? e.target.closest('a[href], area[href]') : null;
     if (!anchor) return;
@@ -22,20 +37,28 @@
     e.stopImmediatePropagation();
 
     const dlAttr = (anchor.getAttribute('download') || '').trim();
+    const fallbackNative = () => {
+      if (anchor.isConnected) {
+        anchor.click();
+      } else {
+        location.href = href;
+      }
+    };
     try {
       chrome.runtime.sendMessage({
         type: 'download',
         url: href,
         referrer: location.href,
         fileName: dlAttr,
+        preClick: true,
         source: 'Bắt trước khi Chrome tải (Pre-Click)'
       }, (res) => {
         if (chrome.runtime.lastError || !res || !res.ok) {
-          location.href = href;
+          fallbackNative();
         }
       });
     } catch (_) {
-      location.href = href;
+      fallbackNative();
     }
   }, true);
 
@@ -51,13 +74,14 @@
   };
 
   function resolveTargetUrl() {
+    if (PLATFORM_VIDEO_HOST_RE.test(location.hostname)) return location.href;
     const v = document.querySelector('video[src], video source[src]');
     if (v && v.src && /^https?:/i.test(v.src)) return v.src;
     return location.href;
   }
 
   function update() {
-    if (!document.body) return;
+    if (document.hidden || !document.body) return;
     const existing = document.getElementById(ID);
     if (!detectDownloadablePage()) { if (existing) existing.remove(); return; }
     if (existing) return;

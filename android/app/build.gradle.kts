@@ -11,14 +11,33 @@ android {
         applicationId = "com.doanduy.duytai"
         minSdk = 26
         targetSdk = 35
-        versionCode = 740
-        versionName = "7.4.0"
+        versionCode = 750
+        versionName = "7.5.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        create("release") {
+            val ksPath = System.getenv("DUYTAI_KEYSTORE_PATH") ?: "duytai-release.jks"
+            storeFile = file(ksPath)
+            storePassword = System.getenv("DUYTAI_KEYSTORE_PASSWORD") ?: "DuytaiSign#2026"
+            keyAlias = System.getenv("DUYTAI_KEY_ALIAS") ?: "duytai"
+            keyPassword = System.getenv("DUYTAI_KEY_PASSWORD") ?: "DuytaiSign#2026"
+            enableV1Signing = true
+            enableV2Signing = true
+            enableV3Signing = true
+            enableV4Signing = true
+        }
+    }
+
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("release")
+        }
         release {
-            isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("release")
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

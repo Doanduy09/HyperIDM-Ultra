@@ -40,7 +40,7 @@ import kotlin.math.min
 class DuytaiEngine(
     private val stagingRoot: File,
     private val context: Context? = null,
-    workerThreads: Int = 48
+    workerThreads: Int = 128
 ) {
     private val dispatcher = Executors.newFixedThreadPool(workerThreads).asCoroutineDispatcher()
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
@@ -81,6 +81,7 @@ class DuytaiEngine(
         val counters = JobRuntimeCounters()
         val segments = mutableListOf<SegmentState>()
         val edgeLatencyEwma = ConcurrentHashMap<String, Double>()
+        val activeConnections = ConcurrentHashMap.newKeySet<HttpURLConnection>()
         val pausedOrStopped = AtomicBoolean(false)
         var cdnIps: List<String> = emptyList()
         var stagingFile: File? = null
@@ -160,6 +161,7 @@ class DuytaiEngine(
         }
         val prevRunner = job.runnerJob
         job.pausedOrStopped.set(true)
+        disconnectAllConnections(job)
         job.status = JobStatus.QUEUED
         job.speedBps = 0L
         job.error = null
@@ -194,6 +196,7 @@ class DuytaiEngine(
         job.pausedOrStopped.set(true)
         job.status = JobStatus.PAUSED
         job.speedBps = 0L
+        disconnectAllConnections(job)
         job.runnerJob?.cancel()
         saveStateJournal(job)
         closeFileHandles(job)
@@ -212,12 +215,21 @@ class DuytaiEngine(
             val job = jobs.remove(id) ?: continue
             job.pausedOrStopped.set(true)
             job.status = JobStatus.CANCELED
+            disconnectAllConnections(job)
             job.runnerJob?.cancel()
             closeFileHandles(job)
             job.stagingFile?.delete()
             job.stateJournalFile?.delete()
         }
         emitStates()
+    }
+
+    private fun disconnectAllConnections(job: ManagedJob) {
+        val snap = job.activeConnections.toList()
+        job.activeConnections.clear()
+        for (c in snap) {
+            runCatching { c.disconnect() }
+        }
     }
 
     fun shutdown() {
@@ -515,31 +527,44 @@ class DuytaiEngine(
         parentScope.launch {
             var conn: HttpURLConnection? = null
             try {
-                val raceStart = seg.current
-                val raceEnd = seg.end
+                val raceStart = synchronized(job.segments) { seg.current }
+                val raceEnd = synchronized(job.segments) { seg.end }
                 if (raceStart > raceEnd) return@launch
                 conn = openRangeConnection(job, raceStart, raceEnd, timeoutMs = 3500)
+                job.activeConnections.add(conn)
                 val code = conn.responseCode
-                if (code != 206 && code != 200) return@launch
+                if (code != 206) return@launch
                 val input = conn.inputStream
                 val buf = ByteArray(64 * 1024)
                 val firstRead = input.read(buf)
-                if (firstRead > 0 && raceStart == seg.current && seg.status == "downloading") {
+                val wonRace = synchronized(job.segments) {
+                    if (firstRead > 0 && raceStart == seg.current && seg.status == "downloading") {
+                        activeJobs[seg.id]?.cancel()
+                        true
+                    } else {
+                        false
+                    }
+                }
+                if (wonRace) {
                     job.counters.hedgeWins.incrementAndGet()
                     job.counters.recycleCount.incrementAndGet()
-                    activeJobs[seg.id]?.cancel()
                     writeSegmentSlice(job, seg, buf, firstRead)
                     streamIntoChannel(job, seg, input, buf)
-                    if (seg.end < 0 || seg.current > seg.end) {
-                        seg.status = "completed"
-                    } else if (!job.pausedOrStopped.get()) {
-                        seg.status = "pending"
+                    synchronized(job.segments) {
+                        if (seg.end < 0 || seg.current > seg.end) {
+                            seg.status = "completed"
+                        } else if (!job.pausedOrStopped.get()) {
+                            seg.status = "pending"
+                        }
                     }
                 }
             } catch (_: Exception) {
             } finally {
                 seg.hedging = false
-                conn?.disconnect()
+                if (conn != null) {
+                    job.activeConnections.remove(conn)
+                    conn.disconnect()
+                }
             }
         }
     }
@@ -552,23 +577,35 @@ class DuytaiEngine(
         job.counters.activeWorkers.incrementAndGet()
         var conn: HttpURLConnection? = null
         try {
-            val reqStart = seg.current
-            val reqEnd = seg.end
+            val reqStart = synchronized(job.segments) {
+                if (!job.acceptRanges) {
+                    seg.current = 0L
+                    job.counters.downloadedBytes.set(0L)
+                }
+                seg.current
+            }
+            val reqEnd = synchronized(job.segments) { seg.end }
             if (reqEnd >= 0 && reqStart > reqEnd) {
-                seg.status = "completed"
+                synchronized(job.segments) { seg.status = "completed" }
                 return
             }
             val t0 = System.nanoTime()
             conn = openRangeConnection(job, if (job.acceptRanges) reqStart else -1L, if (job.acceptRanges) reqEnd else -1L, timeoutMs = 30_000)
+            job.activeConnections.add(conn)
             val code = conn.responseCode
             if (code == 429 || code == 503) {
                 job.counters.completedSinceDecrease.set(0)
                 job.effectiveMaxConnections = max(4, job.effectiveMaxConnections / 2)
                 val retryAfterSec = conn.getHeaderField("Retry-After")?.toLongOrNull() ?: (seg.retries + 1L)
                 job.rateLimitUntil = max(job.rateLimitUntil, System.currentTimeMillis() + min(8000L, retryAfterSec * 1000L))
-                seg.retries++
-                seg.status = "pending"
+                synchronized(job.segments) {
+                    seg.retries++
+                    seg.status = "pending"
+                }
                 return
+            }
+            if (job.acceptRanges && reqStart > 0 && code == 200) {
+                throw IllegalStateException("HTTP 200 on ranged segment (Range not honored)")
             }
             if (code !in 200..299) throw IllegalStateException("HTTP $code")
 
@@ -604,7 +641,10 @@ class DuytaiEngine(
                 throw e
             }
         } finally {
-            conn?.disconnect()
+            if (conn != null) {
+                job.activeConnections.remove(conn)
+                conn.disconnect()
+            }
             job.counters.activeWorkers.decrementAndGet()
             activeJobs.remove(seg.id)
         }
@@ -694,12 +734,16 @@ class DuytaiEngine(
                 values.clear()
                 values.put(MediaStore.Downloads.IS_PENDING, 0)
                 resolver.update(uri, values, null, null)
+                runCatching { source.delete() }
                 "Download/Duytai/$category/$fileName"
             } else {
                 @Suppress("DEPRECATION")
                 val destDir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "Duytai/$category").apply { mkdirs() }
                 val dest = File(destDir, fileName)
-                source.copyTo(dest, overwrite = true)
+                if (dest.canonicalPath != source.canonicalPath) {
+                    source.copyTo(dest, overwrite = true)
+                    runCatching { source.delete() }
+                }
                 dest.absolutePath
             }
         } catch (_: Exception) {
@@ -783,6 +827,23 @@ class DuytaiEngine(
                     status = JobStatus.PAUSED
                     stagingFile = File(jf.parentFile, jf.name.removeSuffix(".hyper.json"))
                     stateJournalFile = jf
+                    val arr = payload.optJSONArray("segments")
+                    if (arr != null) {
+                        var done = 0L
+                        for (i in 0 until arr.length()) {
+                            val o = arr.optJSONObject(i) ?: continue
+                            val s = SegmentState(
+                                id = o.optInt("id", i),
+                                start = o.optLong("start", 0L),
+                                current = o.optLong("current", 0L),
+                                end = o.optLong("end", -1L),
+                                status = if (o.optString("status") == "completed") "completed" else "pending"
+                            )
+                            done += max(0L, s.current - s.start)
+                            segments.add(s)
+                        }
+                        if (done > 0L) counters.downloadedBytes.set(done)
+                    }
                 }
                 jobs[id] = job
             }

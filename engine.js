@@ -46,12 +46,13 @@ const sharedHttpsAgent = new https.Agent({
   keepAliveMsecs: 30000,
   maxSockets: 256,
   maxFreeSockets: 128,
-  scheduling: 'fifo',
-  rejectUnauthorized: false
+  scheduling: 'fifo'
 });
 
 function findBinary(name) {
-  const exeName = process.platform === 'win32' || name.endsWith('.exe') ? name : name.replace(/\.exe$/i, '');
+  const exeName = process.platform === 'win32' || name.endsWith('.exe')
+    ? (process.platform === 'win32' ? name : name.replace(/\.exe$/i, ''))
+    : name;
   const candidates = [
     path.join(__dirname, 'bin', exeName),
     path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Duytai', 'bin', exeName),
@@ -82,7 +83,7 @@ const YT_QUALITY_FORMATS = {
 };
 
 const YT_QUALITY_TIERS = [
-  { key: '12k', minH: 5400, maxH: 8640, label: '12K Ultra HD (6480p)' },
+  { key: '12k', minH: 5400, maxH: 8640, label: '12K Ultra HD (8640p)' },
   { key: '8k', minH: 3600, maxH: 4320, label: '8K Ultra HD (4320p)' },
   { key: '4k', minH: 1800, maxH: 2160, label: '4K Ultra HD (2160p)' },
   { key: '2k', minH: 1200, maxH: 1440, label: '2K QHD (1440p)' },
@@ -95,7 +96,7 @@ const YT_QUALITY_TIERS = [
 function normalizeVideoQuality(q) {
   const s = String(q || 'best').trim().toLowerCase();
   if (!s || s === 'auto' || s === 'max' || s === 'best') return 'best';
-  if (s === '12k' || s === '6480p' || s === '6912p') return '12k';
+  if (s === '12k' || s === '6480p' || s === '6912p' || s === '8640p') return '12k';
   if (s === '8k' || s === '4320p' || s === '4320') return '8k';
   if (s === '4k' || s === 'uhd' || s === '2160p' || s === '2160') return '4k';
   if (s === '2k' || s === 'qhd' || s === '1440p' || s === '1440') return '2k';
@@ -157,7 +158,7 @@ function summarizeSegments(srcSegs, maxBuckets = 64, idOffset = 0) {
 const YT_PROBE_CACHE = new Map();
 
 /**
- * HyperIDM Ultra v2.0 — 64-Bit Core Engine (TitanFetch Architecture)
+ * Duytai v7.5 — 64-Bit Core Engine (TitanFetch Architecture)
  * - Smart URL Resolver:
  *   1) Auto-resolves ipsw.me/download/<device>/<build> via official IPSW API v4 -> Apple CDN direct firmware
  *   2) Auto-resolves YouTube / Streaming URLs via bundled yt-dlp -> Dual 64-thread Range Engine + FFmpeg zero-reencode muxing
@@ -189,6 +190,8 @@ class DownloadJob extends EventEmitter {
     this.headers = options.headers || {};
     this.videoQuality = normalizeVideoQuality(options.videoQuality); // best | 12k | 8k | 4k | 2k | 1080p | 720p | 480p | 360p | audio
     this.maxBytesLimit = options.maxBytesLimit || 0; // Optional cap for partial benchmark tests
+    this.allowInsecureTls = Boolean(options.allowInsecureTls);
+    this._keepStateOnComplete = Boolean(options._keepStateOnComplete);
     this.userAgent = options.userAgent || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
     this.status = 'queued'; // queued | resolving | probing | downloading | muxing | paused | completed | error | canceled
@@ -231,6 +234,8 @@ class DownloadJob extends EventEmitter {
     this._ytSubJobs = [];
     this._ytRunToken = 0;
     this._ytPipelineActive = false;
+    this._ytUrlResolvedAt = 0;
+    this._ytExpiredRetries = 0;
     this._ytProc = null;
     this._lastCongestionAt = 0;
     this._lastAimdStepAt = 0;
@@ -300,8 +305,10 @@ class DownloadJob extends EventEmitter {
     this._speedWindow = [];
     this._etaSpeedEwma = 0;
 
-    // Fast in-memory resume for active YouTube dual-stream sub-jobs (never spawn duplicates)
-    if (this.resolverType === 'youtube' && this._ytPipelineActive && Array.isArray(this._ytSubJobs) && this._ytSubJobs.length > 0) {
+    // Fast in-memory resume for active YouTube dual-stream sub-jobs when signed URLs are still fresh (<5h)
+    const ytAgeMs = this._ytUrlResolvedAt ? (Date.now() - this._ytUrlResolvedAt) : 0;
+    if (this.resolverType === 'youtube' && this._ytPipelineActive && ytAgeMs < 5 * 60 * 60 * 1000 &&
+        Array.isArray(this._ytSubJobs) && this._ytSubJobs.length > 0) {
       const unfinished = this._ytSubJobs.filter(s => s && s.status !== 'completed');
       if (unfinished.length > 0) {
         this.status = 'downloading';
@@ -332,7 +339,8 @@ class DownloadJob extends EventEmitter {
         }
       }
     }
-    this.effectiveMaxConnections = Math.max(16, this.effectiveMaxConnections || this.maxConnections);
+    this.effectiveMaxConnections = Math.min(this.maxConnections, Math.max(1, this.effectiveMaxConnections || this.maxConnections));
+    this._ytExpiredRetries = 0;
     this.status = 'resolving';
     this.emit('update', this.toJSON());
 
@@ -390,6 +398,15 @@ class DownloadJob extends EventEmitter {
         }
       } else {
         await this._resolveCdnPool(this.finalUrl);
+      }
+
+      const preStat = this.segments.length > 0 && this.segments.every(s => s.status === 'completed') && fs.existsSync(this.filePath)
+        ? await fsp.stat(this.filePath).catch(() => null)
+        : null;
+      if (preStat && (this.totalBytes <= 0 || preStat.size === this.totalBytes)) {
+        this.status = 'downloading';
+        await this._checkCompletion();
+        return;
       }
 
       await this._openAndPreallocateTargetFile();
@@ -554,6 +571,15 @@ class DownloadJob extends EventEmitter {
       if (!resumed) {
         this._initializeSegments();
       }
+      const preStat = this.segments.length > 0 && this.segments.every(s => s.status === 'completed') && fs.existsSync(this.filePath)
+        ? await fsp.stat(this.filePath).catch(() => null)
+        : null;
+      if (preStat && (this.totalBytes <= 0 || preStat.size === this.totalBytes)) {
+        this.status = 'downloading';
+        await this._checkCompletion();
+        return;
+      }
+
       await this._openAndPreallocateTargetFile();
       if (this._ytRunToken !== runToken || this.status === 'paused' || this.status === 'canceled') {
         await this._cleanupHandles();
@@ -568,6 +594,9 @@ class DownloadJob extends EventEmitter {
       return;
     }
 
+    this._ytUrlResolvedAt = Date.now();
+    if (this.filePath) RESERVED_TARGET_PATHS.set(this.filePath.toLowerCase(), this.id);
+
     // Dual Parallel 64-Thread Engine for Video Track + Audio Track -> Fast FFmpeg Copy Mux
     const vTrack = formats[0];
     const aTrack = formats[1];
@@ -580,6 +609,8 @@ class DownloadJob extends EventEmitter {
       fileName: path.basename(vTempPath),
       filePath: vTempPath,
       _skipUniqueResolve: true,
+      _keepStateOnComplete: true,
+      allowInsecureTls: this.allowInsecureTls,
       maxConnections: Math.max(16, Math.floor(this.maxConnections * 0.75))
     });
     const aJob = new DownloadJob({
@@ -588,6 +619,8 @@ class DownloadJob extends EventEmitter {
       fileName: path.basename(aTempPath),
       filePath: aTempPath,
       _skipUniqueResolve: true,
+      _keepStateOnComplete: true,
+      allowInsecureTls: this.allowInsecureTls,
       maxConnections: Math.max(8, Math.floor(this.maxConnections * 0.25))
     });
 
@@ -650,6 +683,16 @@ class DownloadJob extends EventEmitter {
           aJob.start();
         })
       ]);
+    } catch (subErr) {
+      if (this._ytRunToken === runToken && this.status === 'downloading' &&
+          this._ytExpiredRetries < 1 && /HTTP (403|410)\b/i.test(subErr.message || '')) {
+        this._ytExpiredRetries++;
+        await Promise.all([vJob.pause().catch(() => {}), aJob.pause().catch(() => {})]);
+        this._ytPipelineActive = false;
+        this._ytSubJobs = [];
+        return this._executeYouTubeMultiStreamPipeline();
+      }
+      throw subErr;
     } finally {
       if (this._ytRunToken === runToken) {
         this._ytPipelineActive = false;
@@ -867,7 +910,7 @@ class DownloadJob extends EventEmitter {
           ...this.headers
         },
         timeout: 15000,
-        rejectUnauthorized: false
+        rejectUnauthorized: !this.allowInsecureTls
       }, (res) => {
         const code = res.statusCode || 0;
         if ([301, 302, 303, 307, 308].includes(code) && res.headers.location) {
@@ -1022,6 +1065,7 @@ class DownloadJob extends EventEmitter {
         id: 0,
         start: 0,
         current: 0,
+        committed: 0,
         end: this.totalBytes > 0 ? this.totalBytes - 1 : -1,
         status: 'pending',
         speedBps: 0,
@@ -1052,6 +1096,7 @@ class DownloadJob extends EventEmitter {
           id: i,
           start,
           current: start,
+          committed: start,
           end,
           status: 'pending',
           speedBps: 0,
@@ -1076,6 +1121,7 @@ class DownloadJob extends EventEmitter {
         id: i,
         start,
         current: start,
+        committed: start,
         end,
         status: 'pending',
         speedBps: 0,
@@ -1169,6 +1215,7 @@ class DownloadJob extends EventEmitter {
       id: this.segments.length,
       start: newStart,
       current: newStart,
+      committed: newStart,
       end: oldEnd,
       status: 'pending',
       speedBps: 0,
@@ -1207,7 +1254,7 @@ class DownloadJob extends EventEmitter {
         agent: isHttps ? sharedHttpsAgent : sharedHttpAgent,
         headers,
         servername: parsed.hostname,
-        rejectUnauthorized: false,
+        rejectUnauthorized: !this.allowInsecureTls,
         highWaterMark: this._writeBufferSize
       }
     };
@@ -1274,6 +1321,10 @@ class DownloadJob extends EventEmitter {
           if (diskWriteError.err) return;
           if (this.fileHandle && (this.status === 'downloading' || this.status === 'paused')) {
             await this._writeVectorAtOffset(bufs, lenToWrite, offsetToWrite);
+            const flushedEnd = offsetToWrite + lenToWrite;
+            if (typeof seg.committed !== 'number' || flushedEnd > seg.committed) {
+              seg.committed = flushedEnd;
+            }
             const writeMs = Date.now() - writeStart;
             this._ewmaWriteMs = this._ewmaWriteMs ? (this._ewmaWriteMs * 0.8 + writeMs * 0.2) : writeMs;
           }
@@ -1453,6 +1504,37 @@ class DownloadJob extends EventEmitter {
 
     const req = transport.request(reqOptions, (res) => {
       const code = res.statusCode || 0;
+      const sentRange = Boolean(reqOptions.headers['Range']);
+      if (sentRange && code === 200) {
+        const canFallbackSingle = seg.id === 0 && seg.current === 0 && this.downloadedBytes === 0 &&
+          this.segments.every(s => s.current === s.start);
+        if (canFallbackSingle) {
+          this.acceptRanges = false;
+          for (const s of this.segments) {
+            if (s !== seg && this.activeWorkers.has(s.id)) {
+              const other = this.activeWorkers.get(s.id);
+              this.activeWorkers.delete(s.id);
+              try { if (other && other.req) other.req.destroy(); } catch {}
+            }
+          }
+          seg.start = 0;
+          seg.current = 0;
+          seg.committed = 0;
+          seg.end = this.totalBytes > 0 ? (this.totalBytes - 1) : -1;
+          this.segments = [seg];
+          if (this.status === 'downloading' && seg.status === 'downloading') {
+            workerEntry = this._consumeSegmentStream(seg, req, res);
+          } else {
+            res.destroy();
+          }
+          return;
+        }
+        res.destroy();
+        const rangeErr = new Error('Server returned HTTP 200 instead of 206 Partial Content');
+        rangeErr.fatalRangeError = true;
+        failEarly(rangeErr);
+        return;
+      }
       if (code < 200 || code >= 300) {
         const retryAfterRaw = res.headers['retry-after'];
         res.destroy();
@@ -1523,7 +1605,8 @@ class DownloadJob extends EventEmitter {
 
     const req = transport.request(reqOptions, (res) => {
       const code = res.statusCode || 0;
-      if (code < 200 || code >= 300 || this.status !== 'downloading' || seg.status !== 'downloading') {
+      if ((reqOptions.headers['Range'] && code !== 206) ||
+          code < 200 || code >= 300 || this.status !== 'downloading' || seg.status !== 'downloading') {
         return stopHedge(res);
       }
 
@@ -1645,7 +1728,7 @@ class DownloadJob extends EventEmitter {
     }
 
     // Track consecutive zero-progress failures; max 30/45 avoids killing large downloads on transient Wi-Fi/ISP hiccups
-    const maxRetries = isRateLimited ? 45 : 30;
+    const maxRetries = (err && err.fatalRangeError) ? Math.max(0, (this.cdnIps.length || 1) - 1) : (isRateLimited ? 45 : 30);
     if (seg.retries > maxRetries) {
       this.status = 'error';
       this.error = `Segment #${seg.id} failed after ${maxRetries} retries: ${msg}`;
@@ -1897,7 +1980,30 @@ class DownloadJob extends EventEmitter {
     this.etaSeconds = 0;
 
     await this._cleanupHandles();
-    if (this.stateFilePath && fs.existsSync(this.stateFilePath)) {
+    if (this._keepStateOnComplete) {
+      if (this.stateFilePath) {
+        const payload = {
+          id: this.id,
+          url: this.url,
+          finalUrl: this.finalUrl,
+          fileName: this.fileName,
+          filePath: this.filePath,
+          totalBytes: this.totalBytes,
+          downloadedBytes: this.downloadedBytes,
+          acceptRanges: this.acceptRanges,
+          etag: this.etag,
+          lastModified: this.lastModified,
+          segments: this.segments.map(s => ({
+            id: s.id,
+            start: s.start,
+            current: s.end >= s.start ? s.end + 1 : s.current,
+            end: s.end,
+            status: 'completed'
+          }))
+        };
+        await fsp.writeFile(this.stateFilePath, JSON.stringify(payload), 'utf8').catch(() => {});
+      }
+    } else if (this.stateFilePath && fs.existsSync(this.stateFilePath)) {
       await fsp.unlink(this.stateFilePath).catch(() => {});
     }
     if (this.filePath) {
@@ -1970,13 +2076,19 @@ class DownloadJob extends EventEmitter {
         lastModified: this.lastModified,
         maxConnections: this.maxConnections,
         elapsedMs: this.elapsedMs,
-        segments: this.segments.map(s => ({
-          id: s.id,
-          start: s.start,
-          current: s.current,
-          end: s.end,
-          status: s.current > s.end && s.end >= 0 ? 'completed' : 'pending'
-        }))
+        segments: this.segments.map(s => {
+          const safeCur = typeof s.committed === 'number'
+            ? Math.max(s.start, Math.min(s.current, s.committed))
+            : s.current;
+          const clampedCur = s.end >= s.start ? Math.min(safeCur, s.end + 1) : safeCur;
+          return {
+            id: s.id,
+            start: s.start,
+            current: clampedCur,
+            end: s.end,
+            status: clampedCur > s.end && s.end >= 0 ? 'completed' : 'pending'
+          };
+        })
       };
       const jsonStr = this.segments.length > 128 ? JSON.stringify(payload) : JSON.stringify(payload, null, 2);
       await fsp.writeFile(this.stateFilePath, jsonStr, 'utf8').catch(() => {});
@@ -1999,18 +2111,26 @@ class DownloadJob extends EventEmitter {
       const raw = await fsp.readFile(this.stateFilePath, 'utf8');
       const data = JSON.parse(raw);
       if (data.totalBytes !== this.totalBytes || !Array.isArray(data.segments)) return false;
+      if (this.etag && data.etag && data.etag !== this.etag) return false;
+      if (this.lastModified && data.lastModified && data.lastModified !== this.lastModified) return false;
 
-      this.segments = data.segments.map(s => ({
-        id: s.id,
-        start: s.start,
-        current: s.current,
-        end: s.end,
-        status: s.current > s.end && s.end >= 0 ? 'completed' : 'pending',
-        speedBps: 0,
-        ip: '',
-        retries: 0,
-        bytesInWindow: 0
-      }));
+      this.segments = data.segments.map(s => {
+        const resumeCur = typeof s.committed === 'number'
+          ? Math.max(s.start, Math.min(s.current, s.committed))
+          : s.current;
+        return {
+          id: s.id,
+          start: s.start,
+          current: resumeCur,
+          committed: resumeCur,
+          end: s.end,
+          status: resumeCur > s.end && s.end >= 0 ? 'completed' : 'pending',
+          speedBps: 0,
+          ip: '',
+          retries: 0,
+          bytesInWindow: 0
+        };
+      });
       this.downloadedBytes = this.segments.reduce((acc, s) => acc + Math.max(0, s.current - s.start), 0);
       return true;
     } catch {
@@ -2049,7 +2169,8 @@ class DownloadJob extends EventEmitter {
     if (fs.existsSync(journalPath)) {
       try {
         const meta = JSON.parse(fs.readFileSync(journalPath, 'utf8'));
-        if (meta && meta.id === this.id) {
+        const existingOwner = RESERVED_TARGET_PATHS.get(initialPath.toLowerCase());
+        if (meta && (meta.id === this.id || (!existingOwner && meta.url === this.url))) {
           return reserve(initialPath);
         }
       } catch {}
@@ -2164,7 +2285,7 @@ class DownloadJob extends EventEmitter {
 }
 
 function netIsIp(host) {
-  return /^(\d{1,3}\.){3}\d{1,3}$/.test(host);
+  return net.isIP(host) !== 0;
 }
 
 module.exports = { DownloadJob };

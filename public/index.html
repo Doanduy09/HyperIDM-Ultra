@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Duytai Downloader v7.4 — Cross-Platform 64/128-Thread Engine</title>
+  <title>Duytai Downloader v7.5 — Cross-Platform 64/128-Thread Engine</title>
   <link rel="icon" type="image/png" href="/logo.png" />
   <style>
     :root[data-theme="light"] {
@@ -1113,6 +1113,26 @@
     table.comp-table th {
       background: var(--bg-table-head);
     }
+
+    input, textarea, select, .info-val, .file-name-text, code {
+      user-select: text;
+    }
+
+    @media (max-width: 900px) {
+      body { height: auto; min-height: 100vh; overflow-y: auto; }
+      .idm-menubar { height: auto; flex-wrap: wrap; padding: 4px 6px; gap: 4px; }
+      .menu-right { flex-wrap: wrap; gap: 6px; }
+      .idm-ribbon { flex-wrap: wrap; height: auto; padding: 6px; gap: 4px; }
+      .quick-url-bar { flex-wrap: wrap; height: auto; padding: 6px 8px; gap: 6px; }
+      .quick-url-input { min-width: 220px; width: 100%; }
+      .workspace-split { flex-direction: column; height: auto; overflow: visible; }
+      .sidebar-tree { width: 100% !important; max-width: none !important; border-right: none; border-bottom: 1px solid var(--border-main); max-height: 210px; }
+      .sidebar-tree.collapsed { display: none; }
+      .datagrid-scroll { overflow-x: auto; }
+      .idm-datagrid { min-width: 780px; }
+      .idm-dialog { width: calc(100vw - 20px) !important; max-width: 760px; max-height: 92vh; }
+      .idm-statusbar { height: auto; flex-wrap: wrap; gap: 6px; padding: 6px 8px; }
+    }
   </style>
 </head>
 <body>
@@ -1122,7 +1142,7 @@
     <div class="menu-left">
       <div class="app-icon-badge" style="display:flex;align-items:center;gap:6px;">
         <img src="/logo.png" alt="D" style="width:18px;height:18px;border-radius:4px;" />
-        <span>Duytai v7.4 Pro</span>
+        <span>Duytai v7.5 Pro</span>
       </div>
 
       <div class="menu-wrap">
@@ -1130,6 +1150,8 @@
         <div class="menu-dropdown">
           <div class="menu-dd-item" onclick="openAddUrlModal()"><span>➕ Thêm địa chỉ tải xuống mới...</span><span>Ctrl+N</span></div>
           <div class="menu-dd-item" onclick="openBatchModal()"><span>📋 Thêm tải xuống hàng loạt (Batch URL)...</span><span>Ctrl+B</span></div>
+          <div class="menu-dd-item" onclick="openGrabberModal()"><span>🕷️ Quét tất cả liên kết trên trang (Site Grabber)...</span></div>
+          <div class="menu-dd-item" onclick="openZipPreviewModal()"><span>📦 Xem trước nội dung file ZIP / Trích xuất...</span></div>
           <div class="menu-dd-sep"></div>
           <div class="menu-dd-item" onclick="runStressBenchmark(512, 64)"><span>⚡ Chạy Stress Benchmark 512MB (64 Luồng)</span></div>
         </div>
@@ -1402,7 +1424,7 @@
   <div class="modal-backdrop" id="progressModalBackdrop">
     <div class="idm-dialog">
       <div class="dialog-titlebar">
-        <span id="dlgWindowTitle">⚡ Đang tải xuống — Duytai 64-Bit 6.43 Pro</span>
+        <span id="dlgWindowTitle">⚡ Đang tải xuống — Duytai 64-Bit v7.5</span>
         <button class="dialog-close" onclick="closeProgressDialog()">✕</button>
       </div>
 
@@ -1535,7 +1557,7 @@
           </div>
           <div class="form-row">
             <label>Thư mục lưu trữ (Mặc định = Tự phân loại):</label>
-            <input type="text" id="modalSaveDirInput" placeholder="C:\Users\admin\Downloads\Duytai" />
+            <input type="text" id="modalSaveDirInput" placeholder="Thư mục lưu mặc định" />
           </div>
         </div>
         <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
@@ -1593,7 +1615,7 @@
   <div class="modal-backdrop" id="optionsModalBackdrop">
     <div class="idm-dialog" style="width: 560px;">
       <div class="dialog-titlebar">
-        <span>⚙️ Tùy chọn cấu hình Duytai 64-Bit 6.43 Pro</span>
+        <span>⚙️ Tùy chọn cấu hình Duytai 64-Bit v7.5</span>
         <button class="dialog-close" onclick="closeModal('optionsModalBackdrop')">✕</button>
       </div>
       <div class="dialog-body">
@@ -1632,7 +1654,7 @@
   <div class="modal-backdrop" id="compareModalBackdrop">
     <div class="idm-dialog" style="width: 760px;">
       <div class="dialog-titlebar">
-        <span>⚡ Cấu hình & Kiến trúc Động cơ Duytai v7.4</span>
+        <span>⚡ Cấu hình & Kiến trúc Động cơ Duytai v7.5</span>
         <button class="dialog-close" onclick="closeModal('compareModalBackdrop')">✕</button>
       </div>
       <div class="dialog-body">
@@ -1679,6 +1701,62 @@
       <div class="dialog-footer">
         <span></span>
         <button class="btn-std primary" onclick="closeModal('compareModalBackdrop')">Đóng</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: SITE GRABBER -->
+  <div class="modal-backdrop" id="grabberModalBackdrop">
+    <div class="idm-dialog" style="width: 680px;">
+      <div class="dialog-titlebar">
+        <span>🕷️ Duytai Site Grabber — Quét toàn bộ liên kết</span>
+        <button class="dialog-close" onclick="closeModal('grabberModalBackdrop')">✕</button>
+      </div>
+      <div class="dialog-body">
+        <div style="display:flex; gap:8px; margin-bottom:10px;">
+          <input type="text" id="grabberUrlInput" class="quick-url-input" placeholder="https://example.com/downloads/" />
+          <select id="grabberFilterSelect" class="quick-select" style="max-width:165px;">
+            <option value="">Tất cả định dạng</option>
+            <option value="Compressed">Compressed</option>
+            <option value="Programs">Programs</option>
+            <option value="Video">Video</option>
+            <option value="Music">Music</option>
+            <option value="Documents">Documents</option>
+            <option value="Firmware_ISO">Firmware / ISO</option>
+          </select>
+          <button class="btn-std primary" onclick="runSiteGrabber()">🔍 Quét</button>
+        </div>
+        <div id="grabberStatus" style="font-size:11.5px; color:var(--text-muted); margin-bottom:6px;">Nhập URL trang web rồi nhấn Quét.</div>
+        <div id="grabberResults" style="max-height:260px; overflow:auto; border:1px solid var(--border-main); border-radius:4px; padding:6px; background:var(--bg-quickbar);"></div>
+      </div>
+      <div class="dialog-footer">
+        <button class="btn-std" onclick="toggleGrabberSelectAll(true)">✔ Chọn tất cả</button>
+        <div style="display:flex; gap:6px;">
+          <button class="btn-std primary" onclick="queueGrabbedLinks()">🚀 Tải các mục đã chọn</button>
+          <button class="btn-std" onclick="closeModal('grabberModalBackdrop')">Đóng</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: XEM TRƯỚC FILE ZIP TỪ XA / ĐÃ TẢI -->
+  <div class="modal-backdrop" id="zipPreviewModalBackdrop">
+    <div class="idm-dialog" style="width: 640px;">
+      <div class="dialog-titlebar">
+        <span>📦 Duytai ZIP Preview — Đọc danh sách tệp qua Range 206</span>
+        <button class="dialog-close" onclick="closeModal('zipPreviewModalBackdrop')">✕</button>
+      </div>
+      <div class="dialog-body">
+        <div style="display:flex; gap:8px; margin-bottom:10px;">
+          <input type="text" id="zipPreviewUrlInput" class="quick-url-input" placeholder="https://.../archive.zip" />
+          <button class="btn-std primary" onclick="runZipPreview()">📦 Đọc ZIP</button>
+        </div>
+        <div id="zipPreviewStatus" style="font-size:11.5px; color:var(--text-muted); margin-bottom:6px;">Hỗ trợ xem mục lục bên trong archive mà không cần tải hết.</div>
+        <div id="zipPreviewList" style="max-height:260px; overflow:auto; border:1px solid var(--border-main); border-radius:4px; padding:6px; font-family:monospace; font-size:11.5px;"></div>
+      </div>
+      <div class="dialog-footer">
+        <span></span>
+        <button class="btn-std" onclick="closeModal('zipPreviewModalBackdrop')">Đóng</button>
       </div>
     </div>
   </div>
@@ -1962,14 +2040,20 @@
         else if (chk && chk.status === 'verifying') chkText = `⏳ Hash...`;
         else if (chk && chk.status === 'mismatch') chkText = `⚠ Lệch Hash`;
 
-        const lastTry = new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        const lastTry = job.lastTryTime
+          ? new Date(job.lastTryTime).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+          : '--';
+        const safeId = escapeHtml(job.id);
+        const safeStatusLabel = escapeHtml(statusVi[job.status] || job.status);
+        const safeChkText = escapeHtml(chkText);
+        const progWidth = Math.max(0, Math.min(100, Number(job.progress || 0)));
 
         return `
-          <tr class="${isSel}" onclick="selectRow('${job.id}', event)" ondblclick="onRowDoubleClick('${job.id}')" title="Giữ Ctrl/Shift hoặc tích ô vuông để chọn nhiều tệp • Nhấn đúp để mở tiến trình">
-            <td style="text-align:center;" onclick="event.stopPropagation()"><input type="checkbox" ${isChecked ? 'checked' : ''} onchange="toggleRowCheckbox('${job.id}', this.checked)" /></td>
+          <tr class="${isSel}" onclick="selectRow('${safeId}', event)" ondblclick="onRowDoubleClick('${safeId}')" title="Giữ Ctrl/Shift hoặc tích ô vuông để chọn nhiều tệp • Nhấn đúp để mở tiến trình">
+            <td style="text-align:center;" onclick="event.stopPropagation()"><input type="checkbox" ${isChecked ? 'checked' : ''} onchange="toggleRowCheckbox('${safeId}', this.checked)" /></td>
             <td>
               <div class="file-cell">
-                <span class="ext-icon ${ico.cls}">${ico.text}</span>
+                <span class="ext-icon ${escapeHtml(ico.cls)}">${escapeHtml(ico.text)}</span>
                 <span class="file-name-text">${escapeHtml(job.fileName)}</span>
               </div>
             </td>
@@ -1978,8 +2062,8 @@
             <td>
               <div class="cell-prog-wrap">
                 <div class="cell-prog-bar">
-                  <div class="cell-prog-fill ${fillCls}" style="width:${Math.min(100, job.progress || 0)}%"></div>
-                  <div class="cell-prog-label">${statusVi[job.status] || job.status} (${prog}%)</div>
+                  <div class="cell-prog-fill ${fillCls}" style="width:${progWidth}%"></div>
+                  <div class="cell-prog-label">${safeStatusLabel} (${prog}%)</div>
                 </div>
               </div>
             </td>
@@ -1989,13 +2073,13 @@
             <td style="color:var(--text-muted);">${lastTry}</td>
             <td onclick="event.stopPropagation()">
               <div class="row-mini-actions">
-                ${chkText ? `<span style="font-size:10.5px; color:var(--green); font-weight:700; margin-right:3px;">${chkText}</span>` : ''}
-                <button class="mini-btn" onclick="openProgressDialog('${job.id}')" title="Mở Hộp thoại Tiến trình IDM">📊</button>
+                ${safeChkText ? `<span style="font-size:10.5px; color:var(--green); font-weight:700; margin-right:3px;">${safeChkText}</span>` : ''}
+                <button class="mini-btn" onclick="openProgressDialog('${safeId}')" title="Mở Hộp thoại Tiến trình IDM">📊</button>
                 ${job.status === 'downloading'
-                  ? `<button class="mini-btn" onclick="jobAction('${job.id}', 'pause')" title="Tạm dừng">⏸</button>`
-                  : (job.status !== 'completed' ? `<button class="mini-btn" onclick="jobAction('${job.id}', 'resume')" title="Tiếp tục">▶</button>` : `<button class="mini-btn" onclick="jobAction('${job.id}', 'open-file')" title="Mở tệp">🚀</button>`)}
-                <button class="mini-btn" onclick="restartSingleJob('${job.id}')" title="Tải lại từ đầu (0 bytes)">🔄</button>
-                <button class="mini-btn" onclick="jobAction('${job.id}', 'open-folder')" title="Mở thư mục">📂</button>
+                  ? `<button class="mini-btn" onclick="jobAction('${safeId}', 'pause')" title="Tạm dừng">⏸</button>`
+                  : (job.status !== 'completed' ? `<button class="mini-btn" onclick="jobAction('${safeId}', 'resume')" title="Tiếp tục">▶</button>` : `<button class="mini-btn" onclick="jobAction('${safeId}', 'open-file')" title="Mở tệp">🚀</button>`)}
+                <button class="mini-btn" onclick="restartSingleJob('${safeId}')" title="Tải lại từ đầu (0 bytes)">🔄</button>
+                <button class="mini-btn" onclick="jobAction('${safeId}', 'open-folder')" title="Mở thư mục">📂</button>
               </div>
             </td>
           </tr>
@@ -2047,11 +2131,23 @@
         if (modalDir && !modalDir.value) modalDir.value = defaultSaveDir;
       }
 
+      const prevStatusById = new Map(currentJobs.map(j => [j.id, j.status]));
       const incoming = (data.jobs || []).slice().reverse();
 
       // Auto-popup IDM Progress Dialog when a brand new active download starts
       if (initialSnapshotLoaded) {
         for (const j of incoming) {
+          const prevSt = prevStatusById.get(j.id);
+          if (prevSt && prevSt !== 'completed' && j.status === 'completed') {
+            const chkOpen = document.getElementById('chkAutoOpenFolder');
+            const chkKeep = document.getElementById('chkAutoCloseDialog');
+            if (chkOpen && chkOpen.checked) {
+              jobAction(j.id, 'open-folder');
+            }
+            if (chkKeep && !chkKeep.checked && activeDialogJobId === j.id) {
+              closeProgressDialog();
+            }
+          }
           if (!knownJobIds.has(j.id) && (j.status === 'downloading' || j.status === 'resolving' || j.status === 'probing')) {
             knownJobIds.add(j.id);
             selectedJobId = j.id;
@@ -2142,7 +2238,7 @@
       };
 
       const pct = Number(job.progress || 0).toFixed(2);
-      document.getElementById('dlgWindowTitle').textContent = `${pct}% — ${job.fileName} — Duytai 64-Bit`;
+      document.getElementById('dlgWindowTitle').textContent = `${pct}% — ${job.fileName} — Duytai 64-Bit v7.5`;
       document.getElementById('dlgUrl').textContent = job.finalUrl || job.url;
       document.getElementById('dlgFileName').textContent = `${job.fileName} (${job.saveDir || defaultSaveDir})`;
       document.getElementById('dlgStatus').textContent = statusMap[job.status] || job.status;
@@ -2159,33 +2255,38 @@
         ? `Có — ${segs.length || job.maxConnections || 64} Luồng Sparse In-Place (0ms Rebuild)`
         : 'Luồng đơn (Server không hỗ trợ Range)';
 
-      document.getElementById('dlgProgFill').style.width = `${Math.min(100, job.progress || 0)}%`;
+      document.getElementById('dlgProgFill').style.width = `${Math.max(0, Math.min(100, Number(job.progress || 0)))}%`;
       document.getElementById('dlgProgText').textContent = `${pct}%`;
 
       document.getElementById('dlgSegHeader').textContent = `Sơ đồ ${segs.length} phân đoạn (In-Place Sparse Offset Map)`;
       document.getElementById('dlgStealStat').textContent = `Work-Stealing: ${job.stealCount || 0} lần • Tái sinh socket: ${job.recycleCount || 0}`;
 
       const strip = document.getElementById('dlgSegStrip');
-      strip.innerHTML = segs.slice(0, 64).map(s => `
-        <div class="seg-block ${s.status === 'completed' ? 'done' : ''}" title="Luồng #${s.id}: ${s.progress}%">
-          <div class="seg-block-fill" style="width:${s.progress || 0}%"></div>
-        </div>
-      `).join('');
+      strip.innerHTML = segs.slice(0, 64).map(s => {
+        const sid = Number(s.id || 0);
+        const sProg = Math.max(0, Math.min(100, Number(s.progress || 0)));
+        return `
+        <div class="seg-block ${s.status === 'completed' ? 'done' : ''}" title="Luồng #${sid}: ${sProg}%">
+          <div class="seg-block-fill" style="width:${sProg}%"></div>
+        </div>`;
+      }).join('');
 
       const connBody = document.getElementById('dlgConnTableBody');
       connBody.innerHTML = segs.map(s => {
+        const sid = Number(s.id || 0);
+        const sProg = Math.max(0, Math.min(100, Number(s.progress || 0)));
         const downloadedSeg = Math.max(0, (s.current || 0) - (s.start || 0));
         let stText = 'Đang chờ cấp phát';
         if (s.status === 'downloading') {
-          stText = `Đang nhận dữ liệu... (${s.ip ? 'CDN ' + s.ip : 'HTTP 206 Stream'})`;
+          stText = `Đang nhận dữ liệu... (${s.ip ? 'CDN ' + escapeHtml(s.ip) : 'HTTP 206 Stream'})`;
         } else if (s.status === 'completed') {
           stText = '✔ Hoàn tất phân đoạn';
         }
         return `
           <tr>
-            <td><b>#${s.id}</b></td>
+            <td><b>#${sid}</b></td>
             <td>${formatBytes(downloadedSeg)}</td>
-            <td><b>${s.progress || 0}%</b></td>
+            <td><b>${sProg}%</b></td>
             <td style="color:${s.status === 'completed' ? 'var(--green)' : (s.status === 'downloading' ? 'var(--accent)' : 'var(--text-muted)')};">${stText}</td>
           </tr>
         `;
@@ -2244,10 +2345,24 @@
       await promptRefreshUrl(activeDialogJobId);
     }
 
+    function getApiToken() {
+      const m = document.querySelector('meta[name="duytai-token"]');
+      return m ? (m.getAttribute('content') || '').trim() : '';
+    }
+
+    function apiFetch(url, options = {}) {
+      const headers = new Headers(options.headers || {});
+      const token = getApiToken();
+      if (token && !headers.has('X-Duytai-Token')) {
+        headers.set('X-Duytai-Token', token);
+      }
+      return fetch(url, { ...options, headers });
+    }
+
     async function applyPerJobSpeedLimit() {
       if (!activeDialogJobId) return;
       const kb = parseInt(document.getElementById('dlgJobLimitInput').value || '0', 10);
-      await fetch('/api/limit', {
+      await apiFetch('/api/limit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ jobId: activeDialogJobId, bps: kb > 0 ? kb * 1024 : 0 })
@@ -2329,20 +2444,22 @@
     }
 
     async function createJob(payload) {
-      const res = await fetch('/api/jobs', {
+      const res = await apiFetch('/api/jobs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
       const data = await res.json().catch(() => null);
-      if (data && data.id) {
+      if (res.ok && data && data.id) {
         selectedJobId = data.id;
         openProgressDialog(data.id);
+      } else if (!res.ok) {
+        alert((data && data.error) || 'Không thể tạo tác vụ tải xuống');
       }
     }
 
     async function jobAction(id, action) {
-      const res = await fetch(`/api/jobs/${id}/${action}`, { method: 'POST' });
+      const res = await apiFetch(`/api/jobs/${encodeURIComponent(id)}/${action}`, { method: 'POST' });
       if (!res.ok) {
         try {
           const data = await res.json();
@@ -2352,7 +2469,7 @@
     }
 
     async function deleteJob(id, deleteFile = false) {
-      await fetch(`/api/jobs/${id}?deleteFile=${deleteFile}`, { method: 'DELETE' });
+      await apiFetch(`/api/jobs/${encodeURIComponent(id)}?deleteFile=${deleteFile}`, { method: 'DELETE' });
       if (selectedJobId === id) selectedJobId = null;
       selectedJobIds.delete(id);
       if (activeDialogJobId === id) closeProgressDialog();
@@ -2366,7 +2483,7 @@
           : `Xóa ${ids.length} mục đã chọn khỏi danh sách Duytai?`;
         if (!confirm(msg)) return;
       }
-      await fetch('/api/jobs/batch-delete', {
+      await apiFetch('/api/jobs/batch-delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ids, deleteFile })
@@ -2414,7 +2531,7 @@
     async function promptRefreshUrl(id) {
       const newUrl = prompt('Nhập địa chỉ URL mới (đã làm mới token CDN) để tiếp tục tải từ tiến độ hiện tại:');
       if (!newUrl || !newUrl.trim()) return;
-      const res = await fetch(`/api/jobs/${id}/refresh-url`, {
+      const res = await apiFetch(`/api/jobs/${encodeURIComponent(id)}/refresh-url`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: newUrl.trim() })
@@ -2468,7 +2585,7 @@
       const seq = ++modalProbeSeq;
       const hintEl = document.getElementById('modalProbeHint');
       try {
-        const res = await fetch('/api/probe', {
+        const res = await apiFetch('/api/probe', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ url })
@@ -2497,14 +2614,17 @@
       }
     }
 
-    async function openAddUrlModal() {
-      modalFileEdited = false;
+    async function openAddUrlModal(prefillUrl = '', prefillFile = '') {
+      modalFileEdited = Boolean(prefillFile);
       const hintEl = document.getElementById('modalProbeHint');
       if (hintEl) hintEl.textContent = '';
       populateQualitySelect(document.getElementById('modalVideoQualitySelect'), null, false);
-      document.getElementById('addUrlModalBackdrop').classList.add('open');
       const urlField = document.getElementById('modalUrlInput');
-      if (autoCaptureEnabled && navigator.clipboard && navigator.clipboard.readText) {
+      const fileField = document.getElementById('modalFileNameInput');
+      if (prefillUrl) urlField.value = prefillUrl;
+      if (prefillFile) fileField.value = prefillFile;
+      document.getElementById('addUrlModalBackdrop').classList.add('open');
+      if (!urlField.value && autoCaptureEnabled && navigator.clipboard && navigator.clipboard.readText) {
         try {
           const clip = (await navigator.clipboard.readText()).trim();
           if (/^https?:\/\//i.test(clip) && !urlField.value) {
@@ -2543,6 +2663,8 @@
       modalProbeSeq++;
       document.getElementById('modalUrlInput').value = '';
       document.getElementById('modalFileNameInput').value = '';
+      document.getElementById('modalCookieInput').value = '';
+      document.getElementById('modalHashInput').value = '';
       const hintEl = document.getElementById('modalProbeHint');
       if (hintEl) hintEl.textContent = '';
       closeModal('addUrlModalBackdrop');
@@ -2557,7 +2679,7 @@
       const text = document.getElementById('batchUrlsInput').value.trim();
       if (!text) return;
       const maxConnections = parseInt(document.getElementById('batchConnSelect').value, 10) || 64;
-      await fetch('/api/batch', {
+      await apiFetch('/api/batch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text, maxConnections, saveDir: defaultSaveDir })
@@ -2576,7 +2698,7 @@
       document.getElementById('modalConnSelect').value = defConns;
 
       const limitKB = parseInt(document.getElementById('optGlobalLimitKB').value || '0', 10);
-      await fetch('/api/limit', {
+      await apiFetch('/api/limit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ bps: limitKB > 0 ? limitKB * 1024 : 0 })
@@ -2586,6 +2708,94 @@
 
     function openCompareModal() {
       document.getElementById('compareModalBackdrop').classList.add('open');
+    }
+
+    function openGrabberModal(prefillUrl = '') {
+      if (prefillUrl) document.getElementById('grabberUrlInput').value = prefillUrl;
+      document.getElementById('grabberModalBackdrop').classList.add('open');
+      if (prefillUrl) runSiteGrabber();
+    }
+
+    async function runSiteGrabber() {
+      const pageUrl = document.getElementById('grabberUrlInput').value.trim();
+      const cat = document.getElementById('grabberFilterSelect').value;
+      const st = document.getElementById('grabberStatus');
+      const box = document.getElementById('grabberResults');
+      if (!/^https?:\/\//i.test(pageUrl)) {
+        st.textContent = 'Vui lòng nhập URL hợp lệ (http:// hoặc https://).';
+        return;
+      }
+      st.textContent = '⏳ Đang quét liên kết trên trang...';
+      box.innerHTML = '';
+      try {
+        const res = await apiFetch('/api/grabber', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: pageUrl, categories: cat ? [cat] : [] })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Quét thất bại');
+        const links = data.links || [];
+        st.textContent = `✅ Tìm thấy ${links.length} liên kết khả tải.`;
+        box.innerHTML = links.slice(0, 150).map(item => `
+          <label style="display:flex;align-items:center;gap:6px;padding:3px 2px;font-size:11.5px;border-bottom:1px solid var(--border-soft);">
+            <input type="checkbox" class="grabber-chk" value="${escapeHtml(item.url)}" checked style="width:auto;" />
+            <span class="cat-tag">${escapeHtml(item.category || '')}</span>
+            <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(item.fileName || item.url)}</span>
+          </label>
+        `).join('') || '<div style="padding:10px;color:var(--text-muted);">Không tìm thấy liên kết phù hợp.</div>';
+      } catch (err) {
+        st.textContent = '❌ ' + (err.message || 'Lỗi Site Grabber');
+      }
+    }
+
+    function toggleGrabberSelectAll(checked) {
+      document.querySelectorAll('#grabberResults .grabber-chk').forEach(el => { el.checked = checked; });
+    }
+
+    async function queueGrabbedLinks() {
+      const urls = Array.from(document.querySelectorAll('#grabberResults .grabber-chk:checked')).map(el => el.value).filter(Boolean);
+      if (urls.length === 0) return;
+      await apiFetch('/api/batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: urls.join('\n'), maxConnections: 64, saveDir: defaultSaveDir })
+      });
+      closeModal('grabberModalBackdrop');
+    }
+
+    function openZipPreviewModal(prefillUrl = '') {
+      if (prefillUrl) document.getElementById('zipPreviewUrlInput').value = prefillUrl;
+      document.getElementById('zipPreviewModalBackdrop').classList.add('open');
+      if (prefillUrl) runZipPreview();
+    }
+
+    async function runZipPreview() {
+      const url = document.getElementById('zipPreviewUrlInput').value.trim();
+      const st = document.getElementById('zipPreviewStatus');
+      const box = document.getElementById('zipPreviewList');
+      if (!/^https?:\/\//i.test(url)) {
+        st.textContent = 'Nhập URL tệp .zip hợp lệ.';
+        return;
+      }
+      st.textContent = '⏳ Đang đọc mục lục ZIP qua HTTP 206 Range...';
+      box.innerHTML = '';
+      try {
+        const res = await apiFetch('/api/zip-preview', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Không đọc được ZIP');
+        const entries = data.entries || [];
+        st.textContent = `✅ ${data.totalEntries || entries.length} mục (${formatBytes(data.totalUncompressed || 0)})`;
+        box.innerHTML = entries.slice(0, 200).map(e =>
+          `<div style="padding:2px 0;border-bottom:1px solid var(--border-soft);display:flex;justify-content:space-between;gap:8px;"><span>${escapeHtml(e.name)}</span><span style="color:var(--text-muted);">${formatBytes(e.uncompressedSize || 0)}</span></div>`
+        ).join('');
+      } catch (err) {
+        st.textContent = '❌ ' + (err.message || 'Lỗi đọc ZIP');
+      }
     }
 
     // Keyboard shortcuts (Ctrl+N, Ctrl+A, Delete, Escape)
@@ -2603,7 +2813,7 @@
         batchDeleteJobs(getTargetJobIds(), e.shiftKey);
       } else if (e.key === 'Escape') {
         closeProgressDialog();
-        ['addUrlModalBackdrop', 'batchModalBackdrop', 'optionsModalBackdrop', 'compareModalBackdrop'].forEach(closeModal);
+        ['addUrlModalBackdrop', 'batchModalBackdrop', 'optionsModalBackdrop', 'compareModalBackdrop', 'grabberModalBackdrop', 'zipPreviewModalBackdrop'].forEach(closeModal);
       }
     });
 
@@ -2613,22 +2823,44 @@
       }[m]));
     }
 
+    let sseRetryMs = 1500;
     function connectSSE() {
-      const es = new EventSource('/api/events');
+      const token = getApiToken();
+      const url = token ? `/api/events?token=${encodeURIComponent(token)}` : '/api/events';
+      const es = new EventSource(url);
+      es.onopen = () => {
+        sseRetryMs = 1500;
+        const sb = document.getElementById('sbTrayInfo');
+        if (sb && autoCaptureEnabled) sb.textContent = '🟢 Hệ thống bắt link ngầm: Đang hoạt động';
+      };
       es.onmessage = (ev) => {
         try {
           const data = JSON.parse(ev.data);
           if (data.type === 'snapshot') renderSnapshot(data);
+          else if (data.type === 'intercept' && data.item && data.item.url && autoCaptureEnabled) {
+            if (!document.querySelector('.modal-backdrop.open')) {
+              openAddUrlModal(data.item.url, data.item.fileName || '');
+            }
+          }
         } catch {}
       };
       es.onerror = () => {
         es.close();
-        setTimeout(connectSSE, 1500);
+        const sb = document.getElementById('sbTrayInfo');
+        if (sb) sb.textContent = `🔴 Mất kết nối Engine — thử lại sau ${(sseRetryMs / 1000).toFixed(1)}s...`;
+        setTimeout(connectSSE, sseRetryMs);
+        sseRetryMs = Math.min(15000, Math.round(sseRetryMs * 1.6));
       };
     }
 
     renderCategoryTree();
     connectSSE();
+
+    const urlParams = new URLSearchParams(location.search);
+    const grabParam = urlParams.get('grab');
+    if (grabParam && /^https?:\/\//i.test(grabParam)) {
+      openGrabberModal(grabParam);
+    }
   </script>
 </body>
 </html>

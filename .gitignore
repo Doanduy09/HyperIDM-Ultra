@@ -9,10 +9,18 @@ jobs-history.json
 
 bin/yt-dlp.exe
 android/.gradle/
+android/.kotlin/
 android/build/
 android/app/build/
+android/app/duytai-release.jks
 android/local.properties
 dist/
 *.apk
 *.dmg
+*.log
+*.pfx
+auth.token
+settings.json
+scheduler.json
+history.json
 

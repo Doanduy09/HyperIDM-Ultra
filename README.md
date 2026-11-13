@@ -2,34 +2,35 @@
   <img src="assets/duytai-logo-256.png" width="128" height="128" alt="Duytai Downloader Logo" />
 </p>
 
-<h1 align="center">Duytai Downloader (v7.4)</h1>
+<h1 align="center">Duytai Downloader (v7.5)</h1>
 
 <p align="center">
-  <b>Động cơ tăng tốc tải xuống đa nền tảng — Kiến trúc Hybrid Native dùng chung 1 cốt lõi cho Windows, macOS & Android</b>
+  <b>Động cơ tăng tốc tải xuống đa nền tảng — Kiến trúc Hybrid Native có Chữ Ký Số (Code Signing) cho Windows, macOS & Android</b>
 </p>
 
 ---
 
 ## ⚙️ Cấu Hình Hệ Thống & Thông Số Kỹ Thuật Theo Từng Nền Tảng
 
-Mọi phiên bản được biên dịch native riêng cho từng hệ điều hành, sử dụng chung hệ thuật toán lõi **Duytai Engine v7.4**:
+Mọi phiên bản được biên dịch native và ký số xác thực riêng cho từng hệ điều hành, sử dụng chung hệ thuật toán lõi **Duytai Engine v7.5**:
 
 | Thông Số Cấu Hình | **Windows (Desktop 64-Bit)** | **macOS (Universal App)** | **Android (Mobile Native)** |
 | :--- | :--- | :--- | :--- |
 | **Tệp Thực Thi / Bộ Cài** | `Duytai.exe` (`PE32+ x86_64`) / `Duytai-Setup.exe` | `Duytai.app` -> `Duytai-macOS-Universal.dmg` | `Duytai-Android.apk` (`com.doanduy.duytai`) |
+| **Chữ Ký Số & Bảo Mật OS** | Authenticode RSA-2048 SHA-256 (`DOANDUY Software`) + `asInvoker` Manifest + Gỡ `Zone.Identifier` | Hardened Runtime `codesign` + `entitlements.plist` + Gỡ `com.apple.quarantine` | APK Signature Scheme **v1 + v2 + v3 + v4** (RSA-2048) + R8 Minify |
 | **Ngôn Ngữ & UI Host** | C# WinForms + Edge WebView2 (`HyperIDM.cs`) | Swift Cocoa AppKit + `WKWebView` (`DuytaiMac.swift`) | Kotlin Native UI + Foreground Service (`dataSync`) |
 | **Kiến Trúc CPU** | x64 (64-bit Native) | Universal Binary (`arm64` Apple Silicon M1–M4 + `x86_64` Intel) | `arm64-v8a` / `armeabi-v7a` / `x86_64` |
 | **Hệ Điều Hành Tối Thiểu** | Windows 10 / 11 (64-bit) | macOS 11.0 Big Sur trở lên | Android 8.0 (`API 26`) – Android 15 (`API 35`) |
 | **Động Cơ Tải Đa Luồng** | Node.js Core (`engine.js`) — **64 / 128 luồng** song song | Node.js Core (`engine.js`) — **64 / 128 luồng** song song | Kotlin Coroutines + `FileChannel` — **32 / 64 / 128 luồng** |
-| **Cơ Chế Ghi Đĩa** | Sparse In-Place + Zero-Copy `writev` | Preallocated In-Place + Zero-Copy `writev` | `RandomAccessFile.setLength()` + Seekable `FileChannel` |
+| **Cơ Chế Ghi Đĩa** | Sparse In-Place + Zero-Copy `writev` (`committed` offset) | Preallocated In-Place + Zero-Copy `writev` (`committed` offset) | `RandomAccessFile.setLength()` + Seekable `FileChannel` |
 | **Bộ Đệm Coalescing** | Tự động điều chỉnh **256 KB → 2 MB** theo BDP | Tự động điều chỉnh **256 KB → 2 MB** theo BDP | Direct `ByteBuffer` `128 KB` + giới hạn `Semaphore(3)` |
 | **Lưu Trữ & Phân Loại** | `%USERPROFILE%\Downloads\Duytai\<Category>` | `~/Downloads/Duytai/<Category>` | `MediaStore.Downloads` (`Download/Duytai/<Category>`) |
-| **Cổng Điều Khiển Local** | `127.0.0.1:17890` (CORS Whitelist Origin) | `127.0.0.1:17890` (CORS Whitelist Origin) | Nội bộ qua Android Service Binder |
+| **Cổng Điều Khiển Local** | `127.0.0.1:17890` (`X-Duytai-Token` + Host/Origin Guard) | `127.0.0.1:17890` (`X-Duytai-Token` + Host/Origin Guard) | Nội bộ qua Android Service Binder |
 | **Giới Hạn RAM Engine** | `--max-old-space-size=384` MB + Win32 JobObject | `--max-old-space-size=384` MB + Signal Trap | Heap Android ART tự quản + Partial WakeLock |
 
 ---
 
-## 🧠 Kiến Trúc Động Cơ Cốt Lõi (Duytai Core v7.4)
+## 🧠 Kiến Trúc Động Cơ Cốt Lõi (Duytai Core v7.5)
 
 1. **Wave-0 Parallel Segment & Dynamic Work-Stealing**:
    - Chia tệp thành tối đa **64 hoặc 128 phân đoạn** ngay sau bước `HEAD` / `Range: bytes=0-0`.

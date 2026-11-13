@@ -86,12 +86,19 @@ class WebSnifferActivity : Activity() {
     }
 
     private fun returnCapturedUrl(url: String) {
-        val data = Intent().putExtra(RESULT_URL, url)
+        val cookie = runCatching { CookieManager.getInstance().getCookie(url) }.getOrNull()
+        val ua = runCatching { webView.settings.userAgentString }.getOrNull()
+        val data = Intent()
+            .putExtra(RESULT_URL, url)
+            .putExtra(RESULT_COOKIE, cookie ?: "")
+            .putExtra(RESULT_USER_AGENT, ua ?: "")
         setResult(RESULT_OK, data)
         finish()
     }
 
     companion object {
         const val RESULT_URL = "captured_url"
+        const val RESULT_COOKIE = "captured_cookie"
+        const val RESULT_USER_AGENT = "captured_user_agent"
     }
 }

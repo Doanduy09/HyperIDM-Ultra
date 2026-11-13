@@ -61,12 +61,16 @@ class MainActivity : Activity() {
         handleIncomingIntent(intent)
 
         val svcIntent = Intent(this, DownloadForegroundService::class.java)
+        bindService(svcIntent, serviceConn, Context.BIND_AUTO_CREATE)
+    }
+
+    private fun ensureForegroundServiceStarted() {
+        val svcIntent = Intent(this, DownloadForegroundService::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(svcIntent)
         } else {
             startService(svcIntent)
         }
-        bindService(svcIntent, serviceConn, Context.BIND_AUTO_CREATE)
     }
 
     override fun onNewIntent(intent: Intent?) {
@@ -100,6 +104,7 @@ class MainActivity : Activity() {
 
         if (!extracted.isNullOrBlank() && extracted.startsWith("http", ignoreCase = true)) {
             urlInput.setText(extracted)
+            ensureForegroundServiceStarted()
             val eng = engineRef
             if (eng != null) {
                 eng.enqueue(extracted, selectedThreads(), startImmediately = true)
@@ -163,12 +168,14 @@ class MainActivity : Activity() {
             setOnClickListener {
                 val u = urlInput.text.toString().trim()
                 if (u.startsWith("http", ignoreCase = true)) {
+                    ensureForegroundServiceStarted()
                     engineRef?.enqueue(u, selectedThreads(), startImmediately = true)
                     urlInput.text.clear()
                 } else {
                     val clip = getClipboardUrl()
                     if (clip != null) {
                         urlInput.setText(clip)
+                        ensureForegroundServiceStarted()
                         engineRef?.enqueue(clip, selectedThreads(), startImmediately = true)
                     } else {
                         Toast.makeText(this@MainActivity, "Nhập URL hợp lệ (http/https)", Toast.LENGTH_SHORT).show()
@@ -239,7 +246,11 @@ class MainActivity : Activity() {
         if (requestCode == REQ_SNIFF && resultCode == RESULT_OK) {
             val captured = data?.getStringExtra(WebSnifferActivity.RESULT_URL)
             if (!captured.isNullOrBlank()) {
-                engineRef?.enqueue(captured, selectedThreads(), startImmediately = true)
+                val hdrs = mutableMapOf<String, String>()
+                data.getStringExtra(WebSnifferActivity.RESULT_COOKIE)?.takeIf { it.isNotBlank() }?.let { hdrs["Cookie"] = it }
+                data.getStringExtra(WebSnifferActivity.RESULT_USER_AGENT)?.takeIf { it.isNotBlank() }?.let { hdrs["User-Agent"] = it }
+                ensureForegroundServiceStarted()
+                engineRef?.enqueue(captured, selectedThreads(), headers = hdrs, startImmediately = true)
             }
         }
     }
@@ -390,10 +401,19 @@ class MainActivity : Activity() {
     }
 
     private fun requestNotificationPermissionIfNeeded() {
+        val perms = mutableListOf<String>()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-                requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1001)
+                perms.add(Manifest.permission.POST_NOTIFICATIONS)
             }
+        }
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
+            if (checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+                perms.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+            }
+        }
+        if (perms.isNotEmpty()) {
+            requestPermissions(perms.toTypedArray(), 1001)
         }
     }
 

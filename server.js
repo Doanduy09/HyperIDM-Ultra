@@ -10,10 +10,22 @@ const idmFeatures = require('./idm-features');
 
 const PORT = parseInt(process.env.HYPER_IDM_PORT || '17890', 10);
 const PUBLIC_DIR = path.join(__dirname, 'public');
-const HISTORY_FILE = process.env.HYPER_IDM_HISTORY_FILE || path.join(__dirname, 'jobs-history.json');
 const USER_HOME = process.env.USERPROFILE || process.env.HOME || os.homedir();
 const DEFAULT_SAVE_DIR = path.join(USER_HOME, 'Downloads', 'Duytai');
 const LEGACY_SAVE_DIR = path.join(USER_HOME, 'Downloads', 'HyperIDM');
+const DATA_DIR = process.env.DUYTAI_DATA_DIR || (
+  process.platform === 'win32'
+    ? path.join(process.env.LOCALAPPDATA || __dirname, 'Duytai')
+    : process.platform === 'darwin'
+      ? path.join(USER_HOME, 'Library', 'Application Support', 'Duytai')
+      : path.join(USER_HOME, '.config', 'duytai')
+);
+const HISTORY_FILE = process.env.HYPER_IDM_HISTORY_FILE || path.join(DATA_DIR, 'jobs-history.json');
+const LEGACY_HISTORY_FILE = path.join(__dirname, 'jobs-history.json');
+const TOKEN_FILE = process.env.DUYTAI_TOKEN_FILE || path.join(DATA_DIR, 'auth.token');
+const ERROR_LOG_FILE = path.join(DATA_DIR, 'server-error.log');
+const AUTH_TOKEN = (process.env.DUYTAI_API_TOKEN && process.env.DUYTAI_API_TOKEN.trim()) || crypto.randomBytes(32).toString('hex');
+const TRUSTED_CHROME_EXT_ORIGIN = 'chrome-extension://knpgakkbngbpcijjehpjflnflccdlaon';
 
 const jobs = new Map();
 const sseClients = new Set();
@@ -22,20 +34,51 @@ const speedLimiter = new idmFeatures.SpeedLimiter(() => jobs.values());
 
 const BENCHMARK_CHUNK = Buffer.alloc(1024 * 1024, 0x48);
 
+function sanitizeJobId(rawId) {
+  const s = String(rawId || '').trim();
+  return /^[a-zA-Z0-9_-]{1,80}$/.test(s) ? s : crypto.randomUUID();
+}
+
+function validateSaveDir(rawDir, fallbackDir) {
+  if (!rawDir || typeof rawDir !== 'string' || rawDir.includes('\0')) return fallbackDir;
+  const resolved = path.resolve(rawDir.trim());
+  const lower = resolved.toLowerCase();
+  const forbiddenPrefixes = process.platform === 'win32'
+    ? ['c:\\windows', 'c:\\program files', 'c:\\program files (x86)']
+    : ['/system', '/etc', '/usr', '/bin', '/sbin', '/private/etc'];
+  for (const p of forbiddenPrefixes) {
+    if (lower === p || lower.startsWith(p + path.sep)) {
+      throw new Error('Thư mục lưu không được trỏ vào thư mục hệ thống');
+    }
+  }
+  return resolved;
+}
+
+function sanitizeOptionalFileName(rawName) {
+  if (!rawName || typeof rawName !== 'string') return '';
+  const clean = path.basename(rawName.replace(/\0/g, '').trim()).replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').trim();
+  if (!clean || clean === '.' || clean === '..') return '';
+  return clean;
+}
+
 function createAndRegisterJob(opts, startImmediately = true) {
+  const fileName = sanitizeOptionalFileName(opts.fileName || '');
   const autoCategory = opts.autoCategory !== false && !opts.saveDir;
-  const saveDir = opts.saveDir || (autoCategory
-    ? idmFeatures.categorizeSaveDir(DEFAULT_SAVE_DIR, opts.url, opts.fileName || '')
-    : DEFAULT_SAVE_DIR);
+  const saveDir = opts.saveDir
+    ? validateSaveDir(opts.saveDir, DEFAULT_SAVE_DIR)
+    : (autoCategory
+      ? idmFeatures.categorizeSaveDir(DEFAULT_SAVE_DIR, opts.url, fileName)
+      : DEFAULT_SAVE_DIR);
 
   const job = new DownloadJob({
-    id: opts.id,
+    id: sanitizeJobId(opts.id),
     url: opts.url.trim(),
     saveDir,
-    fileName: opts.fileName || '',
+    fileName,
     maxConnections: opts.maxConnections || 64,
     headers: opts.headers || {},
-    videoQuality: opts.videoQuality || 'best'
+    videoQuality: opts.videoQuality || 'best',
+    allowInsecureTls: Boolean(opts.allowInsecureTls)
   });
 
   attachJobEvents(job);
@@ -71,8 +114,12 @@ const schedulerConfig = {
 async function loadHistory() {
   try {
     await fsp.mkdir(DEFAULT_SAVE_DIR, { recursive: true });
-    if (fs.existsSync(HISTORY_FILE)) {
-      const raw = await fsp.readFile(HISTORY_FILE, 'utf8');
+    await fsp.mkdir(DATA_DIR, { recursive: true });
+    const historySource = fs.existsSync(HISTORY_FILE)
+      ? HISTORY_FILE
+      : (fs.existsSync(LEGACY_HISTORY_FILE) ? LEGACY_HISTORY_FILE : '');
+    if (historySource) {
+      const raw = await fsp.readFile(historySource, 'utf8');
       const list = JSON.parse(raw);
       if (Array.isArray(list)) {
         for (const item of list) {
@@ -82,15 +129,17 @@ async function loadHistory() {
             && (item.status === 'error' || !item.filePath || !fs.existsSync(item.filePath));
           if (isGhostLocal) continue;
           const job = new DownloadJob({
-            id: item.id,
+            id: sanitizeJobId(item.id),
             url: item.url,
             saveDir: item.saveDir || DEFAULT_SAVE_DIR,
-            fileName: item.fileName,
+            fileName: sanitizeOptionalFileName(item.fileName),
             maxConnections: item.maxConnections || 64,
             headers: item.headers || {},
             videoQuality: item.videoQuality || 'best'
           });
           job.finalUrl = item.finalUrl || item.url;
+          job.resolverType = item.resolverType || (job._isYouTubeOrMediaUrl(job.url || '') ? 'youtube' : (job._isIpswMeUrl(job.url || '') ? 'ipsw' : 'direct'));
+          job.expectedSha1 = item.expectedSha1 || '';
           job.filePath = item.filePath || path.join(job.saveDir, item.fileName || '');
           job.stateFilePath = `${job.filePath}.hyper.json`;
           job.isLocalOnly = /^file:\/\//i.test(job.url || '');
@@ -339,14 +388,25 @@ function attachJobEvents(job) {
 
 function readJsonBody(req) {
   return new Promise((resolve, reject) => {
-    let body = '';
-    req.on('data', chunk => {
-      body += chunk.toString();
-      if (body.length > 2 * 1024 * 1024) {
-        reject(new Error('Payload too large'));
+    const chunks = [];
+    let totalLen = 0;
+    let settled = false;
+    const onData = (chunk) => {
+      if (settled) return;
+      totalLen += chunk.length;
+      if (totalLen > 2 * 1024 * 1024) {
+        settled = true;
+        req.removeListener('data', onData);
+        try { req.destroy(); } catch {}
+        return reject(new Error('Payload too large'));
       }
-    });
+      chunks.push(chunk);
+    };
+    req.on('data', onData);
     req.on('end', () => {
+      if (settled) return;
+      settled = true;
+      const body = Buffer.concat(chunks).toString('utf8');
       if (!body) return resolve({});
       try {
         resolve(JSON.parse(body));
@@ -354,45 +414,78 @@ function readJsonBody(req) {
         reject(e);
       }
     });
-    req.on('error', reject);
+    req.on('error', (err) => {
+      if (settled) return;
+      settled = true;
+      reject(err);
+    });
   });
+}
+
+function isTrustedHostHeader(hostHdr) {
+  if (!hostHdr) return false;
+  return new RegExp(`^(?:127\\.0\\.0\\.1|localhost)(?::${PORT})?$`, 'i').test(String(hostHdr).trim());
 }
 
 function isTrustedOrigin(origin) {
   if (!origin) return true;
-  return /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/i.test(origin) ||
-    /^chrome-extension:\/\//i.test(origin) ||
-    /^moz-extension:\/\//i.test(origin);
+  const exactWeb = new RegExp(`^https?://(?:127\\.0\\.0\\.1|localhost):${PORT}$`, 'i');
+  return exactWeb.test(origin) ||
+    origin.toLowerCase() === TRUSTED_CHROME_EXT_ORIGIN ||
+    /^moz-extension:\/\/[a-z0-9-]+$/i.test(origin);
+}
+
+function timingSafeTokenEqual(provided) {
+  if (!provided || typeof provided !== 'string') return false;
+  const a = Buffer.from(provided.trim(), 'utf8');
+  const b = Buffer.from(AUTH_TOKEN, 'utf8');
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+function hasValidAuth(req, parsedUrl) {
+  const hdrToken = req.headers['x-duytai-token'];
+  if (hdrToken && timingSafeTokenEqual(String(hdrToken))) return true;
+  const authHdr = String(req.headers['authorization'] || '');
+  if (/^Bearer\s+/i.test(authHdr) && timingSafeTokenEqual(authHdr.slice(7))) return true;
+  if (parsedUrl && parsedUrl.pathname === '/api/events') {
+    const qTok = parsedUrl.searchParams.get('token');
+    if (qTok && timingSafeTokenEqual(qTok)) return true;
+  }
+  return false;
 }
 
 function getCorsHeaders(req) {
-  const origin = req.headers.origin;
+  const origin = req && req.headers ? req.headers.origin : '';
   const allowed = origin && isTrustedOrigin(origin) ? origin : `http://127.0.0.1:${PORT}`;
   return {
     'Access-Control-Allow-Origin': allowed,
     'Vary': 'Origin',
     'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, X-Duytai-Source'
+    'Access-Control-Allow-Headers': 'Content-Type, X-Duytai-Source, X-Duytai-Token, Authorization'
   };
 }
 
 function sendJson(res, status, data, req) {
-  const cors = req ? getCorsHeaders(req) : {
-    'Access-Control-Allow-Origin': `http://127.0.0.1:${PORT}`,
-    'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, X-Duytai-Source'
-  };
+  const cors = getCorsHeaders(req);
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
+    'Cache-Control': 'no-store',
     ...cors
   });
   res.end(JSON.stringify(data));
 }
 
 const server = http.createServer(async (req, res) => {
+  if (!isTrustedHostHeader(req.headers.host)) {
+    return sendJson(res, 403, { error: 'Untrusted Host header rejected' }, req);
+  }
+  const secFetchSite = String(req.headers['sec-fetch-site'] || '').toLowerCase();
   const origin = req.headers.origin;
   if (origin && !isTrustedOrigin(origin)) {
     return sendJson(res, 403, { error: 'Untrusted origin rejected by Duytai Security Guard' }, req);
+  }
+  if (secFetchSite === 'cross-site' && (!origin || (!origin.startsWith('chrome-extension://') && !origin.startsWith('moz-extension://')))) {
+    return sendJson(res, 403, { error: 'Cross-site request rejected' }, req);
   }
   if (req.method === 'OPTIONS') {
     res.writeHead(204, getCorsHeaders(req));
@@ -401,6 +494,17 @@ const server = http.createServer(async (req, res) => {
 
   const parsedUrl = new URL(req.url, `http://127.0.0.1:${PORT}`);
   const pathname = parsedUrl.pathname;
+
+  if (pathname === '/api/auth/handshake' && req.method === 'POST') {
+    if (origin && origin.toLowerCase() === TRUSTED_CHROME_EXT_ORIGIN) {
+      return sendJson(res, 200, { ok: true, token: AUTH_TOKEN }, req);
+    }
+    return sendJson(res, 403, { error: 'Handshake forbidden' }, req);
+  }
+
+  if (pathname.startsWith('/api/') && !hasValidAuth(req, parsedUrl)) {
+    return sendJson(res, 401, { error: 'Unauthorized: missing or invalid Duytai API token' }, req);
+  }
 
   // Built-in HTTP 206 Range Server for Multi-Gigabit Engine Stress Benchmarking (supports MB & GB up to 64GB)
   if (pathname.startsWith('/benchmark-payload/')) {
@@ -494,29 +598,29 @@ const server = http.createServer(async (req, res) => {
       defaultSaveDir: DEFAULT_SAVE_DIR,
       globalLimitBps: speedLimiter.globalBps,
       jobs: Array.from(jobs.values()).map(j => j.toJSON())
-    });
+    }, req);
   }
 
   if (pathname === '/api/jobs' && req.method === 'POST') {
     try {
       const body = await readJsonBody(req);
       if (!body.url || typeof body.url !== 'string' || !/^https?:\/\//i.test(body.url.trim())) {
-        return sendJson(res, 400, { error: 'URL không hợp lệ (cần http:// hoặc https://)' });
+        return sendJson(res, 400, { error: 'URL không hợp lệ (cần http:// hoặc https://)' }, req);
       }
       // Check if URL contains a batch pattern like file[01-10].zip
       const expanded = idmFeatures.expandBatchPattern(body.url);
       if (expanded.length > 1) {
         const created = batchQueue.add(expanded, body);
-        return sendJson(res, 201, { batchCount: created.length, jobs: created.map(j => j.toJSON()) });
+        return sendJson(res, 201, { batchCount: created.length, jobs: created.map(j => j.toJSON()) }, req);
       }
       const startNow = !body.paused;
       const job = createAndRegisterJob(body, startNow);
       if (!startNow) {
         job.status = 'paused';
       }
-      return sendJson(res, 201, job.toJSON());
+      return sendJson(res, 201, job.toJSON(), req);
     } catch (e) {
-      return sendJson(res, 500, { error: e.message });
+      return sendJson(res, 400, { error: e.message }, req);
     }
   }
 
@@ -525,7 +629,10 @@ const server = http.createServer(async (req, res) => {
     try {
       const body = await readJsonBody(req);
       const rawUrl = String(body.url || '').trim();
-      if (!/^https?:\/\//i.test(rawUrl)) return sendJson(res, 400, { error: 'URL không hợp lệ' });
+      if (!/^https?:\/\//i.test(rawUrl)) return sendJson(res, 400, { error: 'URL không hợp lệ' }, req);
+      if (!new RegExp(`^http://(?:127\\.0\\.0\\.1|localhost):${PORT}/benchmark-payload/`, 'i').test(rawUrl)) {
+        await idmFeatures.assertSafeRemoteUrl(rawUrl);
+      }
       const tmpJob = new DownloadJob({ url: rawUrl, saveDir: DEFAULT_SAVE_DIR, headers: body.headers || {} });
       let targetUrl = rawUrl;
       let resolvedName = '';
@@ -539,7 +646,7 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 200, {
           url: rawUrl,
           finalUrl: rawUrl,
-          fileName: (ytMeta && ytMeta.fileName) || body.fileName || '',
+          fileName: (ytMeta && ytMeta.fileName) || sanitizeOptionalFileName(body.fileName) || '',
           title: (ytMeta && ytMeta.title) || '',
           totalBytes: (ytMeta && ytMeta.totalBytes) || 0,
           maxHeight: (ytMeta && ytMeta.maxHeight) || 0,
@@ -548,12 +655,12 @@ const server = http.createServer(async (req, res) => {
           resolverType: 'youtube',
           category: cat,
           isZip: false
-        });
+        }, req);
       }
       const meta = await tmpJob._probeUrl(targetUrl);
       let urlFileName = '';
       try { urlFileName = decodeURIComponent(path.posix.basename(new URL(meta.finalUrl || targetUrl).pathname)); } catch {}
-      const fileName = resolvedName || meta.suggestedFileName || body.fileName || urlFileName || '';
+      const fileName = sanitizeOptionalFileName(resolvedName || meta.fileName || body.fileName || urlFileName) || '';
       const category = idmFeatures.categorize({ fileName, url: meta.finalUrl || rawUrl });
       const isZip = /\.zip$/i.test(fileName) || /\.zip(\?|$)/i.test(meta.finalUrl || rawUrl);
       return sendJson(res, 200, {
@@ -565,30 +672,35 @@ const server = http.createServer(async (req, res) => {
         etag: meta.etag || '',
         category,
         isZip
-      });
+      }, req);
     } catch (e) {
-      return sendJson(res, 500, { error: e.message });
+      return sendJson(res, 400, { error: e.message }, req);
     }
   }
 
-  // ZIP Preview Endpoint (Remote HTTP Range EOCD & Local File)
+  // ZIP Preview Endpoint (Remote HTTP Range EOCD & Registered Job Local File only)
   if (pathname === '/api/zip-preview' && req.method === 'POST') {
     try {
       const body = await readJsonBody(req);
-      let url = body.url || '';
-      let filePath = body.filePath || '';
+      let url = '';
+      let filePath = '';
       let totalBytes = Number(body.totalBytes || 0);
       let headers = body.headers || {};
       if (body.jobId) {
         const job = jobs.get(String(body.jobId));
-        if (job) {
-          url = job.finalUrl || job.url;
-          filePath = job.filePath || '';
-          totalBytes = job.totalBytes || 0;
-          headers = job.headers || {};
-        }
+        if (!job) return sendJson(res, 404, { error: 'Không tìm thấy tác vụ tải để xem trước ZIP' }, req);
+        url = job.finalUrl || job.url;
+        filePath = job.filePath || '';
+        totalBytes = job.totalBytes || 0;
+        headers = job.headers || {};
+      } else if (body.url && /^https?:\/\//i.test(String(body.url))) {
+        url = String(body.url).trim();
+        await idmFeatures.assertSafeRemoteUrl(url);
+      } else {
+        return sendJson(res, 400, { error: 'Cần jobId hợp lệ hoặc URL HTTP/HTTPS công khai để xem trước ZIP' }, req);
       }
       if (!totalBytes && url && /^https?:\/\//i.test(url)) {
+        await idmFeatures.assertSafeRemoteUrl(url);
         const tmpJob = new DownloadJob({ url, saveDir: DEFAULT_SAVE_DIR, headers });
         const meta = await tmpJob._probeUrl(url).catch(() => null);
         if (meta) {
@@ -597,9 +709,9 @@ const server = http.createServer(async (req, res) => {
         }
       }
       const preview = await idmFeatures.previewZipArchive({ url, filePath, totalBytes, headers });
-      return sendJson(res, 200, { ok: true, ...preview });
+      return sendJson(res, 200, { ok: true, ...preview }, req);
     } catch (e) {
-      return sendJson(res, 400, { error: e.message });
+      return sendJson(res, 400, { error: e.message }, req);
     }
   }
 
@@ -607,19 +719,20 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/grabber' && req.method === 'POST') {
     try {
       const body = await readJsonBody(req);
+      await idmFeatures.assertSafeRemoteUrl(body.url);
       const result = await idmFeatures.grabSiteLinks(body.url, {
         filterCategory: body.filterCategory || 'all',
         headers: body.headers || {}
       });
-      return sendJson(res, 200, { ok: true, ...result });
+      return sendJson(res, 200, { ok: true, ...result }, req);
     } catch (e) {
-      return sendJson(res, 400, { error: e.message });
+      return sendJson(res, 400, { error: e.message }, req);
     }
   }
 
   // Built-in Scheduler & Synchronization Queue Endpoint
   if (pathname === '/api/scheduler' && req.method === 'GET') {
-    return sendJson(res, 200, { ok: true, scheduler: schedulerConfig });
+    return sendJson(res, 200, { ok: true, scheduler: schedulerConfig }, req);
   }
   if (pathname === '/api/scheduler' && req.method === 'POST') {
     try {
@@ -636,9 +749,9 @@ const server = http.createServer(async (req, res) => {
       if (body.stopAtTime !== undefined) schedulerConfig.stopAtTime = String(body.stopAtTime || '').trim();
       if (body.onCompleteAction !== undefined) schedulerConfig.onCompleteAction = String(body.onCompleteAction || 'none');
       if (body.autoAntivirusScan !== undefined) schedulerConfig.autoAntivirusScan = Boolean(body.autoAntivirusScan);
-      return sendJson(res, 200, { ok: true, scheduler: schedulerConfig });
+      return sendJson(res, 200, { ok: true, scheduler: schedulerConfig }, req);
     } catch (e) {
-      return sendJson(res, 400, { error: e.message });
+      return sendJson(res, 400, { error: e.message }, req);
     }
   }
 
@@ -647,9 +760,9 @@ const server = http.createServer(async (req, res) => {
     try {
       const body = await readJsonBody(req);
       const created = batchQueue.add(body.text || body.urls || '', body);
-      return sendJson(res, 201, { count: created.length, jobs: created.map(j => j.toJSON()) });
+      return sendJson(res, 201, { count: created.length, jobs: created.map(j => j.toJSON()) }, req);
     } catch (e) {
-      return sendJson(res, 500, { error: e.message });
+      return sendJson(res, 400, { error: e.message }, req);
     }
   }
 
@@ -664,15 +777,15 @@ const server = http.createServer(async (req, res) => {
         speedLimiter.setGlobalLimit(bps);
       }
       broadcastState();
-      return sendJson(res, 200, { ok: true, globalLimitBps: speedLimiter.globalBps });
+      return sendJson(res, 200, { ok: true, globalLimitBps: speedLimiter.globalBps }, req);
     } catch (e) {
-      return sendJson(res, 500, { error: e.message });
+      return sendJson(res, 400, { error: e.message }, req);
     }
   }
 
   // Categories list endpoint
   if (pathname === '/api/categories' && req.method === 'GET') {
-    return sendJson(res, 200, { categories: idmFeatures.CATEGORIES });
+    return sendJson(res, 200, { categories: idmFeatures.CATEGORIES }, req);
   }
 
   // Batch Pattern Expand endpoint
@@ -680,9 +793,9 @@ const server = http.createServer(async (req, res) => {
     try {
       const body = await readJsonBody(req);
       const urls = idmFeatures.expandBatchPattern(body.pattern || body.url || '');
-      return sendJson(res, 200, { count: urls.length, urls });
+      return sendJson(res, 200, { count: urls.length, urls }, req);
     } catch (e) {
-      return sendJson(res, 500, { error: e.message });
+      return sendJson(res, 400, { error: e.message }, req);
     }
   }
 
@@ -690,17 +803,21 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/intercept' && req.method === 'POST') {
     try {
       const body = await readJsonBody(req);
-      if (!body.url) return sendJson(res, 400, { error: 'Missing url' });
-      const now = Date.now();
-      const dupIdx = interceptQueue.findIndex(x => x.url === body.url && (now - x.timestamp) < 2500);
-      if (dupIdx >= 0) {
-        return sendJson(res, 200, { ok: true, deduplicated: true, item: interceptQueue[dupIdx] });
+      if (!body.url || !/^https?:\/\//i.test(String(body.url).trim())) {
+        return sendJson(res, 400, { error: 'Missing or invalid http(s) url' }, req);
       }
-      const cat = idmFeatures.categorize({ fileName: body.fileName || '', url: body.url });
+      const cleanUrl = String(body.url).trim();
+      const now = Date.now();
+      const dupIdx = interceptQueue.findIndex(x => x.url === cleanUrl && (now - x.timestamp) < 2500);
+      if (dupIdx >= 0) {
+        return sendJson(res, 200, { ok: true, deduplicated: true, item: interceptQueue[dupIdx] }, req);
+      }
+      const cleanFn = sanitizeOptionalFileName(body.fileName || '');
+      const cat = idmFeatures.categorize({ fileName: cleanFn, url: cleanUrl });
       const item = {
         id: 'int-' + now + '-' + Math.random().toString(36).slice(2, 6),
-        url: body.url,
-        fileName: body.fileName || '',
+        url: cleanUrl,
+        fileName: cleanFn,
         referrer: body.referrer || '',
         source: body.source || 'Bắt link từ Trình duyệt',
         headers: (body.headers && typeof body.headers === 'object') ? body.headers : {},
@@ -716,29 +833,36 @@ const server = http.createServer(async (req, res) => {
           client.write(`data: ${JSON.stringify({ type: 'intercept', item })}\n\n`);
         } catch {}
       }
-      return sendJson(res, 201, { ok: true, item });
+      return sendJson(res, 201, { ok: true, item }, req);
     } catch (e) {
-      return sendJson(res, 500, { error: e.message });
+      return sendJson(res, 500, { error: e.message }, req);
     }
   }
 
   if (pathname === '/api/intercept-queue' && req.method === 'GET') {
     const items = interceptQueue.splice(0, interceptQueue.length);
-    return sendJson(res, 200, { items });
+    return sendJson(res, 200, { items }, req);
+  }
+
+  // Graceful shutdown endpoint for Desktop tray wrappers
+  if (pathname === '/api/shutdown' && req.method === 'POST') {
+    sendJson(res, 200, { ok: true, shuttingDown: true }, req);
+    setImmediate(() => gracefulShutdown());
+    return;
   }
 
   // Pause All Active Jobs (IDM "Dừng tất cả" button & Tray action)
   if (pathname === '/api/pause-all' && req.method === 'POST') {
     let pausedCount = 0;
     for (const job of jobs.values()) {
-      if (['downloading', 'probing', 'resolving'].includes(job.status)) {
+      if (['downloading', 'probing', 'resolving', 'muxing'].includes(job.status)) {
         await job.pause();
         pausedCount++;
       }
     }
     broadcastState();
     scheduleSaveHistory();
-    return sendJson(res, 200, { ok: true, pausedCount });
+    return sendJson(res, 200, { ok: true, pausedCount }, req);
   }
 
   // Clear All Completed Jobs from List (IDM "Xóa các mục đã hoàn thành" button)
@@ -752,7 +876,7 @@ const server = http.createServer(async (req, res) => {
     }
     broadcastState();
     scheduleSaveHistory();
-    return sendJson(res, 200, { ok: true, removedCount });
+    return sendJson(res, 200, { ok: true, removedCount }, req);
   }
 
   // Batch Delete Multiple Selected Jobs
@@ -774,9 +898,9 @@ const server = http.createServer(async (req, res) => {
       }
       broadcastState();
       scheduleSaveHistory();
-      return sendJson(res, 200, { ok: true, deletedCount });
+      return sendJson(res, 200, { ok: true, deletedCount }, req);
     } catch (e) {
-      return sendJson(res, 400, { error: e.message });
+      return sendJson(res, 400, { error: e.message }, req);
     }
   }
 
@@ -844,24 +968,25 @@ const server = http.createServer(async (req, res) => {
       try {
         const body = await readJsonBody(req);
         const result = await idmFeatures.refreshJobUrl(job, body.url, { force: Boolean(body.force), resume: true });
-        return sendJson(res, 200, { ok: true, ...result, job: job.toJSON() });
+        return sendJson(res, 200, { ok: true, ...result, job: job.toJSON() }, req);
       } catch (e) {
-        return sendJson(res, 400, { error: e.message });
+        return sendJson(res, 400, { error: e.message }, req);
       }
     }
     if (action === 'antivirus-scan') {
       try {
         const report = await idmFeatures.scanAndVerifyFile(job.filePath);
+        const avOk = report.antivirus.scanned ? Boolean(report.antivirus.clean) : true;
         job.idmChecksum = {
-          status: report.antivirus.clean ? 'ok' : 'mismatch',
-          algo: 'SHA-256 + Defender',
+          status: report.antivirus.scanned ? (avOk ? 'ok' : 'mismatch') : 'computed',
+          algo: report.antivirus.scanned ? 'SHA-256 + Defender' : 'SHA-256 (Không có Defender CLI)',
           actual: report.hashes.sha256
         };
         broadcastState();
         scheduleSaveHistory();
-        return sendJson(res, 200, { ok: true, ...report });
+        return sendJson(res, 200, { ok: true, ...report }, req);
       } catch (e) {
-        return sendJson(res, 400, { error: e.message });
+        return sendJson(res, 400, { error: e.message }, req);
       }
     }
     if (action === 'open-folder') {
@@ -877,19 +1002,23 @@ const server = http.createServer(async (req, res) => {
           spawn('xdg-open', [job.saveDir || path.dirname(target)], { detached: true, stdio: 'ignore' }).unref();
         }
       }
-      return sendJson(res, 200, { ok: true });
+      return sendJson(res, 200, { ok: true }, req);
     }
     if (action === 'open-file') {
       if (job.filePath && fs.existsSync(job.filePath)) {
+        const ext = path.extname(job.filePath).toLowerCase();
+        const isExecOrScript = ['.exe', '.msi', '.bat', '.cmd', '.ps1', '.vbs', '.js', '.jse', '.wsf', '.hta', '.scr', '.pif', '.com', '.reg', '.app', '.command'].includes(ext);
         if (process.platform === 'win32') {
-          spawn('cmd.exe', ['/c', 'start', '', job.filePath], { detached: true, stdio: 'ignore' }).unref();
+          const args = isExecOrScript ? [`/select,${job.filePath}`] : [job.filePath];
+          spawn('explorer.exe', args, { detached: true, stdio: 'ignore' }).unref();
         } else if (process.platform === 'darwin') {
-          spawn('open', [job.filePath], { detached: true, stdio: 'ignore' }).unref();
+          const args = isExecOrScript ? ['-R', job.filePath] : [job.filePath];
+          spawn('open', args, { detached: true, stdio: 'ignore' }).unref();
         } else {
-          spawn('xdg-open', [job.filePath], { detached: true, stdio: 'ignore' }).unref();
+          spawn('xdg-open', [isExecOrScript ? (job.saveDir || path.dirname(job.filePath)) : job.filePath], { detached: true, stdio: 'ignore' }).unref();
         }
       }
-      return sendJson(res, 200, { ok: true });
+      return sendJson(res, 200, { ok: true }, req);
     }
   }
 
@@ -897,7 +1026,7 @@ const server = http.createServer(async (req, res) => {
   if (deleteMatch && req.method === 'DELETE') {
     const id = decodeURIComponent(deleteMatch[1]);
     const job = jobs.get(id);
-    if (!job) return sendJson(res, 404, { error: 'Không tìm thấy tác vụ tải' });
+    if (!job) return sendJson(res, 404, { error: 'Không tìm thấy tác vụ tải' }, req);
     const deleteFile = parsedUrl.searchParams.get('deleteFile') === 'true';
     batchQueue.remove(job);
     speedLimiter.setJobLimit(id, 0);
@@ -905,19 +1034,36 @@ const server = http.createServer(async (req, res) => {
     jobs.delete(id);
     broadcastState();
     scheduleSaveHistory();
-    return sendJson(res, 200, { ok: true });
+    return sendJson(res, 200, { ok: true }, req);
   }
 
-  let filePath = pathname === '/' ? path.join(PUBLIC_DIR, 'index.html') : path.join(PUBLIC_DIR, pathname);
-  if (!filePath.startsWith(PUBLIC_DIR)) {
+  const safeRel = pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, '');
+  const resolvedRoot = path.resolve(PUBLIC_DIR);
+  const filePath = path.resolve(resolvedRoot, safeRel);
+  const insidePublic = process.platform === 'win32'
+    ? filePath.toLowerCase().startsWith(resolvedRoot.toLowerCase() + path.sep)
+    : filePath.startsWith(resolvedRoot + path.sep);
+  if (!insidePublic) {
     res.writeHead(403);
     return res.end('Forbidden');
   }
 
-  if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+  const st = await fsp.stat(filePath).catch(() => null);
+  if (st && st.isFile()) {
     const ext = path.extname(filePath).toLowerCase();
+    if (ext === '.html') {
+      let html = await fsp.readFile(filePath, 'utf8');
+      const tokenMeta = `<meta name="duytai-token" content="${AUTH_TOKEN}">`;
+      if (html.includes('</head>')) {
+        html = html.replace('</head>', `  ${tokenMeta}\n</head>`);
+      }
+      res.writeHead(200, {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-store'
+      });
+      return res.end(html);
+    }
     const mimeMap = {
-      '.html': 'text/html; charset=utf-8',
       '.js': 'application/javascript; charset=utf-8',
       '.css': 'text/css; charset=utf-8',
       '.svg': 'image/svg+xml',
@@ -995,8 +1141,14 @@ function startBrowserSqliteDownloadWatcher() {
   function pollOneBrowser(b) {
     if (!fs.existsSync(b.path)) return;
     const tmpDb = path.join(os.tmpdir(), `hyperidm_${b.name.toLowerCase()}_hist.db`);
+    const walSrc = `${b.path}-wal`;
+    const shmSrc = `${b.path}-shm`;
+    const walTmp = `${tmpDb}-wal`;
+    const shmTmp = `${tmpDb}-shm`;
     try {
       fs.copyFileSync(b.path, tmpDb);
+      if (fs.existsSync(walSrc)) try { fs.copyFileSync(walSrc, walTmp); } catch {}
+      if (fs.existsSync(shmSrc)) try { fs.copyFileSync(shmSrc, shmTmp); } catch {}
       const db = new DatabaseSync(tmpDb, { readOnly: true });
       try {
         if (b.maxId < 0) {
@@ -1011,12 +1163,12 @@ function startBrowserSqliteDownloadWatcher() {
             const dlUrl = String(r.url || '').trim();
             if (!dlUrl || !/^https?:\/\//i.test(dlUrl)) continue;
             if (/^https?:\/\/(127\.0\.0\.1|localhost)/i.test(dlUrl)) continue;
-            const fn = r.target_path ? path.basename(String(r.target_path)) : '';
+            const fn = r.target_path ? sanitizeOptionalFileName(path.basename(String(r.target_path)).replace(/\.crdownload$|\.opdownload$|\.part$/i, '')) : '';
             const cat = idmFeatures.categorize({ fileName: fn, url: dlUrl });
             const item = {
               id: `br-${b.name}-${r.id}-${Date.now()}`,
               url: dlUrl,
-              fileName: fn.replace(/\.crdownload$|\.opdownload$|\.part$/i, ''),
+              fileName: fn,
               referrer: String(r.tab_url || ''),
               category: cat,
               saveDir: path.join(DEFAULT_SAVE_DIR, cat),
@@ -1024,6 +1176,7 @@ function startBrowserSqliteDownloadWatcher() {
               timestamp: Date.now()
             };
             interceptQueue.push(item);
+            if (interceptQueue.length > 100) interceptQueue.splice(0, interceptQueue.length - 100);
             for (const client of sseClients) {
               try {
                 client.write(`data: ${JSON.stringify({ type: 'intercept', item })}\n\n`);
@@ -1035,7 +1188,9 @@ function startBrowserSqliteDownloadWatcher() {
         db.close();
       }
     } catch {}
-    try { if (fs.existsSync(tmpDb)) fs.unlinkSync(tmpDb); } catch {}
+    for (const p of [tmpDb, walTmp, shmTmp]) {
+      try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch {}
+    }
   }
 
   for (const b of dbTargets) pollOneBrowser(b);
@@ -1045,14 +1200,17 @@ function startBrowserSqliteDownloadWatcher() {
 }
 
 function startIdmSchedulerDaemon() {
+  let lastStartTriggerMinute = '';
+  let lastStopTriggerMinute = '';
   setInterval(() => {
     const now = new Date();
     const hhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
     if (schedulerConfig.enabled) {
-      if (schedulerConfig.startAtTime && schedulerConfig.startAtTime === hhmm) {
+      if (schedulerConfig.startAtTime && schedulerConfig.startAtTime === hhmm && lastStartTriggerMinute !== hhmm) {
+        lastStartTriggerMinute = hhmm;
         let active = 0;
         for (const j of jobs.values()) {
-          if (['downloading', 'probing', 'resolving'].includes(j.status)) active++;
+          if (['downloading', 'probing', 'resolving', 'muxing'].includes(j.status)) active++;
         }
         for (const j of jobs.values()) {
           if (active >= schedulerConfig.maxConcurrent) break;
@@ -1061,19 +1219,25 @@ function startIdmSchedulerDaemon() {
             active++;
           }
         }
+      } else if (schedulerConfig.startAtTime !== hhmm) {
+        lastStartTriggerMinute = '';
       }
-      if (schedulerConfig.stopAtTime && schedulerConfig.stopAtTime === hhmm) {
+      if (schedulerConfig.stopAtTime && schedulerConfig.stopAtTime === hhmm && lastStopTriggerMinute !== hhmm) {
+        lastStopTriggerMinute = hhmm;
         for (const j of jobs.values()) {
-          if (['downloading', 'probing', 'resolving'].includes(j.status)) {
+          if (['downloading', 'probing', 'resolving', 'muxing'].includes(j.status)) {
             j.pause();
           }
         }
+      } else if (schedulerConfig.stopAtTime !== hhmm) {
+        lastStopTriggerMinute = '';
       }
       const nowMs = Date.now();
       if (nowMs - schedulerConfig.lastRetryTick >= schedulerConfig.autoRetryIntervalSec * 1000) {
         schedulerConfig.lastRetryTick = nowMs;
         for (const j of jobs.values()) {
-          if (j.status === 'error') {
+          if (j.status === 'error' && (j._schedulerRetries || 0) < 5) {
+            j._schedulerRetries = (j._schedulerRetries || 0) + 1;
             j.start();
           }
         }
@@ -1084,26 +1248,38 @@ function startIdmSchedulerDaemon() {
 
 function appendErrorLog(tag, err) {
   try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
     const msg = `[${new Date().toISOString()}] [${tag}] ${(err && (err.stack || err.message)) || String(err)}\n`;
-    fs.appendFileSync(path.join(__dirname, 'server-error.log'), msg);
+    fs.appendFileSync(ERROR_LOG_FILE, msg);
   } catch {}
 }
 
 process.on('uncaughtException', (err) => {
   appendErrorLog('uncaughtException', err);
+  if (err && (err.code === 'EADDRINUSE' || err.syscall === 'listen')) {
+    process.exit(1);
+  }
 });
 process.on('unhandledRejection', (reason) => {
   appendErrorLog('unhandledRejection', reason);
 });
 
+let isShuttingDown = false;
 async function gracefulShutdown() {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
   try {
     for (const job of jobs.values()) {
-      if (job.status === 'downloading') {
+      if (['downloading', 'probing', 'resolving', 'muxing'].includes(job.status)) {
         await job.pause().catch(() => {});
       }
     }
+    fs.mkdirSync(path.dirname(HISTORY_FILE), { recursive: true });
     fs.writeFileSync(HISTORY_FILE, JSON.stringify(serializeJobsForHistory()), 'utf8');
+    if (fs.existsSync(TOKEN_FILE)) {
+      const curTok = fs.readFileSync(TOKEN_FILE, 'utf8').trim();
+      if (curTok === AUTH_TOKEN) fs.unlinkSync(TOKEN_FILE);
+    }
   } catch {}
   try { server.close(); } catch {}
   process.exit(0);
@@ -1111,10 +1287,19 @@ async function gracefulShutdown() {
 process.on('SIGTERM', gracefulShutdown);
 process.on('SIGINT', gracefulShutdown);
 
+server.on('error', (err) => {
+  appendErrorLog('serverError', err);
+  process.exit(1);
+});
+
 loadHistory().then(() => {
   startBrowserSqliteDownloadWatcher();
   startIdmSchedulerDaemon();
   server.listen(PORT, '127.0.0.1', () => {
-    console.log(`[Duytai v7.3 64-Bit Engine] Listening on http://127.0.0.1:${PORT}`);
+    try {
+      fs.mkdirSync(path.dirname(TOKEN_FILE), { recursive: true });
+      fs.writeFileSync(TOKEN_FILE, AUTH_TOKEN, { encoding: 'utf8', mode: 0o600 });
+    } catch {}
+    console.log(`[Duytai v7.5 64-Bit Engine] Listening on http://127.0.0.1:${PORT}`);
   });
 });

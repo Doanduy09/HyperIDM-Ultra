@@ -6,9 +6,28 @@ chrome.storage.local.get('autoCapture').then(({ autoCapture = true }) => {
 });
 $('auto').onchange = e => chrome.storage.local.set({ autoCapture: e.target.checked });
 
+let cachedToken = '';
+let inFlight = false;
+
+async function getToken(refreshToken = false) {
+  if (cachedToken && !refreshToken) return cachedToken;
+  const resp = await chrome.runtime.sendMessage({ type: 'get-token', refresh: refreshToken }).catch(() => ({}));
+  cachedToken = (resp && resp.token) || '';
+  return cachedToken;
+}
+
 async function refresh() {
+  if (inFlight) return;
+  inFlight = true;
   try {
-    const { jobs } = await (await fetch(API)).json();
+    let token = await getToken(false);
+    let res = await fetch(API, { headers: token ? { 'X-Duytai-Token': token } : {} });
+    if (res.status === 401) {
+      token = await getToken(true);
+      res = await fetch(API, { headers: token ? { 'X-Duytai-Token': token } : {} });
+    }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const { jobs = [] } = await res.json();
     $('off').hidden = true;
     const active = jobs.filter(j => j.status === 'downloading');
     const bps = active.reduce((s, j) => s + (j.currentSpeedBps || 0), 0);
@@ -30,6 +49,9 @@ async function refresh() {
   } catch (_) {
     $('off').hidden = false;
     $('speed').textContent = '0 MB/s';
+    $('jobs').innerHTML = '';
+  } finally {
+    inFlight = false;
   }
 }
 refresh();

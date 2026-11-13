@@ -10,6 +10,7 @@ using System.IO;
 using System.IO.Pipes;
 using System.Net;
 using System.Net.Sockets;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -17,6 +18,18 @@ using System.Threading;
 using System.Web.Script.Serialization;
 using System.Windows.Forms;
 using Microsoft.Win32;
+
+[assembly: AssemblyTitle("Duytai 64-Bit Download Accelerator")]
+[assembly: AssemblyDescription("Duytai 64-Bit Multi-Segment Download Engine (64/128 Threads)")]
+[assembly: AssemblyConfiguration("Release x64")]
+[assembly: AssemblyCompany("DOANDUY Software")]
+[assembly: AssemblyProduct("Duytai 64-Bit")]
+[assembly: AssemblyCopyright("Copyright © 2026 DOANDUY. All rights reserved.")]
+[assembly: AssemblyTrademark("Duytai")]
+[assembly: AssemblyVersion("7.5.0.0")]
+[assembly: AssemblyFileVersion("7.5.0.0")]
+[assembly: AssemblyInformationalVersion("7.5.0")]
+[assembly: ComVisible(false)]
 
 namespace HyperIDM
 {
@@ -795,6 +808,7 @@ namespace HyperIDM
             catch { }
 
             InitIdmRegistrySnapshot();
+            LoadUserSettings();
             EnsureServerRunningSync(3500);
             StartPipeListener();
 
@@ -825,14 +839,59 @@ namespace HyperIDM
             }
         }
 
+        private static string GetSettingsFilePath()
+        {
+            string dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Duytai");
+            try { Directory.CreateDirectory(dir); } catch { }
+            return Path.Combine(dir, "settings.json");
+        }
+
+        internal void LoadUserSettings()
+        {
+            try
+            {
+                string path = GetSettingsFilePath();
+                if (!File.Exists(path)) return;
+                JavaScriptSerializer js = new JavaScriptSerializer();
+                Dictionary<string, object> d = js.DeserializeObject(File.ReadAllText(path, Encoding.UTF8)) as Dictionary<string, object>;
+                if (d == null) return;
+                int thr = (int)GetDictLong(d, "defaultThreads", defaultThreads);
+                defaultThreads = (thr == 128) ? 128 : 64;
+                autoShowProgress = GetDictBool(d, "autoShowProgress", autoShowProgress);
+                catchAllFileFormats = GetDictBool(d, "catchAllFileFormats", catchAllFileFormats);
+                string cft = GetDictString(d, "customFileTypes");
+                if (!string.IsNullOrEmpty(cft)) customFileTypes = cft;
+                SetClipboardEnabled(GetDictBool(d, "clipboardEnabled", clipboardEnabled));
+                SetBrowserInterceptEnabled(GetDictBool(d, "browserInterceptEnabled", browserInterceptEnabled));
+            }
+            catch { }
+        }
+
+        internal void SaveUserSettings()
+        {
+            try
+            {
+                Dictionary<string, object> d = new Dictionary<string, object>();
+                d["defaultThreads"] = defaultThreads;
+                d["clipboardEnabled"] = clipboardEnabled;
+                d["browserInterceptEnabled"] = browserInterceptEnabled;
+                d["autoShowProgress"] = autoShowProgress;
+                d["catchAllFileFormats"] = catchAllFileFormats;
+                d["customFileTypes"] = customFileTypes;
+                JavaScriptSerializer js = new JavaScriptSerializer();
+                File.WriteAllText(GetSettingsFilePath(), js.Serialize(d), Encoding.UTF8);
+            }
+            catch { }
+        }
+
         internal Icon SharedIcon { get { return appIcon; } }
         internal bool IsExiting { get { return isExiting; } }
         internal bool ClipboardEnabled { get { return clipboardEnabled; } }
         internal bool BrowserInterceptEnabled { get { return browserInterceptEnabled; } }
-        internal bool AutoShowProgress { get { return autoShowProgress; } set { autoShowProgress = value; } }
-        internal int DefaultThreads { get { return defaultThreads; } set { defaultThreads = (value == 128) ? 128 : 64; } }
-        internal string CustomFileTypes { get { return customFileTypes; } set { customFileTypes = string.IsNullOrEmpty(value) ? DefaultIdmFileTypes : value; } }
-        internal bool CatchAllFileFormats { get { return catchAllFileFormats; } set { catchAllFileFormats = value; } }
+        internal bool AutoShowProgress { get { return autoShowProgress; } set { autoShowProgress = value; SaveUserSettings(); } }
+        internal int DefaultThreads { get { return defaultThreads; } set { defaultThreads = (value == 128) ? 128 : 64; SaveUserSettings(); } }
+        internal string CustomFileTypes { get { return customFileTypes; } set { customFileTypes = string.IsNullOrEmpty(value) ? DefaultIdmFileTypes : value; SaveUserSettings(); } }
+        internal bool CatchAllFileFormats { get { return catchAllFileFormats; } set { catchAllFileFormats = value; SaveUserSettings(); } }
 
         internal void SetClipboardEnabled(bool value)
         {
@@ -842,6 +901,7 @@ namespace HyperIDM
                 ? "Tự động bắt link khi Copy (Clipboard) [Bật]"
                 : "Tự động bắt link khi Copy (Clipboard) [Tắt]";
             if (mainForm != null && !mainForm.IsDisposed) mainForm.UpdateCaptureStatusLabel();
+            SaveUserSettings();
         }
 
         internal void SetBrowserInterceptEnabled(bool value)
@@ -852,6 +912,7 @@ namespace HyperIDM
                 ? "Tự động bắt link từ Trình duyệt [Bật]"
                 : "Tự động bắt link từ Trình duyệt [Tắt]";
             if (mainForm != null && !mainForm.IsDisposed) mainForm.UpdateCaptureStatusLabel();
+            SaveUserSettings();
         }
 
         internal void ShowMainForm()
@@ -1117,18 +1178,6 @@ namespace HyperIDM
                 try { act(); } catch { }
             }
 
-            try
-            {
-                foreach (Form f in Application.OpenForms)
-                {
-                    if (f != null && !f.IsDisposed && f.IsHandleCreated)
-                    {
-                        EnableWindow(f.Handle, true);
-                    }
-                }
-            }
-            catch { }
-
             if (clipboardEnabled)
             {
                 CheckClipboard();
@@ -1234,17 +1283,6 @@ namespace HyperIDM
                                 if (!string.IsNullOrEmpty(referer)) hdrs["Referer"] = referer;
                                 if (!string.IsNullOrEmpty(ua)) hdrs["User-Agent"] = ua;
 
-                                try
-                                {
-                                    Process[] oldIdm = Process.GetProcessesByName("IDMan");
-                                    for (int k = 0; k < oldIdm.Length; k++)
-                                    {
-                                        try { oldIdm[k].Kill(); } catch { }
-                                        try { oldIdm[k].Dispose(); } catch { }
-                                    }
-                                }
-                                catch { }
-
                                 if (CanPromptUrl(url0))
                                 {
                                     ShowDownloadDialog(
@@ -1335,6 +1373,12 @@ namespace HyperIDM
                     nodePath = File.Exists(nodeX86) ? nodeX86 : "node.exe";
                 }
 
+                if (serverProcess != null)
+                {
+                    try { serverProcess.Dispose(); } catch { }
+                    serverProcess = null;
+                }
+
                 ProcessStartInfo psi = new ProcessStartInfo
                 {
                     FileName = nodePath,
@@ -1347,7 +1391,16 @@ namespace HyperIDM
                 serverProcess = Process.Start(psi);
                 AttachProcessToKillJob(serverProcess);
             }
-            catch { }
+            catch (Exception ex)
+            {
+                try
+                {
+                    string logDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Duytai");
+                    Directory.CreateDirectory(logDir);
+                    File.AppendAllText(Path.Combine(logDir, "desktop-error.log"), DateTime.Now.ToString("s") + " [StartEngineDaemon] " + ex.Message + Environment.NewLine);
+                }
+                catch { }
+            }
         }
 
         private void AttachProcessToKillJob(Process proc)
@@ -1385,7 +1438,7 @@ namespace HyperIDM
                 lastClipboardText = text;
 
                 string candidate = text.Trim();
-                if (IsDownloadableUrl(candidate) && CanPromptUrl(candidate))
+                if (IsDownloadableUrl(candidate, customFileTypes, catchAllFileFormats) && CanPromptUrl(candidate))
                 {
                     ShowDownloadDialog(candidate, null, null, null, "Bắt tự động từ Clipboard");
                 }
@@ -1394,6 +1447,11 @@ namespace HyperIDM
         }
 
         internal static bool IsDownloadableUrl(string text)
+        {
+            return IsDownloadableUrl(text, DefaultIdmFileTypes, true);
+        }
+
+        internal static bool IsDownloadableUrl(string text, string customTypes, bool catchAll)
         {
             if (string.IsNullOrEmpty(text) || text.Length > 2048) return false;
             if (text.IndexOf('\n') >= 0 || text.IndexOf('\r') >= 0 || text.IndexOf(' ') >= 0) return false;
@@ -1404,8 +1462,21 @@ namespace HyperIDM
             if (uri.IsLoopback && uri.Port == Program.Port) return false;
 
             if (SpecialHostRegex.IsMatch(text)) return true;
-            if (DownloadExtRegex.IsMatch(uri.AbsolutePath) || DownloadExtRegex.IsMatch(text)) return true;
             if (Regex.IsMatch(uri.Query, @"(?:^|[?&])(?:download|dl|attachment|export=download|file|filename)=", RegexOptions.IgnoreCase)) return true;
+
+            if (catchAll && (DownloadExtRegex.IsMatch(uri.AbsolutePath) || DownloadExtRegex.IsMatch(text))) return true;
+
+            string ext = (Path.GetExtension(uri.AbsolutePath) ?? "").TrimStart('.').ToUpperInvariant();
+            if (!string.IsNullOrEmpty(ext) && !string.IsNullOrEmpty(customTypes))
+            {
+                string[] tokens = customTypes.Split(new char[] { ' ', ',', ';', '\r', '\n', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+                for (int i = 0; i < tokens.Length; i++)
+                {
+                    string tok = tokens[i].Trim().TrimStart('.').ToUpperInvariant();
+                    if (string.Equals(tok, ext, StringComparison.OrdinalIgnoreCase)) return true;
+                    if (tok.EndsWith("*", StringComparison.Ordinal) && ext.StartsWith(tok.Substring(0, tok.Length - 1), StringComparison.OrdinalIgnoreCase)) return true;
+                }
+            }
 
             return false;
         }
@@ -1430,34 +1501,24 @@ namespace HyperIDM
             {
                 try
                 {
-                    HttpWebRequest req = (HttpWebRequest)WebRequest.Create(Program.AppUrl + "/api/intercept-queue");
-                    req.Method = "GET";
-                    req.Timeout = 800;
-                    req.ReadWriteTimeout = 800;
+                    string json = HttpRequest("GET", Program.AppUrl + "/api/intercept-queue", null, 800);
+                    if (string.IsNullOrEmpty(json)) return;
 
-                    using (HttpWebResponse resp = (HttpWebResponse)req.GetResponse())
-                    using (Stream stream = resp.GetResponseStream())
-                    using (StreamReader reader = new StreamReader(stream, Encoding.UTF8))
+                    List<InterceptItem> items = ParseInterceptQueue(json);
+                    if (items.Count == 0) return;
+
+                    RunOnUiThread(new MethodInvoker(delegate
                     {
-                        string json = reader.ReadToEnd();
-                        if (string.IsNullOrEmpty(json)) return;
-
-                        List<InterceptItem> items = ParseInterceptQueue(json);
-                        if (items.Count == 0) return;
-
-                        RunOnUiThread(new MethodInvoker(delegate
+                        if (isExiting) return;
+                        for (int i = 0; i < items.Count; i++)
                         {
-                            if (isExiting) return;
-                            for (int i = 0; i < items.Count; i++)
+                            InterceptItem item = items[i];
+                            if (!string.IsNullOrEmpty(item.Url) && CanPromptUrl(item.Url))
                             {
-                                InterceptItem item = items[i];
-                                if (!string.IsNullOrEmpty(item.Url) && CanPromptUrl(item.Url))
-                                {
-                                    ShowDownloadDialog(item.Url, item.FileName, item.Referrer, item.Headers, string.IsNullOrEmpty(item.Source) ? "Bắt link từ Trình duyệt" : item.Source);
-                                }
+                                ShowDownloadDialog(item.Url, item.FileName, item.Referrer, item.Headers, string.IsNullOrEmpty(item.Source) ? "Bắt link từ Trình duyệt" : item.Source);
                             }
-                        }));
-                    }
+                        }
+                    }));
                 }
                 catch { }
                 finally
@@ -1836,6 +1897,27 @@ namespace HyperIDM
             return Path.Combine(Path.Combine(profile, "Downloads"), "Duytai");
         }
 
+        internal static string GetAuthToken()
+        {
+            try
+            {
+                string dataDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Duytai");
+                string tokenFile = Path.Combine(dataDir, "auth.token");
+                if (File.Exists(tokenFile))
+                {
+                    string tok = File.ReadAllText(tokenFile, Encoding.UTF8).Trim();
+                    if (!string.IsNullOrEmpty(tok)) return tok;
+                }
+                string fallbackFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "auth.token");
+                if (File.Exists(fallbackFile))
+                {
+                    return File.ReadAllText(fallbackFile, Encoding.UTF8).Trim();
+                }
+            }
+            catch { }
+            return "";
+        }
+
         internal static string HttpRequest(string method, string url, string jsonBody, int timeoutMs)
         {
             HttpWebRequest req = (HttpWebRequest)WebRequest.Create(url);
@@ -1843,6 +1925,11 @@ namespace HyperIDM
             req.Timeout = timeoutMs;
             req.ReadWriteTimeout = timeoutMs;
             req.ContentType = "application/json; charset=utf-8";
+            string tok = GetAuthToken();
+            if (!string.IsNullOrEmpty(tok))
+            {
+                req.Headers["X-Duytai-Token"] = tok;
+            }
 
             if (jsonBody != null)
             {
@@ -1925,9 +2012,20 @@ namespace HyperIDM
 
             try
             {
-                if (serverProcess != null && !serverProcess.HasExited)
+                HttpRequest("POST", Program.AppUrl + "/api/shutdown", "{}", 1500);
+            }
+            catch { }
+
+            try
+            {
+                if (serverProcess != null)
                 {
-                    serverProcess.Kill();
+                    if (!serverProcess.HasExited && !serverProcess.WaitForExit(800))
+                    {
+                        serverProcess.Kill();
+                    }
+                    serverProcess.Dispose();
+                    serverProcess = null;
                 }
             }
             catch { }
@@ -2003,6 +2101,7 @@ namespace HyperIDM
         private int hoverIndex = -1;
         private int pressedIndex = -1;
         private int lastTipIndex = -1;
+        public bool IsDarkMode = false;
 
         public event Action<int, Rectangle> ButtonClicked;
 
@@ -2023,13 +2122,13 @@ namespace HyperIDM
             buttons.Add(new IdmToolbarButtonDef { Label = "Thêm URL", Tooltip = "Thêm địa chỉ tải xuống mới", IconKind = 0, FillColor = Color.FromArgb(224, 249, 244), RingColor = Color.FromArgb(13, 148, 136), GlyphColor = Color.FromArgb(5, 150, 105) });
             buttons.Add(new IdmToolbarButtonDef { Label = "Tải tiếp", Tooltip = "Tiếp tục tải tệp đã chọn", IconKind = 1, FillColor = Color.FromArgb(219, 234, 254), RingColor = Color.FromArgb(37, 99, 235), GlyphColor = Color.FromArgb(37, 99, 235) });
             buttons.Add(new IdmToolbarButtonDef { Label = "Dừng", Tooltip = "Tạm dừng tệp đã chọn", IconKind = 2, FillColor = Color.FromArgb(241, 245, 249), RingColor = Color.FromArgb(185, 28, 28), GlyphColor = Color.FromArgb(220, 38, 38) });
-            buttons.Add(new IdmToolbarButtonDef { Label = "Dừng tất cả", Tooltip = "Tạm dừng tất cả các tệp đang tải", IconKind = 3, FillColor = Color.FromArgb(255, 237, 213), RingColor = Color.FromArgb(234, 88, 12), GlyphColor = Color.FromArgb(234, 88, 12) });
+            buttons.Add(new IdmToolbarButtonDef { Label = "Dừng hết", Tooltip = "Tạm dừng tất cả các tệp đang tải", IconKind = 3, FillColor = Color.FromArgb(255, 237, 213), RingColor = Color.FromArgb(234, 88, 12), GlyphColor = Color.FromArgb(234, 88, 12) });
             buttons.Add(new IdmToolbarButtonDef { Label = "Xóa", Tooltip = "Xóa tệp đã chọn khỏi danh sách", IconKind = 4, FillColor = Color.FromArgb(252, 231, 243), RingColor = Color.FromArgb(225, 29, 72), GlyphColor = Color.FromArgb(220, 38, 38) });
-            buttons.Add(new IdmToolbarButtonDef { Label = "Xóa các ...", Tooltip = "Xóa các tệp đã hoàn thành khỏi danh sách", IconKind = 5, FillColor = Color.FromArgb(252, 231, 243), RingColor = Color.FromArgb(219, 39, 119), GlyphColor = Color.FromArgb(219, 39, 119) });
+            buttons.Add(new IdmToolbarButtonDef { Label = "Xóa xong", Tooltip = "Xóa các tệp đã hoàn thành khỏi danh sách", IconKind = 5, FillColor = Color.FromArgb(252, 231, 243), RingColor = Color.FromArgb(219, 39, 119), GlyphColor = Color.FromArgb(219, 39, 119) });
             buttons.Add(new IdmToolbarButtonDef { Label = "Tùy chọn", Tooltip = "Cấu hình số luồng (64/128) & Tự động bắt link", IconKind = 6, FillColor = Color.FromArgb(243, 232, 255), RingColor = Color.FromArgb(147, 51, 234), GlyphColor = Color.FromArgb(126, 34, 206) });
             buttons.Add(new IdmToolbarButtonDef { Label = "Lập lịch", Tooltip = "Tải hàng loạt & Test nhanh IPSW.me / YouTube", IconKind = 7, FillColor = Color.FromArgb(255, 228, 230), RingColor = Color.FromArgb(225, 29, 72), GlyphColor = Color.FromArgb(190, 18, 60) });
-            buttons.Add(new IdmToolbarButtonDef { Label = "Bắt đầu ...", Tooltip = "Bắt đầu tải toàn bộ mục đang chờ", IconKind = 8, FillColor = Color.FromArgb(220, 252, 231), RingColor = Color.FromArgb(22, 163, 74), GlyphColor = Color.FromArgb(21, 128, 61) });
-            buttons.Add(new IdmToolbarButtonDef { Label = "Dừng da...", Tooltip = "Dừng toàn bộ hàng đợi tải", IconKind = 9, FillColor = Color.FromArgb(255, 237, 213), RingColor = Color.FromArgb(217, 119, 6), GlyphColor = Color.FromArgb(180, 83, 9) });
+            buttons.Add(new IdmToolbarButtonDef { Label = "Chạy đợi", Tooltip = "Bắt đầu tải toàn bộ mục đang chờ", IconKind = 8, FillColor = Color.FromArgb(220, 252, 231), RingColor = Color.FromArgb(22, 163, 74), GlyphColor = Color.FromArgb(21, 128, 61) });
+            buttons.Add(new IdmToolbarButtonDef { Label = "Dừng đợi", Tooltip = "Dừng toàn bộ hàng đợi tải", IconKind = 9, FillColor = Color.FromArgb(255, 237, 213), RingColor = Color.FromArgb(217, 119, 6), GlyphColor = Color.FromArgb(180, 83, 9) });
             buttons.Add(new IdmToolbarButtonDef { Label = "Grabber", Tooltip = "Duytai Site Grabber — Quét & tải toàn bộ tệp trên trang web", IconKind = 11, FillColor = Color.FromArgb(224, 242, 254), RingColor = Color.FromArgb(2, 132, 199), GlyphColor = Color.FromArgb(3, 105, 161) });
             buttons.Add(new IdmToolbarButtonDef { Label = "Test nhanh", Tooltip = "Test tải nhanh IPSW.me Mac15,12 • YouTube • Node.js ZIP", IconKind = 10, FillColor = Color.FromArgb(219, 234, 254), RingColor = Color.FromArgb(37, 99, 235), GlyphColor = Color.FromArgb(37, 99, 235) });
         }
@@ -2165,7 +2264,7 @@ namespace HyperIDM
                     DrawGlyph(g, btn.IconKind, circleRect, btn.GlyphColor);
 
                     Rectangle textRect = new Rectangle(slot.X + 1, slot.Y + 42, slot.Width - 2, 18);
-                    using (SolidBrush tb = new SolidBrush(Color.FromArgb(30, 41, 59)))
+                    using (SolidBrush tb = new SolidBrush(IsDarkMode ? Color.FromArgb(241, 245, 249) : Color.FromArgb(30, 41, 59)))
                     {
                         g.DrawString(btn.Label, labelFont, tb, textRect, sf);
                     }
@@ -2923,22 +3022,24 @@ namespace HyperIDM
 
             for (int i = 0; i < colors.Length; i++)
             {
-                Bitmap bmp = new Bitmap(16, 16, PixelFormat.Format32bppArgb);
-                using (Graphics g = Graphics.FromImage(bmp))
+                using (Bitmap bmp = new Bitmap(16, 16, PixelFormat.Format32bppArgb))
                 {
-                    g.SmoothingMode = SmoothingMode.AntiAlias;
-                    g.Clear(Color.Transparent);
-                    using (SolidBrush tabBrush = new SolidBrush(colors[i]))
+                    using (Graphics g = Graphics.FromImage(bmp))
                     {
-                        g.FillRectangle(tabBrush, 2, 3, 5, 3);
-                        g.FillRectangle(tabBrush, 2, 5, 12, 8);
+                        g.SmoothingMode = SmoothingMode.AntiAlias;
+                        g.Clear(Color.Transparent);
+                        using (SolidBrush tabBrush = new SolidBrush(colors[i]))
+                        {
+                            g.FillRectangle(tabBrush, 2, 3, 5, 3);
+                            g.FillRectangle(tabBrush, 2, 5, 12, 8);
+                        }
+                        using (Pen outline = new Pen(Color.FromArgb(180, 30, 41, 59), 0.8f))
+                        {
+                            g.DrawRectangle(outline, 2, 5, 11, 7);
+                        }
                     }
-                    using (Pen outline = new Pen(Color.FromArgb(180, 30, 41, 59), 0.8f))
-                    {
-                        g.DrawRectangle(outline, 2, 5, 11, 7);
-                    }
+                    list.Images.Add(bmp);
                 }
-                list.Images.Add(bmp);
             }
             return list;
         }
@@ -3706,7 +3807,15 @@ namespace HyperIDM
             Color gridLine = isDarkMode ? Color.FromArgb(51, 65, 85) : Color.FromArgb(234, 234, 234);
 
             BackColor = bg;
-            toolbar.BackColor = isDarkMode ? Color.FromArgb(241, 245, 249) : Color.White;
+            toolbar.IsDarkMode = isDarkMode;
+            toolbar.BackColor = hdrBg;
+            toolbar.Invalidate();
+            menuStrip.BackColor = hdrBg;
+            menuStrip.ForeColor = fg;
+            foreach (ToolStripItem item in menuStrip.Items)
+            {
+                item.ForeColor = fg;
+            }
             treeCategories.BackColor = bg;
             treeCategories.ForeColor = fg;
             gridJobs.BackgroundColor = bg;
@@ -4556,7 +4665,7 @@ namespace HyperIDM
         private static readonly string[][] PresetQualities = new string[][]
         {
             new string[] { "best", "Tối đa tự động (12K/8K/4K)" },
-            new string[] { "12k", "12K Ultra HD (6480p)" },
+            new string[] { "12k", "12K Ultra HD (8640p)" },
             new string[] { "8k", "8K Ultra HD (4320p)" },
             new string[] { "4k", "4K Ultra HD (2160p)" },
             new string[] { "2k", "2K QHD (1440p)" },
@@ -4681,9 +4790,20 @@ namespace HyperIDM
 
             Label lUrl = MakeLabel("URL tải xuống:", labelX, y + 4);
             txtUrl = MakeTextBox(inputX, y, inputW);
+            System.Windows.Forms.Timer urlDebounceTimer = new System.Windows.Forms.Timer { Interval = 350 };
+            urlDebounceTimer.Tick += delegate
+            {
+                urlDebounceTimer.Stop();
+                if (!IsDisposed && !programmaticUpdate) RefreshMetadataFromUrl();
+            };
+            Disposed += delegate { try { urlDebounceTimer.Stop(); urlDebounceTimer.Dispose(); } catch { } };
             txtUrl.TextChanged += delegate
             {
-                if (!programmaticUpdate) RefreshMetadataFromUrl();
+                if (!programmaticUpdate)
+                {
+                    urlDebounceTimer.Stop();
+                    urlDebounceTimer.Start();
+                }
             };
             Controls.Add(lUrl);
             Controls.Add(txtUrl);
@@ -5105,7 +5225,7 @@ namespace HyperIDM
                 {
                     agent.RunOnUiThread(new MethodInvoker(delegate
                     {
-                        if (!IsDisposed)
+                        if (!IsDisposed && string.Equals((txtUrl.Text ?? "").Trim(), urlToProbe, StringComparison.Ordinal))
                         {
                             lblStatus.ForeColor = Color.FromArgb(100, 116, 139);
                             lblStatus.Text = "Sẵn sàng tải xuống với mọi định dạng tệp (64/128 Luồng).";

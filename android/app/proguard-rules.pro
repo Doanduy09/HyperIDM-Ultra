@@ -1,2 +1,2 @@
-# Keep Duytai core engine classes
--keep class com.doanduy.duytai.core.** { *; }
+-keep class com.doanduy.duytai.** { *; }
+-dontwarn kotlinx.coroutines.**

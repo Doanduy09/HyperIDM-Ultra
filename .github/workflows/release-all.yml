@@ -18,22 +18,23 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Build Universal macOS App & DMG
-        run: |
-          chmod +x macos/build-macos-app.sh macos/Install-Duytai-macOS.sh macos/duytai-native-host.sh
-          ./macos/build-macos-app.sh
-      - name: Verify Core Engine on macOS
+      - name: Verify Core Engine & Run Automated Test Suite on macOS
         run: |
           node --check engine.js
           node --check server.js
           node --check idm-features.js
+          node --test tests/core.test.js
+      - name: Build & Code-Sign Universal macOS App & DMG
+        run: |
+          chmod +x macos/build-macos-app.sh macos/Install-Duytai-macOS.sh macos/duytai-native-host.sh
+          ./macos/build-macos-app.sh
       - uses: actions/upload-artifact@v4
         with:
           name: Duytai-macOS-Universal
           path: Duytai-macOS-Universal.dmg
 
   build-android:
-    name: Build & Test Android (.apk)
+    name: Build, Sign & Test Android Release (.apk)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -41,42 +42,71 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '17'
-      - name: Make Gradle Wrapper Executable & Test + Assemble APK
+      - name: Ensure Release Keystore, Run Unit Tests & Assemble Signed Release APK
         working-directory: android
         run: |
+          if [ ! -f app/duytai-release.jks ]; then
+            keytool -genkeypair -v -keystore app/duytai-release.jks -storetype PKCS12 -keyalg RSA -keysize 2048 -validity 10000 -alias duytai -storepass "DuytaiSign#2026" -keypass "DuytaiSign#2026" -dname "CN=DOANDUY Software (Duytai 64-Bit), OU=Mobile Engineering, O=DOANDUY Software, L=Ho Chi Minh, ST=HCM, C=VN"
+          fi
           chmod +x gradlew
-          ./gradlew testDebugUnitTest assembleDebug assembleRelease --no-daemon
-      - name: Export APK Artifacts
+          ./gradlew testDebugUnitTest assembleRelease --no-daemon
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -n 1)"
+          "$APKSIGNER" verify -v --print-certs app/build/outputs/apk/release/app-release.apk
+      - name: Export Signed Release APK Artifact
         run: |
-          cp android/app/build/outputs/apk/debug/app-debug.apk Duytai-Android.apk
-          cp android/app/build/outputs/apk/release/app-release-unsigned.apk Duytai-Android-unsigned-release.apk
+          cp android/app/build/outputs/apk/release/app-release.apk Duytai-Android.apk
       - uses: actions/upload-artifact@v4
         with:
           name: Duytai-Android-APK
           path: |
             Duytai-Android.apk
-            Duytai-Android-unsigned-release.apk
 
   build-windows:
-    name: Build & Test Windows (.exe)
+    name: Build, Sign & Test Windows (.exe & Setup)
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Check Shared Core & Compile HyperIDM.cs
+      - name: Run Automated Core Test Suite, Compile & Authenticode-Sign Windows Binaries
         shell: powershell
         run: |
           node --check engine.js
           node --check server.js
           node --check idm-features.js
+          node --test tests/core.test.js
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
           $csc = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
-          & $csc /nologo /target:winexe /platform:x64 /optimize+ /win32icon:assets\Duytai.ico /out:Duytai.exe HyperIDM.cs /r:System.Windows.Forms.dll /r:System.Drawing.dll /r:System.Core.dll /r:System.Web.Extensions.dll
+          & $csc /nologo /target:winexe /platform:x64 /optimize+ /win32icon:assets\Duytai.ico /win32manifest:app.manifest /r:System.Windows.Forms.dll /r:System.Drawing.dll /r:System.Core.dll /r:System.Web.Extensions.dll /out:Duytai.exe HyperIDM.cs
+          if ($LASTEXITCODE -ne 0) { throw "Failed to compile Duytai.exe" }
+          Copy-Item Duytai.exe HyperIDM.exe -Force
+          & .\Sign-Duytai.ps1 -TargetPaths @(".\Duytai.exe", ".\HyperIDM.exe")
+
+          $stage = Join-Path $env:TEMP "duytai_stage_ci"
+          Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path "$stage\public", "$stage\extension", "$stage\assets" -Force | Out-Null
+          foreach ($f in @("package.json","engine.js","server.js","idm-features.js","clipboard-batch.js","cli.js","duytai-native-host.js","HyperIDM.cs","app.manifest","Sign-Duytai.ps1","Duytai-CodeSigning.cer","Install-HyperIDM.ps1","Install-HyperIDM.bat","Duytai.exe","HyperIDM.exe")) {
+              if (Test-Path $f) { Copy-Item $f "$stage\$f" -Force }
+          }
+          Copy-Item "public\*" "$stage\public" -Recurse -Force
+          Copy-Item "extension\*" "$stage\extension" -Recurse -Force
+          Copy-Item "assets\*" "$stage\assets" -Recurse -Force
+          $payloadZip = Join-Path $env:TEMP "duytai_payload.zip"
+          Remove-Item $payloadZip -Force -ErrorAction SilentlyContinue
+          [System.IO.Compression.ZipFile]::CreateFromDirectory($stage, $payloadZip)
+
+          & $csc /nologo /target:winexe /platform:x64 /optimize+ /win32icon:assets\Duytai.ico /win32manifest:app.manifest /r:System.Windows.Forms.dll /r:System.Drawing.dll /r:System.IO.Compression.dll /r:System.IO.Compression.FileSystem.dll "/resource:$payloadZip,payload.zip" /out:Duytai-Setup.exe SetupBootstrap.cs
+          if ($LASTEXITCODE -ne 0) { throw "Failed to compile Duytai-Setup.exe" }
+          & .\Sign-Duytai.ps1 -TargetPaths @(".\Duytai-Setup.exe")
+          Get-AuthenticodeSignature .\Duytai.exe, .\Duytai-Setup.exe | Format-Table Path, Status, StatusMessage -AutoSize
       - uses: actions/upload-artifact@v4
         with:
           name: Duytai-Windows
-          path: Duytai.exe
+          path: |
+            Duytai.exe
+            Duytai-Setup.exe
+            Duytai-CodeSigning.cer
 
   publish-release:
     needs: [build-macos, build-android, build-windows]
@@ -92,4 +122,6 @@ jobs:
           files: |
             artifacts/Duytai-macOS-Universal/Duytai-macOS-Universal.dmg
             artifacts/Duytai-Android-APK/Duytai-Android.apk
+            artifacts/Duytai-Windows/Duytai-Setup.exe
             artifacts/Duytai-Windows/Duytai.exe
+            artifacts/Duytai-Windows/Duytai-CodeSigning.cer

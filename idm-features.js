@@ -490,7 +490,13 @@ class SpeedLimiter {
     const now = Date.now();
     const dt = Math.max(0.001, (now - this._lastTick) / 1000);
     this._lastTick = now;
-    const running = [...this.getJobs()].filter(j => j.status === 'downloading' && j.activeWorkers);
+    const collectOwners = (job) => {
+      if (job.resolverType === 'youtube' && Array.isArray(job._ytSubJobs) && job._ytSubJobs.length > 0) {
+        return job._ytSubJobs.filter(s => s && s.status === 'downloading' && s.activeWorkers);
+      }
+      return job.activeWorkers ? [job] : [];
+    };
+    const running = [...this.getJobs()].filter(j => j.status === 'downloading' && collectOwners(j).length > 0);
     const hold = new Set();
     if (this.globalBps > 0 && this._bucketOver('global', running, this.globalBps, dt)) running.forEach(j => hold.add(j));
     for (const j of running) {
@@ -501,21 +507,25 @@ class SpeedLimiter {
     const live = new Set();
     for (const j of running) {
       const limited = this.globalBps > 0 || this.jobBps.has(j.id);
-      for (const [segId, w] of j.activeWorkers) {
-        // Pause the IncomingMessage (not the raw socket: http's _read would resume it). Its buffer fills,
-        // the parser stops reading the socket and TCP backpressure slows the server.
-        const res = w.req && w.req.res;
-        if (!res || res.destroyed) continue;
-        live.add(res);
-        const seg = j.segments.find(s => s.id === segId);
-        if (limited && seg) seg.slowTicks = 0; // throttling skews per-socket speed; don't flag stragglers
-        if (hold.has(j)) {
-          if (!res.isPaused()) res.pause();
-          this._paused.set(res, j);
-          if (seg) seg.lastDataTime = now;
-        } else if (this._paused.has(res)) {
-          res.resume();
-          this._paused.delete(res);
+      for (const owner of collectOwners(j)) {
+        for (const [segId, w] of owner.activeWorkers) {
+          // Pause the IncomingMessage (not the raw socket: http's _read would resume it). Its buffer fills,
+          // the parser stops reading the socket and TCP backpressure slows the server.
+          const res = w.req && w.req.res;
+          if (!res || res.destroyed) continue;
+          live.add(res);
+          const seg = owner.segments.find(s => s.id === segId);
+          if (limited && seg) seg.slowTicks = 0; // throttling skews per-socket speed; don't flag stragglers
+          if (hold.has(j)) {
+            if (!res.isPaused()) res.pause();
+            this._paused.set(res, w);
+            if (seg) seg.lastDataTime = now;
+          } else if (this._paused.has(res)) {
+            if (!(w && w.isDiskPaused && w.isDiskPaused())) {
+              res.resume();
+            }
+            this._paused.delete(res);
+          }
         }
       }
     }
@@ -523,7 +533,11 @@ class SpeedLimiter {
   }
 
   _resumeAll() {
-    for (const res of this._paused.keys()) if (!res.destroyed) res.resume();
+    for (const [res, w] of this._paused.entries()) {
+      if (!res.destroyed && !(w && w.isDiskPaused && w.isDiskPaused())) {
+        res.resume();
+      }
+    }
     this._paused.clear();
   }
 }
@@ -611,13 +625,55 @@ function attachIdmFeatures(job, { baseDir, autoCategory = true, verify = true, e
 
 // ───────────────────────── 6. ZIP Preview (Remote HTTP Range EOCD & Local File) ─────────────────────────
 const httpMod = require('http');
+const netMod = require('net');
+const dnsMod = require('dns').promises;
 const { spawn: spawnProc } = require('child_process');
 
-function fetchRangeBuffer(url, startByte, endByte, headers = {}, timeoutMs = 10000, redirects = 0) {
+function isPrivateIpAddress(ip) {
+  const s = String(ip || '').trim().toLowerCase().replace(/^\[|\]$/g, '');
+  if (!s) return true;
+  if (s === '::1' || s === '::' || s.startsWith('fe80:') || s.startsWith('fc') || s.startsWith('fd')) return true;
+  const v4 = s.startsWith('::ffff:') ? s.slice(7) : s;
+  if (netMod.isIPv4(v4)) {
+    const p = v4.split('.').map(Number);
+    if (p[0] === 0 || p[0] === 10 || p[0] === 127) return true;
+    if (p[0] === 169 && p[1] === 254) return true;
+    if (p[0] === 172 && p[1] >= 16 && p[1] <= 31) return true;
+    if (p[0] === 192 && p[1] === 168) return true;
+    if (p[0] === 100 && p[1] >= 64 && p[1] <= 127) return true;
+    return false;
+  }
+  return netMod.isIP(s) === 0;
+}
+
+async function assertSafeRemoteUrl(rawUrl) {
+  let parsed;
+  try { parsed = new URL(rawUrl); } catch { throw new Error('URL không hợp lệ'); }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error('Chỉ hỗ trợ URL HTTP/HTTPS');
+  }
+  const host = parsed.hostname.toLowerCase();
+  if (!host || host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local')) {
+    throw new Error('Blocked internal hostname');
+  }
+  if (netMod.isIP(host)) {
+    if (isPrivateIpAddress(host)) throw new Error('Blocked private/loopback IP');
+    return parsed;
+  }
+  const resolved = await dnsMod.lookup(host, { all: true }).catch(() => []);
+  if (!resolved.length) throw new Error('Không phân giải được tên miền');
+  for (const entry of resolved) {
+    if (isPrivateIpAddress(entry.address)) {
+      throw new Error('Blocked private/internal resolved IP');
+    }
+  }
+  return parsed;
+}
+
+async function fetchRangeBuffer(url, startByte, endByte, headers = {}, timeoutMs = 10000, redirects = 0) {
+  if (redirects > 6) throw new Error('Too many redirects');
+  const parsed = await assertSafeRemoteUrl(url);
   return new Promise((resolve, reject) => {
-    if (redirects > 6) return reject(new Error('Too many redirects'));
-    let parsed;
-    try { parsed = new URL(url); } catch (e) { return reject(e); }
     const mod = parsed.protocol === 'https:' ? https : httpMod;
     const rangeHdr = startByte < 0
       ? `bytes=${startByte}`
@@ -627,28 +683,43 @@ function fetchRangeBuffer(url, startByte, endByte, headers = {}, timeoutMs = 100
       'Range': rangeHdr,
       ...headers
     };
+    let settled = false;
+    const finish = (fn, val) => {
+      if (settled) return;
+      settled = true;
+      fn(val);
+    };
     const req = mod.request(parsed, { method: 'GET', headers: reqHeaders, timeout: timeoutMs }, res => {
       if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
         res.resume();
         const nextUrl = new URL(res.headers.location, parsed).href;
-        return resolve(fetchRangeBuffer(nextUrl, startByte, endByte, headers, timeoutMs, redirects + 1));
+        fetchRangeBuffer(nextUrl, startByte, endByte, headers, timeoutMs, redirects + 1)
+          .then(v => finish(resolve, v), e => finish(reject, e));
+        return;
       }
       if (res.statusCode !== 206 && res.statusCode !== 200) {
         res.resume();
-        return reject(new Error(`HTTP ${res.statusCode}`));
+        return finish(reject, new Error(`HTTP ${res.statusCode}`));
       }
       const chunks = [];
       let total = 0;
       const maxRead = 2 * 1024 * 1024;
       res.on('data', chunk => {
+        if (settled) return;
         total += chunk.length;
-        if (total <= maxRead) chunks.push(chunk);
-        else req.destroy();
+        if (total <= maxRead) {
+          chunks.push(chunk);
+        } else {
+          res.destroy();
+          req.destroy();
+          finish(resolve, { buffer: Buffer.concat(chunks), statusCode: res.statusCode, headers: res.headers });
+        }
       });
-      res.on('end', () => resolve({ buffer: Buffer.concat(chunks), statusCode: res.statusCode, headers: res.headers }));
+      res.on('end', () => finish(resolve, { buffer: Buffer.concat(chunks), statusCode: res.statusCode, headers: res.headers }));
+      res.on('error', e => finish(reject, e));
     });
-    req.on('timeout', () => req.destroy(new Error('Range request timeout')));
-    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); finish(reject, new Error('Range request timeout')); });
+    req.on('error', e => finish(reject, e));
     req.end();
   });
 }
@@ -753,38 +824,64 @@ async function previewZipArchive({ url, filePath, totalBytes = 0, headers = {} }
 }
 
 // ───────────────────────── 7. Site Grabber / Spider (IDM Grabber Project) ─────────────────────────
-function fetchHtmlPage(url, headers = {}, timeoutMs = 12000, redirects = 0) {
+async function fetchHtmlPage(url, headers = {}, timeoutMs = 12000, redirects = 0) {
+  if (redirects > 6) throw new Error('Quá nhiều chuyển hướng (Redirects)');
+  const parsed = await assertSafeRemoteUrl(url);
   return new Promise((resolve, reject) => {
-    if (redirects > 6) return reject(new Error('Quá nhiều chuyển hướng (Redirects)'));
-    let parsed;
-    try { parsed = new URL(url); } catch (e) { return reject(e); }
     const mod = parsed.protocol === 'https:' ? https : httpMod;
     const reqHeaders = {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36',
       'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
       ...headers
     };
+    let settled = false;
+    const finish = (fn, val) => {
+      if (settled) return;
+      settled = true;
+      fn(val);
+    };
     const req = mod.request(parsed, { method: 'GET', headers: reqHeaders, timeout: timeoutMs }, res => {
       if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
         res.resume();
         const nextUrl = new URL(res.headers.location, parsed).href;
-        return resolve(fetchHtmlPage(nextUrl, headers, timeoutMs, redirects + 1));
+        fetchHtmlPage(nextUrl, headers, timeoutMs, redirects + 1)
+          .then(v => finish(resolve, v), e => finish(reject, e));
+        return;
+      }
+      const ct = String(res.headers['content-type'] || '');
+      if (ct && !/html|xml|text/i.test(ct)) {
+        res.destroy();
+        req.destroy();
+        return finish(reject, new Error(`URL trả về nội dung không phải trang web (${ct})`));
       }
       const chunks = [];
       let total = 0;
       res.on('data', c => {
+        if (settled) return;
         total += c.length;
-        if (total <= 3 * 1024 * 1024) chunks.push(c);
+        if (total <= 3 * 1024 * 1024) {
+          chunks.push(c);
+        } else {
+          res.destroy();
+          req.destroy();
+          finish(resolve, {
+            finalUrl: parsed.href,
+            statusCode: res.statusCode,
+            contentType: ct,
+            html: Buffer.concat(chunks).toString('utf8')
+          });
+        }
       });
-      res.on('end', () => resolve({
+      res.on('end', () => finish(resolve, {
         finalUrl: parsed.href,
         statusCode: res.statusCode,
-        contentType: res.headers['content-type'] || '',
+        contentType: ct,
         html: Buffer.concat(chunks).toString('utf8')
       }));
+      res.on('error', e => finish(reject, e));
     });
-    req.on('timeout', () => req.destroy(new Error('Quá thời gian chờ tải trang web')));
-    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); finish(reject, new Error('Quá thời gian chờ tải trang web')); });
+    req.on('error', e => finish(reject, e));
     req.end();
   });
 }
@@ -893,11 +990,22 @@ function runWindowsDefenderScan(filePath) {
     if (!fs.existsSync(mpExe)) {
       return resolve({ scanned: false, clean: true, scanner: 'Built-in SHA-256 Verifier', detail: 'Windows Defender CLI không khả dụng, đã xác thực toàn vẹn SHA-256.' });
     }
+    let settled = false;
     const child = spawnProc(mpExe, ['-Scan', '-ScanType', '3', '-File', filePath], { windowsHide: true });
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      try { child.kill(); } catch {}
+      resolve({ scanned: false, clean: true, timedOut: true, scanner: 'Built-in SHA-256 Verifier', detail: 'Windows Defender quá thời gian chờ (30s), đã kiểm tra SHA-256.' });
+    }, 30000);
+    timer.unref?.();
     let out = '';
     child.stdout.on('data', d => { out += d.toString(); });
     child.stderr.on('data', d => { out += d.toString(); });
     child.on('close', code => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
       const clean = code === 0 && !/found\s+threats/i.test(out);
       resolve({
         scanned: true,
@@ -908,6 +1016,9 @@ function runWindowsDefenderScan(filePath) {
       });
     });
     child.on('error', () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
       resolve({ scanned: false, clean: true, scanner: 'Built-in SHA-256 Verifier', detail: 'Đã xác thực toàn vẹn mã băm.' });
     });
   });
@@ -938,6 +1049,7 @@ module.exports = {
   expandBatchPattern, DownloadQueue,
   SpeedLimiter,
   attachIdmFeatures,
+  assertSafeRemoteUrl,
   previewZipArchive,
   grabSiteLinks,
   scanAndVerifyFile

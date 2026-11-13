@@ -60,13 +60,14 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << 'EOF'
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
   <key>CFBundleName</key><string>Duytai</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>7.4.0</string>
-  <key>CFBundleVersion</key><string>740</string>
+  <key>CFBundleShortVersionString</key><string>7.5.0</string>
+  <key>CFBundleVersion</key><string>750</string>
   <key>LSMinimumSystemVersion</key><string>11.0</string>
+  <key>NSHumanReadableCopyright</key><string>Copyright © 2026 DOANDUY Software. All rights reserved.</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSAppTransportSecurity</key>
   <dict>
-    <key>NSAllowsArbitraryLoads</key><true/>
+    <key>NSAllowsArbitraryLoads</key><false/>
     <key>NSAllowsLocalNetworking</key><true/>
   </dict>
   <key>CFBundleURLTypes</key>
@@ -81,9 +82,20 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << 'EOF'
 </plist>
 EOF
 
-codesign --force --deep --sign - "$APP_BUNDLE" || true
+echo "[3.5/4] Signing Duytai.app with Hardened Runtime & Entitlements..."
+ENTITLEMENTS="$SCRIPT_DIR/entitlements.plist"
+SIGN_ID="${APPLE_SIGNING_IDENTITY:--}"
+xattr -cr "$APP_BUNDLE" 2>/dev/null || true
+if [ "$SIGN_ID" != "-" ]; then
+  codesign --force --deep --options runtime --entitlements "$ENTITLEMENTS" --timestamp --sign "$SIGN_ID" "$APP_BUNDLE"
+else
+  codesign --force --deep --options runtime --entitlements "$ENTITLEMENTS" --sign - "$APP_BUNDLE"
+fi
+codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
 
-echo "[4/4] Packaging Universal DMG..."
+echo "[4/4] Packaging & Signing Universal DMG..."
 rm -f "$DMG_OUT"
 hdiutil create -volname "Duytai Downloader" -srcfolder "$APP_BUNDLE" -ov -format UDZO "$DMG_OUT"
+codesign --force --sign "$SIGN_ID" "$DMG_OUT"
+codesign --verify --verbose=2 "$DMG_OUT"
 echo "DONE: $DMG_OUT"
