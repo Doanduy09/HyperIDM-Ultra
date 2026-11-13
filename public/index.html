@@ -1775,6 +1775,7 @@
 
     function formatEta(sec, status) {
       if (status === 'completed') return 'Hoàn tất';
+      if (status === 'paused' || status === 'error' || status === 'canceled' || status === 'queued') return '--:--';
       if (sec === 0) return '0s';
       if (!sec || !Number.isFinite(sec)) return '--:--';
       if (sec < 60) return `${sec} giây`;

@@ -367,6 +367,7 @@ namespace HyperIDM
         {
             string st = (status ?? "").ToLowerInvariant();
             if (st == "completed") return "0 giây";
+            if (st == "paused" || st == "error" || st == "canceled" || st == "queued") return "";
             if (!hasEta || etaSec < 0) return "";
             if (etaSec < 60) return etaSec.ToString() + " giây";
             int mins = etaSec / 60;
@@ -2413,7 +2414,7 @@ namespace HyperIDM
             InitializeUi();
 
             syncTimer = new System.Windows.Forms.Timer();
-            syncTimer.Interval = 500;
+            syncTimer.Interval = 750;
             syncTimer.Tick += delegate { TriggerImmediateRefresh(); };
             syncTimer.Start();
 
@@ -3267,13 +3268,13 @@ namespace HyperIDM
 
             if (!restoredAnySelection && gridJobs.Rows.Count > 0 && gridJobs.SelectedRows.Count == 0 && checkedJobIds.Count == 0)
             {
-                gridJobs.Rows[0].Selected = true;
+                if (!gridJobs.Rows[0].Selected) gridJobs.Rows[0].Selected = true;
             }
 
             UpdateCheckHeaderGlyph();
             RefreshStatusSummaryText();
 
-            if (firstVisible >= 0 && firstVisible < gridJobs.Rows.Count)
+            if (firstVisible >= 0 && firstVisible < gridJobs.Rows.Count && gridJobs.FirstDisplayedScrollingRowIndex != firstVisible)
             {
                 try { gridJobs.FirstDisplayedScrollingRowIndex = firstVisible; } catch { }
             }
@@ -3972,6 +3973,8 @@ namespace HyperIDM
         private string currentStatus = "resolving";
         private string currentFilePath = "";
         private string currentSaveDir = "";
+        private string lastSegBarSig = "";
+        private int pauseResumeBusy = 0;
 
         public IdmProgressForm(TrayAgentContext ownerAgent, string id, string initialFileName, string initialUrl, int threads)
         {
@@ -3980,7 +3983,7 @@ namespace HyperIDM
             InitializeUi(initialFileName, initialUrl, threads);
 
             pollTimer = new System.Windows.Forms.Timer();
-            pollTimer.Interval = 350;
+            pollTimer.Interval = 700;
             pollTimer.Tick += delegate { PollJobOnce(); };
             pollTimer.Start();
             PollJobOnce();
@@ -4220,6 +4223,31 @@ namespace HyperIDM
             });
         }
 
+        private static void SetControlTextIfChanged(Control ctrl, string value)
+        {
+            string next = value ?? "";
+            if (!string.Equals(ctrl.Text, next, StringComparison.Ordinal))
+            {
+                ctrl.Text = next;
+            }
+        }
+
+        private static string BuildSegmentBarSignature(string status, long totalBytes, long downloadedBytes, List<SegmentSnapshot> segs)
+        {
+            StringBuilder sb = new StringBuilder(128);
+            sb.Append(status).Append('|').Append(totalBytes).Append('|').Append(downloadedBytes).Append('|');
+            if (segs != null)
+            {
+                sb.Append(segs.Count);
+                for (int i = 0; i < segs.Count; i++)
+                {
+                    SegmentSnapshot s = segs[i];
+                    sb.Append(',').Append(s.Status).Append(':').Append(s.Current);
+                }
+            }
+            return sb.ToString();
+        }
+
         private void UpdateUi(JobSnapshot job)
         {
             currentStatus = (job.Status ?? "").ToLowerInvariant();
@@ -4227,61 +4255,66 @@ namespace HyperIDM
             currentSaveDir = job.SaveDir ?? "";
 
             string pctStr = IdmFormat.FormatPercent(job.Progress);
-            if (currentStatus == "completed")
-            {
-                Text = string.Format("Hoàn thành 100% — {0}", job.FileName);
-            }
-            else
-            {
-                Text = string.Format("{0} của {1} — Duytai ({2} Luồng)", pctStr, job.FileName, job.MaxConnections);
-            }
+            string nextTitle = (currentStatus == "completed")
+                ? string.Format("Hoàn thành 100% — {0}", job.FileName)
+                : string.Format("{0} của {1} — Duytai ({2} Luồng)", pctStr, job.FileName, job.MaxConnections);
+            SetControlTextIfChanged(this, nextTitle);
 
-            lblUrlVal.Text = job.Url ?? "";
+            SetControlTextIfChanged(lblUrlVal, job.Url ?? "");
 
+            string nextStatusText;
+            Color nextStatusColor;
             if (currentStatus == "downloading")
             {
-                lblStatusVal.Text = "Đang nhận dữ liệu...";
-                lblStatusVal.ForeColor = Color.FromArgb(0, 102, 204);
+                nextStatusText = "Đang nhận dữ liệu...";
+                nextStatusColor = Color.FromArgb(0, 102, 204);
             }
             else if (currentStatus == "completed")
             {
-                lblStatusVal.Text = "Hoàn thành tải xuống!";
-                lblStatusVal.ForeColor = Color.FromArgb(5, 150, 105);
+                nextStatusText = "Hoàn thành tải xuống!";
+                nextStatusColor = Color.FromArgb(5, 150, 105);
             }
             else
             {
-                lblStatusVal.Text = IdmFormat.TranslateStatus(job.Status, job.Progress, job.Error);
-                lblStatusVal.ForeColor = currentStatus == "error" ? Color.FromArgb(220, 38, 38) : Color.FromArgb(217, 119, 6);
+                nextStatusText = IdmFormat.TranslateStatus(job.Status, job.Progress, job.Error);
+                nextStatusColor = currentStatus == "error" ? Color.FromArgb(220, 38, 38) : Color.FromArgb(217, 119, 6);
             }
+            SetControlTextIfChanged(lblStatusVal, nextStatusText);
+            if (lblStatusVal.ForeColor != nextStatusColor) lblStatusVal.ForeColor = nextStatusColor;
 
-            lblTotalSizeVal.Text = job.TotalBytes > 0 ? IdmFormat.FormatBytes(job.TotalBytes) : "Chưa rõ";
-            lblDownloadedVal.Text = string.Format("{0} ({1})", IdmFormat.FormatBytes(job.DownloadedBytes), pctStr);
-            lblSpeedVal.Text = IdmFormat.IsActiveStatus(currentStatus)
+            SetControlTextIfChanged(lblTotalSizeVal, job.TotalBytes > 0 ? IdmFormat.FormatBytes(job.TotalBytes) : "Chưa rõ");
+            SetControlTextIfChanged(lblDownloadedVal, string.Format("{0} ({1})", IdmFormat.FormatBytes(job.DownloadedBytes), pctStr));
+            SetControlTextIfChanged(lblSpeedVal, IdmFormat.IsActiveStatus(currentStatus)
                 ? (job.CurrentSpeedBps > 0 ? IdmFormat.FormatSpeed(job.CurrentSpeedBps, true) : "0 KB/sec")
-                : "0 KB/sec";
-            lblEtaVal.Text = IdmFormat.FormatEta(job.EtaSeconds, job.HasEta, currentStatus);
-            lblResumeVal.Text = job.AcceptRanges ? "Có" : "Không";
+                : "0 KB/sec");
+            SetControlTextIfChanged(lblEtaVal, IdmFormat.FormatEta(job.EtaSeconds, job.HasEta, currentStatus));
+            SetControlTextIfChanged(lblResumeVal, job.AcceptRanges ? "Có" : "Không");
 
             int barVal = (int)Math.Min(1000, Math.Max(0, Math.Round(job.Progress * 10)));
             if (progressBar.Value != barVal) progressBar.Value = barVal;
 
             if (currentStatus == "completed")
             {
-                btnPauseResume.Text = "Mở tệp";
-                btnCancelJob.Text = "Đóng";
+                SetControlTextIfChanged(btnPauseResume, "Mở tệp");
+                SetControlTextIfChanged(btnCancelJob, "Đóng");
             }
             else if (currentStatus == "paused" || currentStatus == "error" || currentStatus == "queued")
             {
-                btnPauseResume.Text = "Tải tiếp";
-                btnCancelJob.Text = "Hủy bỏ";
+                SetControlTextIfChanged(btnPauseResume, "Tải tiếp");
+                SetControlTextIfChanged(btnCancelJob, "Hủy bỏ");
             }
             else
             {
-                btnPauseResume.Text = "Tạm dừng";
-                btnCancelJob.Text = "Hủy bỏ";
+                SetControlTextIfChanged(btnPauseResume, "Tạm dừng");
+                SetControlTextIfChanged(btnCancelJob, "Hủy bỏ");
             }
 
-            segmentBar.UpdateSegments(job.Segments, job.TotalBytes);
+            string nextSegBarSig = BuildSegmentBarSignature(currentStatus, job.TotalBytes, job.DownloadedBytes, job.Segments);
+            if (!string.Equals(nextSegBarSig, lastSegBarSig, StringComparison.Ordinal))
+            {
+                lastSegBarSig = nextSegBarSig;
+                segmentBar.UpdateSegments(job.Segments, job.TotalBytes);
+            }
             UpdateSegmentList(job.Segments);
 
             if (currentStatus == "completed" && !completionHandled)
@@ -4306,14 +4339,64 @@ namespace HyperIDM
         private void UpdateSegmentList(List<SegmentSnapshot> segs)
         {
             if (segs == null) return;
+            int n = segs.Count;
+            string[] col0Arr = new string[n];
+            string[] col1Arr = new string[n];
+            string[] col2Arr = new string[n];
+            bool anyChanged = listSegments.Items.Count != n;
+
+            for (int i = 0; i < n; i++)
+            {
+                SegmentSnapshot s = segs[i];
+                string col0 = (s.Id + 1).ToString();
+                long doneBytes = Math.Max(0, s.Current - s.Start);
+                long totalSegBytes = s.End >= s.Start ? (s.End - s.Start + 1) : 0;
+                string col1 = totalSegBytes > 0
+                    ? (IdmFormat.FormatBytes(doneBytes) + " / " + IdmFormat.FormatBytes(totalSegBytes))
+                    : IdmFormat.FormatBytes(doneBytes);
+
+                string col2;
+                if (s.Status == "completed")
+                {
+                    col2 = "Hoàn thành";
+                }
+                else if (s.Status == "downloading")
+                {
+                    string sp = s.SpeedBps > 0 ? (" (" + IdmFormat.FormatSpeed(s.SpeedBps, false) + ")") : "";
+                    string ip = !string.IsNullOrEmpty(s.Ip) ? (" • " + s.Ip) : "";
+                    col2 = "Đang nhận dữ liệu..." + sp + ip;
+                }
+                else
+                {
+                    col2 = currentStatus == "paused" ? "Đã tạm dừng" : "Đang chờ kết nối...";
+                }
+
+                col0Arr[i] = col0;
+                col1Arr[i] = col1;
+                col2Arr[i] = col2;
+
+                if (!anyChanged)
+                {
+                    ListViewItem existing = listSegments.Items[i];
+                    if (existing.SubItems[0].Text != col0 ||
+                        existing.SubItems[1].Text != col1 ||
+                        existing.SubItems[2].Text != col2)
+                    {
+                        anyChanged = true;
+                    }
+                }
+            }
+
+            if (!anyChanged) return;
+
             listSegments.BeginUpdate();
             try
             {
-                while (listSegments.Items.Count > segs.Count)
+                while (listSegments.Items.Count > n)
                 {
                     listSegments.Items.RemoveAt(listSegments.Items.Count - 1);
                 }
-                while (listSegments.Items.Count < segs.Count)
+                while (listSegments.Items.Count < n)
                 {
                     ListViewItem lvi = new ListViewItem("");
                     lvi.SubItems.Add("");
@@ -4321,37 +4404,12 @@ namespace HyperIDM
                     listSegments.Items.Add(lvi);
                 }
 
-                for (int i = 0; i < segs.Count; i++)
+                for (int i = 0; i < n; i++)
                 {
-                    SegmentSnapshot s = segs[i];
                     ListViewItem item = listSegments.Items[i];
-
-                    string col0 = (s.Id + 1).ToString();
-                    long doneBytes = Math.Max(0, s.Current - s.Start);
-                    long totalSegBytes = s.End >= s.Start ? (s.End - s.Start + 1) : 0;
-                    string col1 = totalSegBytes > 0
-                        ? (IdmFormat.FormatBytes(doneBytes) + " / " + IdmFormat.FormatBytes(totalSegBytes))
-                        : IdmFormat.FormatBytes(doneBytes);
-
-                    string col2;
-                    if (s.Status == "completed")
-                    {
-                        col2 = "Hoàn thành";
-                    }
-                    else if (s.Status == "downloading")
-                    {
-                        string sp = s.SpeedBps > 0 ? (" (" + IdmFormat.FormatSpeed(s.SpeedBps, false) + ")") : "";
-                        string ip = !string.IsNullOrEmpty(s.Ip) ? (" • " + s.Ip) : "";
-                        col2 = "Đang nhận dữ liệu..." + sp + ip;
-                    }
-                    else
-                    {
-                        col2 = currentStatus == "paused" ? "Đã tạm dừng" : "Đang chờ kết nối...";
-                    }
-
-                    if (item.SubItems[0].Text != col0) item.SubItems[0].Text = col0;
-                    if (item.SubItems[1].Text != col1) item.SubItems[1].Text = col1;
-                    if (item.SubItems[2].Text != col2) item.SubItems[2].Text = col2;
+                    if (item.SubItems[0].Text != col0Arr[i]) item.SubItems[0].Text = col0Arr[i];
+                    if (item.SubItems[1].Text != col1Arr[i]) item.SubItems[1].Text = col1Arr[i];
+                    if (item.SubItems[2].Text != col2Arr[i]) item.SubItems[2].Text = col2Arr[i];
                 }
             }
             finally
@@ -4409,14 +4467,28 @@ namespace HyperIDM
                 return;
             }
 
+            if (Interlocked.CompareExchange(ref pauseResumeBusy, 1, 0) != 0) return;
             string action = (currentStatus == "paused" || currentStatus == "error" || currentStatus == "queued") ? "resume" : "pause";
+            try { btnPauseResume.Enabled = false; } catch { }
             ThreadPool.QueueUserWorkItem(delegate
             {
                 try
                 {
-                    TrayAgentContext.HttpRequest("POST", Program.AppUrl + "/api/jobs/" + Uri.EscapeDataString(jobId) + "/" + action, "{}", 3000);
+                    TrayAgentContext.HttpRequest("POST", Program.AppUrl + "/api/jobs/" + Uri.EscapeDataString(jobId) + "/" + action, "{}", 4000);
                 }
                 catch { }
+                finally
+                {
+                    Interlocked.Exchange(ref pauseResumeBusy, 0);
+                    try
+                    {
+                        agent.RunOnUiThread(new MethodInvoker(delegate
+                        {
+                            if (!IsDisposed && btnPauseResume != null) btnPauseResume.Enabled = true;
+                        }));
+                    }
+                    catch { }
+                }
                 PollJobOnce();
                 agent.RefreshMainFormNow();
             });

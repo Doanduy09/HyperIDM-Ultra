@@ -107,6 +107,53 @@ function normalizeVideoQuality(q) {
   return YT_QUALITY_FORMATS[s] ? s : 'best';
 }
 
+function summarizeSegments(srcSegs, maxBuckets = 64, idOffset = 0) {
+  if (!Array.isArray(srcSegs) || srcSegs.length === 0) return [];
+  const total = srcSegs.length;
+  const buckets = Math.min(maxBuckets, total);
+  const out = [];
+  for (let b = 0; b < buckets; b++) {
+    const startIdx = Math.floor((b * total) / buckets);
+    const endIdx = Math.floor(((b + 1) * total) / buckets);
+    const first = srcSegs[startIdx];
+    const last = srcSegs[Math.max(startIdx, endIdx - 1)];
+    let done = 0;
+    let totalLen = 0;
+    let speedBps = 0;
+    let allCompleted = true;
+    let anyDownloading = false;
+    let activeIp = '';
+    for (let i = startIdx; i < endIdx; i++) {
+      const s = srcSegs[i];
+      if (s.end >= s.start) {
+        totalLen += (s.end - s.start + 1);
+      }
+      done += Math.max(0, (s.current || s.start) - s.start);
+      if (s.status !== 'completed') allCompleted = false;
+      if (s.status === 'downloading') {
+        anyDownloading = true;
+        speedBps += (s.speedBps || 0);
+        if (!activeIp && s.ip) activeIp = s.ip;
+      }
+    }
+    const segStart = first.start;
+    const segEnd = last.end >= segStart ? (segStart + Math.max(0, totalLen - 1)) : last.end;
+    const segStatus = allCompleted ? 'completed' : (anyDownloading ? 'downloading' : 'pending');
+    out.push({
+      id: idOffset + b,
+      start: segStart,
+      current: allCompleted && segEnd >= segStart ? (segEnd + 1) : (segStart + done),
+      end: segEnd,
+      status: segStatus,
+      speedBps,
+      ip: activeIp,
+      retries: 0,
+      bytesInWindow: 0
+    });
+  }
+  return out;
+}
+
 const YT_PROBE_CACHE = new Map();
 
 /**
@@ -170,7 +217,8 @@ class DownloadJob extends EventEmitter {
     this.segments = [];
     this.activeWorkers = new Map();
     this.fileHandle = null;
-    this.filePath = '';
+    this._skipUniqueResolve = Boolean(options._skipUniqueResolve);
+    this.filePath = (this._skipUniqueResolve && options.filePath) ? options.filePath : '';
     this.stateFilePath = '';
 
     this._speedTimer = null;
@@ -179,6 +227,11 @@ class DownloadJob extends EventEmitter {
     this._telemetryTick = 0;
     this._ewmaWriteMs = 0;
     this._speedWindow = [];
+    this._etaSpeedEwma = 0;
+    this._ytSubJobs = [];
+    this._ytRunToken = 0;
+    this._ytPipelineActive = false;
+    this._ytProc = null;
     this._lastCongestionAt = 0;
     this._lastAimdStepAt = 0;
     this._activeHedges = 0;
@@ -241,11 +294,36 @@ class DownloadJob extends EventEmitter {
   }
 
   async start() {
-    if (this.status === 'downloading' || this.status === 'probing' || this.status === 'resolving') return;
+    if (['downloading', 'probing', 'resolving', 'muxing', 'completed'].includes(this.status)) return;
     this.error = null;
     this._rateLimitUntil = 0;
     this._speedWindow = [];
-    this._activeHedges = 0;
+    this._etaSpeedEwma = 0;
+
+    // Fast in-memory resume for active YouTube dual-stream sub-jobs (never spawn duplicates)
+    if (this.resolverType === 'youtube' && this._ytPipelineActive && Array.isArray(this._ytSubJobs) && this._ytSubJobs.length > 0) {
+      const unfinished = this._ytSubJobs.filter(s => s && s.status !== 'completed');
+      if (unfinished.length > 0) {
+        this.status = 'downloading';
+        this.startTime = Date.now();
+        this.currentSpeedBps = 0;
+        this.etaSeconds = null;
+        for (const sub of unfinished) {
+          sub.error = null;
+          sub._rateLimitUntil = 0;
+          if (Array.isArray(sub.segments)) {
+            for (const seg of sub.segments) {
+              seg.retries = 0;
+              if (seg.status !== 'completed') seg.status = 'pending';
+            }
+          }
+          sub.start().catch(() => {});
+        }
+        this.emit('update', this.toJSON());
+        return;
+      }
+    }
+
     if (Array.isArray(this.segments)) {
       for (const seg of this.segments) {
         seg.retries = 0;
@@ -263,6 +341,7 @@ class DownloadJob extends EventEmitter {
 
       // 1. Check if URL is a YouTube / Streaming Video URL
       if (this._isYouTubeOrMediaUrl(this.url)) {
+        await this._abortYoutubeSubJobs(false);
         this.resolverType = 'youtube';
         await this._executeYouTubeMultiStreamPipeline();
         return;
@@ -295,7 +374,11 @@ class DownloadJob extends EventEmitter {
         if (!this.fileName) {
           this.fileName = meta.fileName || this._inferFileName(this.finalUrl);
         }
-        this.filePath = await this._resolveUniqueFilePath(path.join(this.saveDir, this.fileName));
+        if (this._skipUniqueResolve && this.filePath) {
+          RESERVED_TARGET_PATHS.set(this.filePath.toLowerCase(), this.id);
+        } else {
+          this.filePath = await this._resolveUniqueFilePath(path.join(this.saveDir, this.fileName));
+        }
         this.fileName = path.basename(this.filePath);
         this.stateFilePath = `${this.filePath}.hyper.json`;
 
@@ -321,8 +404,12 @@ class DownloadJob extends EventEmitter {
       this._scheduleWorkers();
       this.emit('update', this.toJSON());
     } catch (err) {
+      if (this.status === 'paused' || this.status === 'canceled') return;
       this.status = 'error';
       this.error = err.message || String(err);
+      this.currentSpeedBps = 0;
+      this.etaSeconds = null;
+      await this._abortYoutubeSubJobs(false);
       await this._cleanupHandles();
       this.emit('update', this.toJSON());
     }
@@ -367,7 +454,42 @@ class DownloadJob extends EventEmitter {
     return /^https?:\/\/(www\.|m\.)?(youtube\.com\/(watch|shorts)|youtu\.be\/)/i.test(u);
   }
 
+  async _abortYoutubeSubJobs(deleteFiles = false) {
+    this._ytRunToken++;
+    this._ytPipelineActive = false;
+    if (this._ytProc) {
+      try { this._ytProc.kill(); } catch {}
+      this._ytProc = null;
+    }
+    const subs = Array.isArray(this._ytSubJobs) ? this._ytSubJobs.slice() : [];
+    this._ytSubJobs = [];
+    for (const sub of subs) {
+      if (!sub) continue;
+      if (sub._parentSyncListener) {
+        sub.removeListener('update', sub._parentSyncListener);
+        sub._parentSyncListener = null;
+      }
+      try {
+        await sub.cancel(Boolean(deleteFiles));
+      } catch {}
+    }
+    if (deleteFiles && this.filePath) {
+      const stalePaths = [
+        `${this.filePath}.video.tmp`,
+        `${this.filePath}.video.tmp.hyper.json`,
+        `${this.filePath}.audio.tmp`,
+        `${this.filePath}.audio.tmp.hyper.json`
+      ];
+      for (const p of stalePaths) {
+        if (fs.existsSync(p)) {
+          await fsp.unlink(p).catch(() => {});
+        }
+      }
+    }
+  }
+
   async _executeYouTubeMultiStreamPipeline() {
+    const runToken = ++this._ytRunToken;
     const ytdlp = findBinary('yt-dlp.exe');
     const ffmpeg = findBinary('ffmpeg.exe');
 
@@ -376,9 +498,13 @@ class DownloadJob extends EventEmitter {
     const formatSelector = YT_QUALITY_FORMATS[this.videoQuality] || YT_QUALITY_FORMATS.best;
 
     const info = await new Promise((resolve, reject) => {
-      execFile(ytdlp, ['--no-warnings', '--no-playlist', '-f', formatSelector, '--dump-single-json', this.url], {
+      const child = execFile(ytdlp, ['--no-warnings', '--no-playlist', '-f', formatSelector, '--dump-single-json', this.url], {
         maxBuffer: 32 * 1024 * 1024
       }, (err, stdout, stderr) => {
+        if (this._ytProc === child) this._ytProc = null;
+        if (this._ytRunToken !== runToken || this.status === 'paused' || this.status === 'canceled') {
+          return resolve(null);
+        }
         if (err) return reject(new Error(stderr || err.message));
         try {
           resolve(JSON.parse(stdout));
@@ -386,7 +512,12 @@ class DownloadJob extends EventEmitter {
           reject(new Error(`Cannot parse YouTube stream metadata: ${e.message}`));
         }
       });
+      this._ytProc = child;
     });
+
+    if (!info || this._ytRunToken !== runToken || this.status === 'paused' || this.status === 'canceled') {
+      return;
+    }
 
     const formats = Array.isArray(info.requested_formats) && info.requested_formats.length > 0
       ? info.requested_formats
@@ -403,29 +534,41 @@ class DownloadJob extends EventEmitter {
       this.fileName = `${this.fileName}${targetExt}`;
     }
 
-    this.filePath = await this._resolveUniqueFilePath(path.join(this.saveDir, this.fileName));
+    if (!this.filePath || fs.existsSync(this.filePath)) {
+      this.filePath = await this._resolveUniqueFilePath(path.join(this.saveDir, this.fileName));
+    }
     this.fileName = path.basename(this.filePath);
     this.serverHeader = 'YouTube Googlevideo Multi-Range Engine';
-
     this.startTime = Date.now();
 
     if (formats.length === 1) {
       this.finalUrl = formats[0].url;
+      this.stateFilePath = `${this.filePath}.hyper.json`;
       const meta = await this._probeUrl(this.finalUrl);
+      if (this._ytRunToken !== runToken || this.status === 'paused' || this.status === 'canceled') return;
       this.totalBytes = meta.totalBytes;
       this.acceptRanges = meta.acceptRanges;
       await this._resolveCdnPool(this.finalUrl);
-      this._initializeSegments();
+      if (this._ytRunToken !== runToken || this.status === 'paused' || this.status === 'canceled') return;
+      const resumed = await this._tryLoadStateJournal();
+      if (!resumed) {
+        this._initializeSegments();
+      }
       await this._openAndPreallocateTargetFile();
+      if (this._ytRunToken !== runToken || this.status === 'paused' || this.status === 'canceled') {
+        await this._cleanupHandles();
+        return;
+      }
       this.status = 'downloading';
       this._lastTickTime = Date.now();
-      this._lastTickBytes = 0;
+      this._lastTickBytes = this.downloadedBytes;
       this._startTelemetryLoop();
       this._scheduleWorkers();
+      this.emit('update', this.toJSON());
       return;
     }
 
-    // Dual Parallel 64-Thread Engine for Video Track + Audio Track -> Instant FFmpeg Copy Mux
+    // Dual Parallel 64-Thread Engine for Video Track + Audio Track -> Fast FFmpeg Copy Mux
     const vTrack = formats[0];
     const aTrack = formats[1];
     const vTempPath = `${this.filePath}.video.tmp`;
@@ -435,72 +578,129 @@ class DownloadJob extends EventEmitter {
       url: vTrack.url,
       saveDir: this.saveDir,
       fileName: path.basename(vTempPath),
+      filePath: vTempPath,
+      _skipUniqueResolve: true,
       maxConnections: Math.max(16, Math.floor(this.maxConnections * 0.75))
     });
     const aJob = new DownloadJob({
       url: aTrack.url,
       saveDir: this.saveDir,
       fileName: path.basename(aTempPath),
+      filePath: aTempPath,
+      _skipUniqueResolve: true,
       maxConnections: Math.max(8, Math.floor(this.maxConnections * 0.25))
     });
 
+    this._ytSubJobs = [vJob, aJob];
+    this._ytPipelineActive = true;
     this.status = 'downloading';
-    const syncSubJobs = () => {
-      const vJson = vJob.toJSON();
-      const aJson = aJob.toJSON();
-      this.totalBytes = (vJson.totalBytes || vTrack.filesize || 0) + (aJson.totalBytes || aTrack.filesize || 0);
-      this.downloadedBytes = (vJson.downloadedBytes || 0) + (aJson.downloadedBytes || 0);
-      this.currentSpeedBps = (vJson.currentSpeedBps || 0) + (aJson.currentSpeedBps || 0);
+    let lastSyncEmitAt = 0;
+
+    const syncSubJobs = (forceEmit = false) => {
+      if (runToken !== this._ytRunToken || !this._ytPipelineActive) return;
+      if (this.status !== 'downloading' && this.status !== 'resolving' && this.status !== 'probing') return;
+
+      const now = Date.now();
+      if (!forceEmit && (now - lastSyncEmitAt) < 450) return;
+      lastSyncEmitAt = now;
+
+      this.totalBytes = (vJob.totalBytes || vTrack.filesize || 0) + (aJob.totalBytes || aTrack.filesize || 0);
+      this.downloadedBytes = (vJob.downloadedBytes || 0) + (aJob.downloadedBytes || 0);
+      this.currentSpeedBps = (vJob.currentSpeedBps || 0) + (aJob.currentSpeedBps || 0);
       if (this.currentSpeedBps > this.peakSpeedBps) this.peakSpeedBps = this.currentSpeedBps;
-      this.stealCount = (vJson.stealCount || 0) + (aJson.stealCount || 0);
-      this.recycleCount = (vJson.recycleCount || 0) + (aJson.recycleCount || 0);
-      this.cdnIps = Array.from(new Set([...(vJson.cdnIps || []), ...(aJson.cdnIps || [])]));
+      if (vJob.acceptRanges || aJob.acceptRanges) this.acceptRanges = true;
+      this.stealCount = (vJob.stealCount || 0) + (aJob.stealCount || 0);
+      this.recycleCount = (vJob.recycleCount || 0) + (aJob.recycleCount || 0);
+      this.cdnIps = Array.from(new Set([...(vJob.cdnIps || []), ...(aJob.cdnIps || [])]));
+
+      // Aggregate 5,000+ micro-chunks evenly into <= 64 crisp progress segments
       this.segments = [
-        ...(vJson.segments || []).slice(0, 48),
-        ...(aJson.segments || []).slice(0, 16).map((s, idx) => ({ ...s, id: 48 + idx }))
+        ...summarizeSegments(vJob.segments, 48, 0),
+        ...summarizeSegments(aJob.segments, 16, 48)
       ];
-      if (this.totalBytes > 0 && this.currentSpeedBps > 0) {
-        this.etaSeconds = Math.ceil(Math.max(0, this.totalBytes - this.downloadedBytes) / this.currentSpeedBps);
+
+      if (this.currentSpeedBps > 0) {
+        this._etaSpeedEwma = this._etaSpeedEwma > 0
+          ? Math.round(this._etaSpeedEwma * 0.78 + this.currentSpeedBps * 0.22)
+          : this.currentSpeedBps;
+      }
+      if (this.totalBytes > 0 && this._etaSpeedEwma > 0) {
+        this.etaSeconds = Math.ceil(Math.max(0, this.totalBytes - this.downloadedBytes) / this._etaSpeedEwma);
+      } else {
+        this.etaSeconds = null;
       }
       this.emit('update', this.toJSON());
     };
 
-    vJob.on('update', syncSubJobs);
-    aJob.on('update', syncSubJobs);
+    vJob._parentSyncListener = () => syncSubJobs(false);
+    aJob._parentSyncListener = () => syncSubJobs(false);
+    vJob.on('update', vJob._parentSyncListener);
+    aJob.on('update', aJob._parentSyncListener);
 
-    await Promise.all([
-      new Promise((res, rej) => {
-        vJob.on('completed', res);
-        vJob.on('update', s => { if (s.status === 'error') rej(new Error(s.error)); });
-        vJob.start();
-      }),
-      new Promise((res, rej) => {
-        aJob.on('completed', res);
-        aJob.on('update', s => { if (s.status === 'error') rej(new Error(s.error)); });
-        aJob.start();
-      })
-    ]);
+    try {
+      await Promise.all([
+        new Promise((res, rej) => {
+          vJob.on('completed', res);
+          vJob.on('update', s => { if (s.status === 'error') rej(new Error(s.error || 'Video stream failed')); });
+          vJob.start();
+        }),
+        new Promise((res, rej) => {
+          aJob.on('completed', res);
+          aJob.on('update', s => { if (s.status === 'error') rej(new Error(s.error || 'Audio stream failed')); });
+          aJob.start();
+        })
+      ]);
+    } finally {
+      if (this._ytRunToken === runToken) {
+        this._ytPipelineActive = false;
+      }
+      if (vJob._parentSyncListener) { vJob.removeListener('update', vJob._parentSyncListener); vJob._parentSyncListener = null; }
+      if (aJob._parentSyncListener) { aJob.removeListener('update', aJob._parentSyncListener); aJob._parentSyncListener = null; }
+    }
+
+    if (this._ytRunToken !== runToken || this.status === 'canceled' || this.status === 'paused') {
+      return;
+    }
 
     this.status = 'muxing';
+    this.currentSpeedBps = 0;
+    this.etaSeconds = null;
     this.emit('update', this.toJSON());
 
+    const totalMuxBytes = (vJob.totalBytes || 0) + (aJob.totalBytes || 0);
+    const ffArgs = [
+      '-y',
+      '-loglevel', 'error',
+      '-i', vJob.filePath,
+      '-i', aJob.filePath,
+      '-c:v', 'copy',
+      '-c:a', 'copy'
+    ];
+    // For <= 2 GB MP4, relocate moov atom for instant web playback; skip 2nd pass on > 2 GB files to avoid 2x SSD rewrite
+    if (totalMuxBytes > 0 && totalMuxBytes <= 2 * 1024 * 1024 * 1024) {
+      ffArgs.push('-movflags', '+faststart');
+    }
+    ffArgs.push(this.filePath);
+
     await new Promise((resolve, reject) => {
-      execFile(ffmpeg, [
-        '-y',
-        '-i', vJob.filePath,
-        '-i', aJob.filePath,
-        '-c:v', 'copy',
-        '-c:a', 'copy',
-        '-movflags', '+faststart',
-        this.filePath
-      ], (err, stdout, stderr) => {
+      if (this._ytRunToken !== runToken || this.status === 'canceled') return resolve();
+      const child = execFile(ffmpeg, ffArgs, { maxBuffer: 32 * 1024 * 1024 }, (err, stdout, stderr) => {
+        if (this._ytProc === child) this._ytProc = null;
+        if (this._ytRunToken !== runToken || this.status === 'canceled') return resolve();
         if (err) return reject(new Error(`FFmpeg mux error: ${stderr || err.message}`));
         resolve();
       });
+      this._ytProc = child;
     });
 
-    await fsp.unlink(vJob.filePath).catch(() => {});
-    await fsp.unlink(aJob.filePath).catch(() => {});
+    if (this._ytRunToken !== runToken || this.status === 'canceled') {
+      return;
+    }
+
+    this._ytSubJobs = [];
+    for (const p of [vJob.filePath, `${vJob.filePath}.hyper.json`, aJob.filePath, `${aJob.filePath}.hyper.json`]) {
+      if (p) await fsp.unlink(p).catch(() => {});
+    }
 
     const finalStat = await fsp.stat(this.filePath).catch(() => null);
     if (finalStat) {
@@ -513,6 +713,7 @@ class DownloadJob extends EventEmitter {
     this.elapsedMs = this.endTime - this.startTime;
     this.currentSpeedBps = 0;
     this._speedWindow = [];
+    this._etaSpeedEwma = 0;
     this._activeHedges = 0;
     this.etaSeconds = 0;
     this.emit('update', this.toJSON());
@@ -520,7 +721,11 @@ class DownloadJob extends EventEmitter {
   }
 
   async pause() {
-    if (this.status !== 'downloading' && this.status !== 'probing') return;
+    if (!['downloading', 'probing', 'resolving'].includes(this.status)) return;
+    const wasResolvingPreSubJobs = this.resolverType === 'youtube' && (!this._ytSubJobs || this._ytSubJobs.length === 0);
+    if (wasResolvingPreSubJobs) {
+      this._ytRunToken++;
+    }
     this.status = 'paused';
     if (this.startTime) {
       this.elapsedMs += Date.now() - this.startTime;
@@ -528,7 +733,37 @@ class DownloadJob extends EventEmitter {
     }
     this.currentSpeedBps = 0;
     this._speedWindow = [];
+    this._etaSpeedEwma = 0;
+    this.etaSeconds = null;
     this._activeHedges = 0;
+
+    if (this._ytProc) {
+      try { this._ytProc.kill(); } catch {}
+      this._ytProc = null;
+    }
+
+    if (this._ytSubJobs && this._ytSubJobs.length > 0) {
+      await Promise.all(this._ytSubJobs.map(j => j.pause().catch(() => {})));
+      let sumDl = 0;
+      let sumTot = 0;
+      for (const j of this._ytSubJobs) {
+        sumDl += (j.downloadedBytes || 0);
+        sumTot += (j.totalBytes || 0);
+      }
+      if (sumTot > 0) this.totalBytes = sumTot;
+      if (sumDl > 0) this.downloadedBytes = sumDl;
+      const vJob = this._ytSubJobs[0];
+      const aJob = this._ytSubJobs[1];
+      this.segments = [
+        ...summarizeSegments(vJob ? vJob.segments : [], aJob ? 48 : 64, 0),
+        ...(aJob ? summarizeSegments(aJob.segments, 16, 48) : [])
+      ];
+      this.currentSpeedBps = 0;
+      this.etaSeconds = null;
+      this.emit('update', this.toJSON());
+      return;
+    }
+
     await this._abortAllWorkers();
     await this._saveStateJournal();
     await this._cleanupHandles();
@@ -544,6 +779,7 @@ class DownloadJob extends EventEmitter {
       clearTimeout(this._rateLimitTimer);
       this._rateLimitTimer = null;
     }
+    await this._abortYoutubeSubJobs(true);
     await this._abortAllWorkers();
     await this._cleanupHandles();
 
@@ -567,6 +803,7 @@ class DownloadJob extends EventEmitter {
     this.currentSpeedBps = 0;
     this.peakSpeedBps = 0;
     this.etaSeconds = null;
+    this._etaSpeedEwma = 0;
     this.speedHistory = [];
     this.stealCount = 0;
     this.recycleCount = 0;
@@ -595,7 +832,10 @@ class DownloadJob extends EventEmitter {
     this.status = 'canceled';
     this.currentSpeedBps = 0;
     this._speedWindow = [];
+    this._etaSpeedEwma = 0;
+    this.etaSeconds = null;
     this._activeHedges = 0;
+    await this._abortYoutubeSubJobs(deleteFile);
     await this._abortAllWorkers();
     await this._cleanupHandles();
     if (deleteFile) {
@@ -1439,9 +1679,9 @@ class DownloadJob extends EventEmitter {
       const dBytes = Math.max(0, this.downloadedBytes - this._lastTickBytes);
       const instBps = Math.round(dBytes / dt);
 
-      // 2.0s sliding byte-integral + light EWMA blend eliminates 500ms timer-alias jitter
+      // 5.0s sliding byte-integral + light EWMA blend keeps speed & ETA calm and responsive
       this._speedWindow.push({ bytes: dBytes, dt });
-      if (this._speedWindow.length > 4) this._speedWindow.shift();
+      if (this._speedWindow.length > 10) this._speedWindow.shift();
       let winBytes = 0;
       let winDt = 0;
       for (const s of this._speedWindow) {
@@ -1450,15 +1690,20 @@ class DownloadJob extends EventEmitter {
       }
       const winBps = winDt > 0 ? Math.round(winBytes / winDt) : instBps;
       this.currentSpeedBps = this._speedWindow.length >= 2
-        ? Math.round(winBps * 0.70 + instBps * 0.30)
+        ? Math.round(winBps * 0.85 + instBps * 0.15)
         : instBps;
       if (this.currentSpeedBps > this.peakSpeedBps) {
         this.peakSpeedBps = this.currentSpeedBps;
       }
 
-      if (this.totalBytes > 0 && this.currentSpeedBps > 0) {
+      if (this.currentSpeedBps > 0) {
+        this._etaSpeedEwma = this._etaSpeedEwma > 0
+          ? Math.round(this._etaSpeedEwma * 0.78 + this.currentSpeedBps * 0.22)
+          : this.currentSpeedBps;
+      }
+      if (this.totalBytes > 0 && this._etaSpeedEwma > 0) {
         const rem = Math.max(0, this.totalBytes - this.downloadedBytes);
-        this.etaSeconds = Math.ceil(rem / this.currentSpeedBps);
+        this.etaSeconds = Math.ceil(rem / this._etaSpeedEwma);
       } else {
         this.etaSeconds = null;
       }
