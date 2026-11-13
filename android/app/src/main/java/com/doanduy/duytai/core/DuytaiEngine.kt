@@ -433,30 +433,33 @@ class DuytaiEngine(
                 }
             }
 
-            // Telemetry + Tail-at-Scale Hedged Watchdog every 500ms
+            // Telemetry + smoothed 2s sliding speed window + bounded Hedged Watchdog every 450ms
             val dt = max(100L, now - lastTick)
             val currBytes = job.counters.downloadedBytes.get()
             val instantBps = ((currBytes - lastBytes) * 1000L) / dt
-            job.speedBps = instantBps
-            if (instantBps > job.peakSpeedBps) job.peakSpeedBps = instantBps
+            val smoothedBps = if (job.speedBps > 0L) ((job.speedBps * 65L) + (instantBps * 35L)) / 100L else instantBps
+            job.speedBps = smoothedBps
+            if (smoothedBps > job.peakSpeedBps) job.peakSpeedBps = smoothedBps
             lastBytes = currBytes
             lastTick = now
 
             if (job.acceptRanges && now - job.rateLimitUntil > 0) {
                 val snapSegs = synchronized(job.segments) { job.segments.filter { it.status == "downloading" } }
-                val avgSpd = if (snapSegs.size >= 2) instantBps / snapSegs.size else 0L
-                val tailZone = job.totalBytes > 0 && (currBytes.toDouble() / job.totalBytes) >= 0.94
+                val avgSpd = if (snapSegs.size >= 2) smoothedBps / snapSegs.size else 0L
+                val tailZone = job.totalBytes > 0 && (currBytes.toDouble() / job.totalBytes) >= 0.96
+                var activeHedges = snapSegs.count { it.hedging }
                 for (seg in snapSegs) {
                     val rem = seg.end - seg.current + 1
                     val idleMs = now - seg.lastDataAt
-                    val hedgeNeeded = !seg.hedging && (
-                        (idleMs > 900 && rem > 64 * 1024) ||
-                            (tailZone && rem > 128 * 1024 && avgSpd > 0 && seg.speedBps < avgSpd * 0.35)
+                    val hedgeNeeded = !seg.hedging && activeHedges < 4 && (
+                        (idleMs > 1800 && rem > 128 * 1024) ||
+                            (tailZone && rem > 128 * 1024 && avgSpd > 0 && seg.speedBps < maxOf(64L * 1024L, avgSpd / 4L))
                         )
                     if (hedgeNeeded && activeJobs.size < job.effectiveMaxConnections + 2) {
+                        activeHedges++
                         launchHedgedRace(this, job, seg, activeJobs)
                     }
-                    if (idleMs > 3000 && rem > 0) {
+                    if (idleMs > 3500 && rem > 0) {
                         seg.lastDataAt = now
                         job.counters.recycleCount.incrementAndGet()
                         activeJobs.remove(seg.id)?.cancel()

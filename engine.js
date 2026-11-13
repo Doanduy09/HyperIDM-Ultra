@@ -137,6 +137,10 @@ class DownloadJob extends EventEmitter {
     this._retryTimers = new Set();
     this._telemetryTick = 0;
     this._ewmaWriteMs = 0;
+    this._speedWindow = [];
+    this._lastCongestionAt = 0;
+    this._lastAimdStepAt = 0;
+    this._activeHedges = 0;
     this._lastTickBytes = 0;
     this._lastTickTime = 0;
     this._minSplitSize = 1024 * 1024; // 1 MB minimum steal size
@@ -198,6 +202,8 @@ class DownloadJob extends EventEmitter {
     if (this.status === 'downloading' || this.status === 'probing' || this.status === 'resolving') return;
     this.error = null;
     this._rateLimitUntil = 0;
+    this._speedWindow = [];
+    this._activeHedges = 0;
     if (Array.isArray(this.segments)) {
       for (const seg of this.segments) {
         seg.retries = 0;
@@ -463,6 +469,8 @@ class DownloadJob extends EventEmitter {
     this.endTime = Date.now();
     this.elapsedMs = this.endTime - this.startTime;
     this.currentSpeedBps = 0;
+    this._speedWindow = [];
+    this._activeHedges = 0;
     this.etaSeconds = 0;
     this.emit('update', this.toJSON());
     this.emit('completed', this.toJSON());
@@ -476,6 +484,8 @@ class DownloadJob extends EventEmitter {
       this.startTime = 0;
     }
     this.currentSpeedBps = 0;
+    this._speedWindow = [];
+    this._activeHedges = 0;
     await this._abortAllWorkers();
     await this._saveStateJournal();
     await this._cleanupHandles();
@@ -527,6 +537,8 @@ class DownloadJob extends EventEmitter {
     this.stateFilePath = '';
     this._lastTickBytes = 0;
     this._lastTickTime = 0;
+    this._lastCongestionAt = 0;
+    this._lastAimdStepAt = 0;
     this._globalPendingWriteBytes = 0;
     this._rateLimitUntil = 0;
     this.effectiveMaxConnections = this.maxConnections;
@@ -539,6 +551,8 @@ class DownloadJob extends EventEmitter {
   async cancel(deleteFile = true) {
     this.status = 'canceled';
     this.currentSpeedBps = 0;
+    this._speedWindow = [];
+    this._activeHedges = 0;
     await this._abortAllWorkers();
     await this._cleanupHandles();
     if (deleteFile) {
@@ -848,12 +862,15 @@ class DownloadJob extends EventEmitter {
     }
 
     const isTailPhase = this.totalBytes > 0 && (this.downloadedBytes / this.totalBytes) > 0.80;
-    const isFinalPhase = this.totalBytes > 0 && (this.downloadedBytes / this.totalBytes) > 0.97;
+    const isFinalPhase = this.totalBytes > 0 && (this.downloadedBytes / this.totalBytes) > 0.96;
+    const isEndSprint = this.totalBytes > 0 && (this.downloadedBytes / this.totalBytes) > 0.99;
     const isHugeFile = this.totalBytes > 2 * 1024 * 1024 * 1024;
     if (this.segments.length >= 1024) return null;
-    const minSplit = isHugeFile
-      ? (isFinalPhase ? (512 * 1024) : (isTailPhase ? (1024 * 1024) : (4 * 1024 * 1024)))
-      : (isTailPhase ? (256 * 1024) : this._minSplitSize);
+    const minSplit = isEndSprint
+      ? (128 * 1024)
+      : (isHugeFile
+        ? (isFinalPhase ? (256 * 1024) : (isTailPhase ? (1024 * 1024) : (4 * 1024 * 1024)))
+        : (isFinalPhase ? (128 * 1024) : (isTailPhase ? (256 * 1024) : this._minSplitSize)));
 
     if (!largest || maxRemaining < minSplit * 2) {
       return null;
@@ -1194,18 +1211,29 @@ class DownloadJob extends EventEmitter {
   // Google "The Tail at Scale" Hedged Race: phóng request song song trên CDN IP khác nếu 1 kết nối kẹt
   _spawnHedgedRace(seg) {
     if (this.status !== 'downloading' || seg.status !== 'downloading' || !this.acceptRanges || seg._hedging) return;
+    if (this._activeHedges >= 4) return;
     if (seg.end >= 0 && seg.current >= seg.end) return;
 
     seg._hedging = true;
+    this._activeHedges++;
     const expectedStart = seg.current;
     const altIp = this._pickHealthyIp(seg, seg.ip);
     const { transport, reqOptions } = this._buildRequestOptions(seg, altIp || seg.ip, expectedStart);
 
     let claimed = false;
+    let hedgeFinished = false;
     let streamPos = expectedStart;
+
+    const releaseHedgeSlot = () => {
+      if (!hedgeFinished) {
+        hedgeFinished = true;
+        this._activeHedges = Math.max(0, this._activeHedges - 1);
+      }
+    };
 
     const stopHedge = (res) => {
       seg._hedging = false;
+      releaseHedgeSlot();
       try { if (res && !res.destroyed) res.destroy(); } catch {}
       try { if (!req.destroyed) req.destroy(); } catch {}
     };
@@ -1233,6 +1261,7 @@ class DownloadJob extends EventEmitter {
         // Hedge đến điểm mới trước primary -> chiếm quyền ghi nguyên tử
         claimed = true;
         seg._hedging = false;
+        releaseHedgeSlot();
         res.removeListener('data', onFirstHedgeData);
         const firstSlice = curr > streamPos ? chunk.subarray(curr - streamPos) : chunk;
         const oldW = this.activeWorkers.get(seg.id);
@@ -1244,7 +1273,6 @@ class DownloadJob extends EventEmitter {
         }
         if (altIp) seg.ip = altIp;
         this.hedgeWins++;
-        this.recycleCount++;
         this._consumeSegmentStream(seg, req, res, priorChain, firstSlice);
       };
 
@@ -1259,7 +1287,12 @@ class DownloadJob extends EventEmitter {
         sock.setKeepAlive(true, 2000);
       } catch {}
     });
-    req.on('error', () => { if (!claimed) seg._hedging = false; });
+    req.on('error', () => {
+      if (!claimed) {
+        seg._hedging = false;
+        releaseHedgeSlot();
+      }
+    });
     req.setTimeout(3500, () => { if (!claimed) stopHedge(null); });
     req.end();
   }
@@ -1296,6 +1329,18 @@ class DownloadJob extends EventEmitter {
       return;
     }
 
+    const isSelfRecycle = Boolean(err && err._selfRecycled);
+    if (isSelfRecycle) {
+      // Intentional watchdog recycle MUST NOT penalize retry count, halve connections, or stall the pool
+      if (seg.ip && this.cdnIps.length > 1) {
+        this._badIps.set(seg.ip, Date.now() + 4000);
+      }
+      seg.speedBps = 0;
+      seg.status = 'pending';
+      this._scheduleWorkers();
+      return;
+    }
+
     if (seg.ip && this.cdnIps.length > 1) {
       this._badIps.set(seg.ip, Date.now() + 15000);
     }
@@ -1310,8 +1355,9 @@ class DownloadJob extends EventEmitter {
 
     if (isRateLimited || isResetBurst) {
       this._completedSinceDecrease = 0;
+      this._lastCongestionAt = Date.now();
       this.effectiveMaxConnections = Math.max(4, Math.floor((this.effectiveMaxConnections || this.maxConnections) / 2));
-      const cooldown = (err && err.retryAfterMs) || Math.min(10000, 1000 * seg.retries);
+      const cooldown = (err && err.retryAfterMs) || Math.min(8000, 800 * seg.retries);
       this._rateLimitUntil = Math.max(this._rateLimitUntil, Date.now() + cooldown);
     }
 
@@ -1348,8 +1394,21 @@ class DownloadJob extends EventEmitter {
       const now = Date.now();
       const dt = Math.max(0.1, (now - this._lastTickTime) / 1000);
       const dBytes = Math.max(0, this.downloadedBytes - this._lastTickBytes);
+      const instBps = Math.round(dBytes / dt);
 
-      this.currentSpeedBps = Math.round(dBytes / dt);
+      // 2.0s sliding byte-integral + light EWMA blend eliminates 500ms timer-alias jitter
+      this._speedWindow.push({ bytes: dBytes, dt });
+      if (this._speedWindow.length > 4) this._speedWindow.shift();
+      let winBytes = 0;
+      let winDt = 0;
+      for (const s of this._speedWindow) {
+        winBytes += s.bytes;
+        winDt += s.dt;
+      }
+      const winBps = winDt > 0 ? Math.round(winBytes / winDt) : instBps;
+      this.currentSpeedBps = this._speedWindow.length >= 2
+        ? Math.round(winBps * 0.70 + instBps * 0.30)
+        : instBps;
       if (this.currentSpeedBps > this.peakSpeedBps) {
         this.peakSpeedBps = this.currentSpeedBps;
       }
@@ -1371,7 +1430,8 @@ class DownloadJob extends EventEmitter {
       const ipAgg = new Map();
       for (const seg of this.segments) {
         if (seg.status === 'downloading') {
-          seg.speedBps = Math.round(seg.bytesInWindow / dt);
+          const segInstBps = Math.round(seg.bytesInWindow / dt);
+          seg.speedBps = seg.speedBps > 0 ? Math.round(seg.speedBps * 0.55 + segInstBps * 0.45) : segInstBps;
           seg.bytesInWindow = 0;
           activeSegs.push(seg);
           if (seg.ip) {
@@ -1380,6 +1440,15 @@ class DownloadJob extends EventEmitter {
         } else {
           seg.speedBps = 0;
           seg.bytesInWindow = 0;
+        }
+      }
+
+      // Time-based AIMD slow-start recovery: recover +2 connections every 5s of clean streaming
+      const targetCap = this._targetMaxConnections || this.maxConnections;
+      if (this.effectiveMaxConnections < targetCap && now >= (this._rateLimitUntil || 0)) {
+        if (now - (this._lastCongestionAt || 0) >= 5000 && now - (this._lastAimdStepAt || 0) >= 5000) {
+          this._lastAimdStepAt = now;
+          this.effectiveMaxConnections = Math.min(targetCap, this.effectiveMaxConnections + 2);
         }
       }
 
@@ -1421,7 +1490,8 @@ class DownloadJob extends EventEmitter {
         medianSegSpeed = sorted[sorted.length >> 1] || 0;
       }
 
-      // Tail-Latency, Hedged Racing & Anti-Throttle Straggler Watchdog
+      // Tail-Latency, Hedged Racing & Bounded Straggler Watchdog (max 2 recycles/tick)
+      let recycledThisTick = 0;
       for (const seg of activeSegs) {
         const w = this.activeWorkers.get(seg.id);
         if (w && w.isDiskPaused && w.isDiskPaused()) {
@@ -1432,40 +1502,46 @@ class DownloadJob extends EventEmitter {
         const idleMs = now - (seg.lastDataTime || now);
         const rem = seg.end - seg.current + 1;
 
-        // 0) Google "The Tail at Scale" Hedged Request nếu có slot nhàn rỗi hoặc sắp xong 95%+
+        // 0) Google "The Tail at Scale" Hedged Request (bounded <=4 concurrent hedges)
         const avgSegSpeed = (activeSegs.length >= 2 && this.currentSpeedBps > 512 * 1024)
           ? (this.currentSpeedBps / activeSegs.length)
           : 0;
-        const inTailZone = this.totalBytes > 0 && (this.downloadedBytes / this.totalBytes) >= 0.94;
-        const hedgeTrigger = (idleMs > 900 && rem > 64 * 1024) ||
-          (inTailZone && rem > 128 * 1024 && avgSegSpeed > 0 && seg.speedBps < avgSegSpeed * 0.35);
+        const inTailZone = this.totalBytes > 0 && (this.downloadedBytes / this.totalBytes) >= 0.96;
+        const hedgeTrigger = (idleMs > 1800 && rem > 128 * 1024) ||
+          (inTailZone && rem > 128 * 1024 && avgSegSpeed > 0 && seg.speedBps < Math.max(64 * 1024, avgSegSpeed * 0.25));
 
         if (this.acceptRanges && !seg._hedging && hedgeTrigger &&
-            (this.activeWorkers.size < connLimit || this.cdnIps.length > 1)) {
+            this._activeHedges < 4 && (this.activeWorkers.size < connLimit || this.cdnIps.length > 1)) {
           this._spawnHedgedRace(seg);
         }
 
-        // 1) Recycle any socket stalled with 0 bytes for > 2.2 seconds
-        if (idleMs > 2200 && rem > 0) {
+        // 1) Recycle truly silent stalled socket (> 3.5s with 0 bytes) without poisoning retries
+        if (idleMs > 3500 && rem > 0) {
           seg.lastDataTime = now;
           this.recycleCount++;
           if (w && w.req) {
-            w.req.destroy(new Error('Stalled socket recycled (>2.2s idle)'));
+            const recycleErr = new Error('Stalled socket recycled (>3.5s idle)');
+            recycleErr._selfRecycled = true;
+            w.req.destroy(recycleErr);
           }
           continue;
         }
-        // 2) Preemptive EWMA-median straggler cut (< 22% median or < 12% avg for 1.0s)
-        if (activeSegs.length >= 2 && this.currentSpeedBps > 1024 * 1024) {
+        // 2) Only recycle genuinely crippled stragglers (<32 KB/s AND <5% avg for 3.0s, max 2/tick)
+        if (recycledThisTick < 2 && activeSegs.length >= 3 && this.currentSpeedBps > 2 * 1024 * 1024) {
+          const crippledFloor = Math.min(32 * 1024, Math.max(8 * 1024, avgSegSpeed * 0.05));
           const threshold = medianSegSpeed > 0
-            ? Math.min(avgSegSpeed * 0.25, medianSegSpeed * 0.22)
-            : (avgSegSpeed * 0.12);
-          if (rem > 512 * 1024 && seg.speedBps < threshold) {
+            ? Math.min(crippledFloor, medianSegSpeed * 0.08)
+            : crippledFloor;
+          if (rem > 1024 * 1024 && seg.speedBps < threshold) {
             seg.slowTicks = (seg.slowTicks || 0) + 1;
-            if (seg.slowTicks >= 2) {
+            if (seg.slowTicks >= 6) {
               seg.slowTicks = 0;
+              recycledThisTick++;
               this.recycleCount++;
               if (w && w.req) {
-                w.req.destroy(new Error('Straggler connection recycled to faster CDN edge'));
+                const stragglerErr = new Error('Straggler connection recycled to faster CDN edge');
+                stragglerErr._selfRecycled = true;
+                w.req.destroy(stragglerErr);
               }
             }
           } else {
@@ -1528,6 +1604,8 @@ class DownloadJob extends EventEmitter {
       this.downloadedBytes = this.totalBytes;
     }
     this.currentSpeedBps = 0;
+    this._speedWindow = [];
+    this._activeHedges = 0;
     this.etaSeconds = 0;
 
     await this._cleanupHandles();
