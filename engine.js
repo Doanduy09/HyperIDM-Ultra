@@ -68,6 +68,47 @@ function findBinary(name) {
   return exeName;
 }
 
+const YT_QUALITY_FORMATS = {
+  best: 'bestvideo[protocol=https]+bestaudio[ext=m4a][protocol=https]/bestvideo[protocol=https]+bestaudio[protocol=https]/best[protocol=https]/best',
+  '12k': 'bestvideo[height<=8640][protocol=https]+bestaudio[ext=m4a][protocol=https]/bestvideo[height<=8640][protocol=https]+bestaudio[protocol=https]/best[height<=8640][protocol=https]/best',
+  '8k': 'bestvideo[height<=4320][protocol=https]+bestaudio[ext=m4a][protocol=https]/bestvideo[height<=4320][protocol=https]+bestaudio[protocol=https]/best[height<=4320][protocol=https]/best',
+  '4k': 'bestvideo[height<=2160][protocol=https]+bestaudio[ext=m4a][protocol=https]/bestvideo[height<=2160][protocol=https]+bestaudio[protocol=https]/best[height<=2160][protocol=https]/best',
+  '2k': 'bestvideo[height<=1440][protocol=https]+bestaudio[ext=m4a][protocol=https]/bestvideo[height<=1440][protocol=https]+bestaudio[protocol=https]/best[height<=1440][protocol=https]/best',
+  '1080p': '299+140/137+140/bestvideo[height<=1080][protocol=https]+bestaudio[ext=m4a][protocol=https]/bestvideo[height<=1080][protocol=https]+bestaudio[protocol=https]/best[height<=1080][protocol=https]/best',
+  '720p': '298+140/136+140/bestvideo[height<=720][protocol=https]+bestaudio[ext=m4a][protocol=https]/bestvideo[height<=720][protocol=https]+bestaudio[protocol=https]/best[height<=720][protocol=https]/best',
+  '480p': '135+140/bestvideo[height<=480][protocol=https]+bestaudio[ext=m4a][protocol=https]/bestvideo[height<=480][protocol=https]+bestaudio[protocol=https]/best[height<=480][protocol=https]/best',
+  '360p': '134+140/18/best[height<=360][protocol=https]/best[protocol=https]',
+  audio: 'bestaudio[ext=m4a][protocol=https]/140/bestaudio[protocol=https]/bestaudio'
+};
+
+const YT_QUALITY_TIERS = [
+  { key: '12k', minH: 5400, maxH: 8640, label: '12K Ultra HD (6480p)' },
+  { key: '8k', minH: 3600, maxH: 4320, label: '8K Ultra HD (4320p)' },
+  { key: '4k', minH: 1800, maxH: 2160, label: '4K Ultra HD (2160p)' },
+  { key: '2k', minH: 1200, maxH: 1440, label: '2K QHD (1440p)' },
+  { key: '1080p', minH: 900, maxH: 1080, label: 'Full HD (1080p)' },
+  { key: '720p', minH: 600, maxH: 720, label: 'HD (720p)' },
+  { key: '480p', minH: 400, maxH: 480, label: 'SD (480p)' },
+  { key: '360p', minH: 300, maxH: 360, label: '360p' }
+];
+
+function normalizeVideoQuality(q) {
+  const s = String(q || 'best').trim().toLowerCase();
+  if (!s || s === 'auto' || s === 'max' || s === 'best') return 'best';
+  if (s === '12k' || s === '6480p' || s === '6912p') return '12k';
+  if (s === '8k' || s === '4320p' || s === '4320') return '8k';
+  if (s === '4k' || s === 'uhd' || s === '2160p' || s === '2160') return '4k';
+  if (s === '2k' || s === 'qhd' || s === '1440p' || s === '1440') return '2k';
+  if (s === '1080p' || s === '1080' || s === 'fullhd' || s === 'full hd' || s === 'fhd') return '1080p';
+  if (s === '720p' || s === '720' || s === 'hd') return '720p';
+  if (s === '480p' || s === '480' || s === 'sd') return '480p';
+  if (s === '360p' || s === '360') return '360p';
+  if (s === 'audio' || s === 'm4a' || s === 'mp3') return 'audio';
+  return YT_QUALITY_FORMATS[s] ? s : 'best';
+}
+
+const YT_PROBE_CACHE = new Map();
+
 /**
  * HyperIDM Ultra v2.0 — 64-Bit Core Engine (TitanFetch Architecture)
  * - Smart URL Resolver:
@@ -99,7 +140,7 @@ class DownloadJob extends EventEmitter {
     this._completedSinceDecrease = 0;
     this.hedgeWins = 0;
     this.headers = options.headers || {};
-    this.videoQuality = options.videoQuality || 'best'; // best | 1080p | 720p | 480p | 360p
+    this.videoQuality = normalizeVideoQuality(options.videoQuality); // best | 12k | 8k | 4k | 2k | 1080p | 720p | 480p | 360p | audio
     this.maxBytesLimit = options.maxBytesLimit || 0; // Optional cap for partial benchmark tests
     this.userAgent = options.userAgent || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
@@ -170,6 +211,7 @@ class DownloadJob extends EventEmitter {
       downloadedBytes: this.downloadedBytes,
       progress,
       maxConnections: this.maxConnections,
+      videoQuality: this.videoQuality,
       acceptRanges: this.acceptRanges,
       expectedSha1: this.expectedSha1,
       cdnIps: this.cdnIps,
@@ -330,17 +372,11 @@ class DownloadJob extends EventEmitter {
     const ffmpeg = findBinary('ffmpeg.exe');
 
     // Choose optimal high-speed direct HTTPS byte-range formats (avoids slow HLS m3u8 playlists)
-    const ytQualityFormats = {
-      best: 'bestvideo[ext=mp4][protocol=https]+bestaudio[ext=m4a][protocol=https]/bestvideo[protocol=https]+bestaudio[ext=m4a][protocol=https]/bestvideo[protocol=https]+bestaudio[protocol=https]/299+140/137+140/best[protocol=https]/best',
-      '1080p': '299+140/137+140/bestvideo[height<=1080][ext=mp4][protocol=https]+bestaudio[ext=m4a][protocol=https]/bestvideo[height<=1080][protocol=https]+bestaudio[protocol=https]/best[height<=1080]',
-      '720p': '298+140/136+140/bestvideo[height<=720][ext=mp4][protocol=https]+bestaudio[ext=m4a][protocol=https]/bestvideo[height<=720][protocol=https]+bestaudio[protocol=https]/best[height<=720]',
-      '480p': '135+140/bestvideo[height<=480][ext=mp4][protocol=https]+bestaudio[ext=m4a][protocol=https]/best[height<=480]',
-      '360p': '134+140/18/best[height<=360][protocol=https]/best[protocol=https]'
-    };
-    const formatSelector = ytQualityFormats[this.videoQuality] || ytQualityFormats.best;
+    this.videoQuality = normalizeVideoQuality(this.videoQuality);
+    const formatSelector = YT_QUALITY_FORMATS[this.videoQuality] || YT_QUALITY_FORMATS.best;
 
     const info = await new Promise((resolve, reject) => {
-      execFile(ytdlp, ['--no-warnings', '-f', formatSelector, '--dump-single-json', this.url], {
+      execFile(ytdlp, ['--no-warnings', '--no-playlist', '-f', formatSelector, '--dump-single-json', this.url], {
         maxBuffer: 32 * 1024 * 1024
       }, (err, stdout, stderr) => {
         if (err) return reject(new Error(stderr || err.message));
@@ -352,20 +388,24 @@ class DownloadJob extends EventEmitter {
       });
     });
 
+    const formats = Array.isArray(info.requested_formats) && info.requested_formats.length > 0
+      ? info.requested_formats
+      : [{ url: info.url, filesize: info.filesize || info.filesize_approx || 0, ext: info.ext || (this.videoQuality === 'audio' ? 'm4a' : 'mp4') }];
+
+    const isAudioOnly = this.videoQuality === 'audio';
+    const targetExt = isAudioOnly ? `.${String(formats[0].ext || 'm4a').replace(/^\./, '').toLowerCase()}` : '.mp4';
     const cleanTitle = this._sanitizeFileName(info.title || `youtube_${info.id || Date.now()}`);
     if (!this.fileName) {
-      this.fileName = `${cleanTitle}.mp4`;
-    } else if (!this.fileName.toLowerCase().endsWith('.mp4')) {
-      this.fileName = `${this.fileName}.mp4`;
+      this.fileName = `${cleanTitle}${targetExt}`;
+    } else if (isAudioOnly && this.fileName.toLowerCase().endsWith('.mp4')) {
+      this.fileName = `${this.fileName.slice(0, -4)}${targetExt}`;
+    } else if (!this.fileName.toLowerCase().endsWith(targetExt) && !/\.(mp4|mkv|webm|m4a|mp3)$/i.test(this.fileName)) {
+      this.fileName = `${this.fileName}${targetExt}`;
     }
 
     this.filePath = await this._resolveUniqueFilePath(path.join(this.saveDir, this.fileName));
     this.fileName = path.basename(this.filePath);
     this.serverHeader = 'YouTube Googlevideo Multi-Range Engine';
-
-    const formats = Array.isArray(info.requested_formats) && info.requested_formats.length > 0
-      ? info.requested_formats
-      : [{ url: info.url, filesize: info.filesize || info.filesize_approx || 0, ext: info.ext || 'mp4' }];
 
     this.startTime = Date.now();
 
@@ -1781,6 +1821,100 @@ class DownloadJob extends EventEmitter {
       if (!isTakenByOther(candidate)) return reserve(candidate);
     }
     return reserve(path.join(dir, `${base}_${Date.now()}${ext}`));
+  }
+
+  static async probeYoutubeInfo(url, timeoutMs = 8000) {
+    const cleanUrl = String(url || '').trim();
+    const cached = YT_PROBE_CACHE.get(cleanUrl);
+    if (cached && (Date.now() - cached.ts) < 10 * 60 * 1000) {
+      return cached.data;
+    }
+
+    const ytdlp = findBinary('yt-dlp.exe');
+    const info = await new Promise((resolve, reject) => {
+      execFile(ytdlp, ['--no-warnings', '--no-playlist', '--dump-single-json', cleanUrl], {
+        maxBuffer: 16 * 1024 * 1024,
+        timeout: timeoutMs
+      }, (err, stdout, stderr) => {
+        if (err) return reject(new Error(stderr || err.message));
+        try {
+          resolve(JSON.parse(stdout));
+        } catch (e) {
+          reject(e);
+        }
+      });
+    });
+
+    const formats = Array.isArray(info.formats) ? info.formats : [];
+    const httpsAudio = formats.filter(f => f.vcodec === 'none' && f.acodec && f.acodec !== 'none' && /^https?$/i.test(f.protocol || ''));
+    const m4aAudio = httpsAudio.filter(f => f.ext === 'm4a').sort((a, b) => (b.abr || 0) - (a.abr || 0));
+    const bestAudio = m4aAudio[0] || httpsAudio.sort((a, b) => (b.abr || 0) - (a.abr || 0))[0] || null;
+    const audioBytes = Number((bestAudio && (bestAudio.filesize || bestAudio.filesize_approx)) || 0);
+
+    let videoPool = formats.filter(f => f.vcodec && f.vcodec !== 'none' && (f.height || f.width) && /^https?$/i.test(f.protocol || ''));
+    if (videoPool.length === 0) {
+      videoPool = formats.filter(f => f.vcodec && f.vcodec !== 'none' && (f.height || f.width));
+    }
+
+    const getEffH = (f) => Math.max(Number(f.height || 0), Math.round(Number(f.width || 0) * 9 / 16));
+    const pickBest = (list) => {
+      if (!list.length) return null;
+      return list.slice().sort((a, b) => {
+        const dh = getEffH(b) - getEffH(a);
+        if (dh !== 0) return dh;
+        const df = Number(b.fps || 0) - Number(a.fps || 0);
+        if (df !== 0) return df;
+        return Number(b.tbr || 0) - Number(a.tbr || 0);
+      })[0];
+    };
+
+    const topVideo = pickBest(videoPool);
+    const qualities = [{
+      key: 'best',
+      label: topVideo ? `Tối đa tự động (${topVideo.height || getEffH(topVideo)}p${topVideo.fps >= 50 ? Math.round(topVideo.fps) : ''})` : 'Tối đa tự động (Cao nhất)',
+      available: Boolean(topVideo),
+      bytes: topVideo ? Number(topVideo.filesize || topVideo.filesize_approx || 0) + audioBytes : 0,
+      height: topVideo ? getEffH(topVideo) : 0
+    }];
+
+    for (const tier of YT_QUALITY_TIERS) {
+      const matched = pickBest(videoPool.filter(f => {
+        const eh = getEffH(f);
+        return eh >= tier.minH && eh <= tier.maxH;
+      }));
+      qualities.push({
+        key: tier.key,
+        label: tier.label,
+        available: Boolean(matched),
+        bytes: matched ? Number(matched.filesize || matched.filesize_approx || 0) + audioBytes : 0,
+        height: matched ? getEffH(matched) : 0,
+        fps: matched ? Number(matched.fps || 0) : 0
+      });
+    }
+
+    qualities.push({
+      key: 'audio',
+      label: 'Chỉ Âm thanh (M4A)',
+      available: Boolean(bestAudio),
+      bytes: audioBytes,
+      height: 0
+    });
+
+    const sanitizedTitle = String(info.title || '').replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').trim();
+    const data = {
+      title: sanitizedTitle,
+      fileName: sanitizedTitle ? `${sanitizedTitle}.mp4` : '',
+      totalBytes: qualities[0].bytes || 0,
+      maxHeight: topVideo ? getEffH(topVideo) : 0,
+      qualities
+    };
+
+    if (YT_PROBE_CACHE.size >= 50) {
+      const oldestKey = YT_PROBE_CACHE.keys().next().value;
+      if (oldestKey) YT_PROBE_CACHE.delete(oldestKey);
+    }
+    YT_PROBE_CACHE.set(cleanUrl, { ts: Date.now(), data });
+    return data;
   }
 }
 

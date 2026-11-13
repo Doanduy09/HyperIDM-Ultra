@@ -4473,11 +4473,36 @@ namespace HyperIDM
         private readonly string referrer;
         private readonly Dictionary<string, string> headers;
 
+        private sealed class QualityChoice
+        {
+            public string Key;
+            public string Text;
+            public long Bytes;
+            public override string ToString() { return Text; }
+        }
+
+        private static readonly string[][] PresetQualities = new string[][]
+        {
+            new string[] { "best", "Tối đa tự động (12K/8K/4K)" },
+            new string[] { "12k", "12K Ultra HD (6480p)" },
+            new string[] { "8k", "8K Ultra HD (4320p)" },
+            new string[] { "4k", "4K Ultra HD (2160p)" },
+            new string[] { "2k", "2K QHD (1440p)" },
+            new string[] { "1080p", "Full HD (1080p)" },
+            new string[] { "720p", "HD (720p)" },
+            new string[] { "480p", "SD (480p)" },
+            new string[] { "360p", "360p (Tiết kiệm)" },
+            new string[] { "audio", "Chỉ Âm thanh (M4A)" }
+        };
+
         private TextBox txtUrl;
         private TextBox txtFileName;
         private Label lblCategoryBadge;
         private TextBox txtSaveDir;
         private ComboBox cmbThreads;
+        private Label lblQuality;
+        private ComboBox cmbQuality;
+        private Label lHint;
         private Label lblStatus;
         private Button btnStart;
         private Button btnLater;
@@ -4486,6 +4511,7 @@ namespace HyperIDM
         private bool userEditedFileName = false;
         private bool userEditedSaveDir = false;
         private bool programmaticUpdate = false;
+        private bool probedHasQualities = false;
 
         public DownloadFileInfoForm(
             TrayAgentContext ownerAgent,
@@ -4540,7 +4566,7 @@ namespace HyperIDM
             TopMost = true;
             ShowInTaskbar = true;
             AutoScaleMode = AutoScaleMode.Font;
-            ClientSize = new Size(640, 345);
+            ClientSize = new Size(656, 392);
             BackColor = Color.White;
             ForeColor = Color.FromArgb(15, 23, 42);
             Font = new Font("Segoe UI", 9.25f, FontStyle.Regular);
@@ -4578,8 +4604,8 @@ namespace HyperIDM
 
             int labelX = 20;
             int inputX = 148;
-            int inputW = 470;
-            int y = 70;
+            int inputW = 488;
+            int y = 68;
 
             Label lUrl = MakeLabel("URL tải xuống:", labelX, y + 4);
             txtUrl = MakeTextBox(inputX, y, inputW);
@@ -4590,10 +4616,10 @@ namespace HyperIDM
             Controls.Add(lUrl);
             Controls.Add(txtUrl);
 
-            y += 40;
+            y += 38;
 
             Label lFile = MakeLabel("Tên tệp:", labelX, y + 4);
-            txtFileName = MakeTextBox(inputX, y, 290);
+            txtFileName = MakeTextBox(inputX, y, 304);
             txtFileName.TextChanged += delegate
             {
                 if (!programmaticUpdate)
@@ -4603,12 +4629,12 @@ namespace HyperIDM
                 }
             };
 
-            Label lCatTitle = MakeLabel("Thể loại:", 448, y + 4);
+            Label lCatTitle = MakeLabel("Thể loại:", 462, y + 4);
             lCatTitle.ForeColor = Color.FromArgb(100, 116, 139);
 
             lblCategoryBadge = new Label();
-            lblCategoryBadge.Location = new Point(512, y + 1);
-            lblCategoryBadge.Size = new Size(106, 24);
+            lblCategoryBadge.Location = new Point(528, y + 1);
+            lblCategoryBadge.Size = new Size(108, 24);
             lblCategoryBadge.TextAlign = ContentAlignment.MiddleCenter;
             lblCategoryBadge.Font = new Font("Segoe UI", 8.5f, FontStyle.Bold);
             lblCategoryBadge.BackColor = Color.FromArgb(30, 64, 175);
@@ -4620,10 +4646,10 @@ namespace HyperIDM
             Controls.Add(lCatTitle);
             Controls.Add(lblCategoryBadge);
 
-            y += 40;
+            y += 38;
 
             Label lDir = MakeLabel("Lưu tại thư mục:", labelX, y + 4);
-            txtSaveDir = MakeTextBox(inputX, y, 378);
+            txtSaveDir = MakeTextBox(inputX, y, 396);
             txtSaveDir.TextChanged += delegate
             {
                 if (!programmaticUpdate) userEditedSaveDir = true;
@@ -4631,7 +4657,7 @@ namespace HyperIDM
 
             Button btnBrowse = new Button();
             btnBrowse.Text = "Chọn...";
-            btnBrowse.Location = new Point(534, y - 1);
+            btnBrowse.Location = new Point(552, y - 1);
             btnBrowse.Size = new Size(84, 26);
             btnBrowse.UseVisualStyleBackColor = true;
             btnBrowse.Click += delegate
@@ -4654,33 +4680,48 @@ namespace HyperIDM
             Controls.Add(txtSaveDir);
             Controls.Add(btnBrowse);
 
-            y += 40;
+            y += 38;
 
             Label lThreads = MakeLabel("Số luồng tải:", labelX, y + 4);
             cmbThreads = new ComboBox();
             cmbThreads.Location = new Point(inputX, y);
-            cmbThreads.Size = new Size(245, 25);
+            cmbThreads.Size = new Size(185, 25);
             cmbThreads.DropDownStyle = ComboBoxStyle.DropDownList;
             cmbThreads.Items.Add("64 Luồng (Hyper-Turbo)");
             cmbThreads.Items.Add("128 Luồng (Max Speed)");
             cmbThreads.SelectedIndex = agent.DefaultThreads == 128 ? 1 : 0;
 
-            Label lHint = new Label();
-            lHint.Text = "Tự động kiểm tra SHA-1 / SHA-256 & nối mảnh 0-copy";
-            lHint.ForeColor = Color.FromArgb(100, 116, 139);
-            lHint.Font = new Font("Segoe UI", 8.25f, FontStyle.Italic);
-            lHint.AutoSize = true;
-            lHint.Location = new Point(402, y + 5);
+            lblQuality = MakeLabel("Chất lượng:", 345, y + 4);
+            cmbQuality = new ComboBox();
+            cmbQuality.Location = new Point(422, y);
+            cmbQuality.Size = new Size(214, 25);
+            cmbQuality.DropDownStyle = ComboBoxStyle.DropDownList;
+            ResetPresetQualities();
+            cmbQuality.SelectedIndexChanged += delegate
+            {
+                if (!programmaticUpdate) OnQualitySelectionChanged();
+            };
 
             Controls.Add(lThreads);
             Controls.Add(cmbThreads);
+            Controls.Add(lblQuality);
+            Controls.Add(cmbQuality);
+
+            y += 32;
+
+            lHint = new Label();
+            lHint.Text = "Tự động kiểm tra SHA-1 / SHA-256 & nối mảnh 0-copy";
+            lHint.ForeColor = Color.FromArgb(100, 116, 139);
+            lHint.Font = new Font("Segoe UI", 8.25f, FontStyle.Italic);
+            lHint.Location = new Point(inputX, y);
+            lHint.Size = new Size(inputW, 18);
             Controls.Add(lHint);
 
-            y += 38;
+            y += 24;
 
             lblStatus = new Label();
             lblStatus.Location = new Point(labelX, y);
-            lblStatus.Size = new Size(598, 22);
+            lblStatus.Size = new Size(616, 36);
             lblStatus.ForeColor = Color.FromArgb(217, 119, 6);
             lblStatus.Font = new Font("Segoe UI", 8.75f, FontStyle.Regular);
             lblStatus.Text = "";
@@ -4701,7 +4742,7 @@ namespace HyperIDM
             btnStart = new Button();
             btnStart.Text = "⚡ Bắt đầu tải ngay";
             btnStart.Location = new Point(20, 14);
-            btnStart.Size = new Size(195, 36);
+            btnStart.Size = new Size(200, 36);
             btnStart.Font = new Font("Segoe UI", 9.5f, FontStyle.Bold);
             btnStart.FlatStyle = FlatStyle.Flat;
             btnStart.FlatAppearance.BorderSize = 0;
@@ -4712,8 +4753,8 @@ namespace HyperIDM
 
             btnLater = new Button();
             btnLater.Text = "🕒 Tải sau (Hàng đợi)";
-            btnLater.Location = new Point(223, 14);
-            btnLater.Size = new Size(165, 36);
+            btnLater.Location = new Point(228, 14);
+            btnLater.Size = new Size(170, 36);
             btnLater.Font = new Font("Segoe UI", 9f, FontStyle.Regular);
             btnLater.UseVisualStyleBackColor = true;
             btnLater.Cursor = Cursors.Hand;
@@ -4721,8 +4762,8 @@ namespace HyperIDM
 
             Button btnZipPreview = new Button();
             btnZipPreview.Text = "📦 Xem ZIP";
-            btnZipPreview.Location = new Point(396, 14);
-            btnZipPreview.Size = new Size(110, 36);
+            btnZipPreview.Location = new Point(406, 14);
+            btnZipPreview.Size = new Size(112, 36);
             btnZipPreview.Font = new Font("Segoe UI", 9f, FontStyle.Regular);
             btnZipPreview.UseVisualStyleBackColor = true;
             btnZipPreview.Cursor = Cursors.Hand;
@@ -4740,8 +4781,8 @@ namespace HyperIDM
 
             btnCancel = new Button();
             btnCancel.Text = "Hủy bỏ";
-            btnCancel.Location = new Point(514, 14);
-            btnCancel.Size = new Size(104, 36);
+            btnCancel.Location = new Point(526, 14);
+            btnCancel.Size = new Size(110, 36);
             btnCancel.UseVisualStyleBackColor = true;
             btnCancel.Cursor = Cursors.Hand;
             btnCancel.Click += delegate { Close(); };
@@ -4777,6 +4818,92 @@ namespace HyperIDM
             return tb;
         }
 
+        private static bool IsVideoPlatformUrl(string url)
+        {
+            if (string.IsNullOrEmpty(url)) return false;
+            return url.IndexOf("youtube.com/watch", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   url.IndexOf("youtube.com/shorts/", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   url.IndexOf("youtu.be/", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        private void ResetPresetQualities()
+        {
+            probedHasQualities = false;
+            string currentKey = GetSelectedQualityKey();
+            programmaticUpdate = true;
+            cmbQuality.BeginUpdate();
+            cmbQuality.Items.Clear();
+            int selIdx = 0;
+            for (int i = 0; i < PresetQualities.Length; i++)
+            {
+                QualityChoice q = new QualityChoice();
+                q.Key = PresetQualities[i][0];
+                q.Text = PresetQualities[i][1];
+                q.Bytes = 0;
+                cmbQuality.Items.Add(q);
+                if (string.Equals(q.Key, currentKey, StringComparison.OrdinalIgnoreCase)) selIdx = i;
+            }
+            if (cmbQuality.Items.Count > 0) cmbQuality.SelectedIndex = selIdx;
+            cmbQuality.EndUpdate();
+            programmaticUpdate = false;
+        }
+
+        private string GetSelectedQualityKey()
+        {
+            QualityChoice qc = GetSelectedQualityChoice();
+            return qc != null ? qc.Key : "best";
+        }
+
+        private QualityChoice GetSelectedQualityChoice()
+        {
+            if (cmbQuality == null || cmbQuality.SelectedItem == null) return null;
+            return cmbQuality.SelectedItem as QualityChoice;
+        }
+
+        private void OnQualitySelectionChanged()
+        {
+            QualityChoice qc = GetSelectedQualityChoice();
+            if (qc == null) return;
+
+            string fn = (txtFileName.Text ?? "").Trim();
+            if (string.Equals(qc.Key, "audio", StringComparison.OrdinalIgnoreCase))
+            {
+                if (fn.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase))
+                {
+                    programmaticUpdate = true;
+                    txtFileName.Text = fn.Substring(0, fn.Length - 4) + ".m4a";
+                    programmaticUpdate = false;
+                }
+            }
+            else if (fn.EndsWith(".m4a", StringComparison.OrdinalIgnoreCase))
+            {
+                programmaticUpdate = true;
+                txtFileName.Text = fn.Substring(0, fn.Length - 4) + ".mp4";
+                programmaticUpdate = false;
+            }
+
+            if (probedHasQualities)
+            {
+                string sz = qc.Bytes > 0 ? IdmFormat.FormatBytes(qc.Bytes) : "Đa luồng tự động";
+                lblStatus.ForeColor = Color.FromArgb(5, 150, 105);
+                lblStatus.Text = string.Format("✓ Đã chọn: {0} • Dung lượng ước tính: {1} • 64/128 Luồng YouTube", qc.Text, sz);
+            }
+        }
+
+        private void UpdateQualityControlState(string url)
+        {
+            bool isYt = IsVideoPlatformUrl(url);
+            cmbQuality.Enabled = isYt;
+            lblQuality.ForeColor = isYt ? Color.FromArgb(15, 23, 42) : Color.FromArgb(148, 163, 184);
+            if (!isYt)
+            {
+                ResetPresetQualities();
+                programmaticUpdate = true;
+                if (cmbQuality.Items.Count > 0) cmbQuality.SelectedIndex = 0;
+                programmaticUpdate = false;
+            }
+        }
+
         private string lastProbedUrl = "";
         private void RefreshMetadataFromUrl()
         {
@@ -4787,6 +4914,7 @@ namespace HyperIDM
                 txtFileName.Text = IdmFormat.GuessFileName(url);
                 programmaticUpdate = false;
             }
+            UpdateQualityControlState(url);
             UpdateCategoryAndDir(url, txtFileName.Text);
 
             if ((url.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
@@ -4800,8 +4928,11 @@ namespace HyperIDM
 
         private void ProbeUrlMetadataAsync(string urlToProbe)
         {
+            bool isYt = IsVideoPlatformUrl(urlToProbe);
             lblStatus.ForeColor = Color.FromArgb(0, 102, 204);
-            lblStatus.Text = "Đang thăm dò máy chủ (Kích thước thực & Khả năng Resume 64/128 luồng)...";
+            lblStatus.Text = isYt
+                ? "Đang dò định dạng YouTube (HD / Full HD / 2K / 4K / 8K / 12K)... Anh vẫn có thể bấm Tải ngay."
+                : "Đang thăm dò máy chủ (Kích thước thực & Khả năng Resume 64/128 luồng)...";
             ThreadPool.QueueUserWorkItem(delegate
             {
                 try
@@ -4810,7 +4941,7 @@ namespace HyperIDM
                     Dictionary<string, object> p = new Dictionary<string, object>();
                     p["url"] = urlToProbe;
                     if (headers != null && headers.Count > 0) p["headers"] = headers;
-                    string respJson = TrayAgentContext.HttpRequest("POST", Program.AppUrl + "/api/probe", js.Serialize(p), 5000);
+                    string respJson = TrayAgentContext.HttpRequest("POST", Program.AppUrl + "/api/probe", js.Serialize(p), isYt ? 9500 : 5000);
                     Dictionary<string, object> d = js.DeserializeObject(respJson) as Dictionary<string, object>;
                     if (d == null) return;
 
@@ -4818,6 +4949,38 @@ namespace HyperIDM
                     bool acceptRanges = TrayAgentContext.GetDictBool(d, "acceptRanges", false);
                     string srvName = TrayAgentContext.GetDictString(d, "fileName") ?? "";
                     bool isZip = TrayAgentContext.GetDictBool(d, "isZip", false);
+                    string resolverType = TrayAgentContext.GetDictString(d, "resolverType") ?? "";
+
+                    List<QualityChoice> probedChoices = new List<QualityChoice>();
+                    object qObj;
+                    if (d.TryGetValue("qualities", out qObj))
+                    {
+                        object[] qArr = qObj as object[];
+                        if (qArr != null)
+                        {
+                            for (int i = 0; i < qArr.Length; i++)
+                            {
+                                Dictionary<string, object> qd = qArr[i] as Dictionary<string, object>;
+                                if (qd == null) continue;
+                                string key = TrayAgentContext.GetDictString(qd, "key") ?? "";
+                                string lbl = TrayAgentContext.GetDictString(qd, "label") ?? key;
+                                long qBytes = TrayAgentContext.GetDictLong(qd, "bytes", 0);
+                                bool avail = TrayAgentContext.GetDictBool(qd, "available", false);
+                                if (string.IsNullOrEmpty(key)) continue;
+
+                                QualityChoice qc = new QualityChoice();
+                                qc.Key = key;
+                                qc.Bytes = qBytes;
+                                if (avail && qBytes > 0)
+                                    qc.Text = string.Format("{0} • {1}", lbl, IdmFormat.FormatBytes(qBytes));
+                                else if (avail)
+                                    qc.Text = lbl;
+                                else
+                                    qc.Text = string.Format("{0} (Tự động chọn mức gần nhất)", lbl);
+                                probedChoices.Add(qc);
+                            }
+                        }
+                    }
 
                     agent.RunOnUiThread(new MethodInvoker(delegate
                     {
@@ -4826,12 +4989,41 @@ namespace HyperIDM
                         if (!userEditedFileName && !string.IsNullOrEmpty(srvName) && srvName != "download_file")
                         {
                             programmaticUpdate = true;
-                            txtFileName.Text = IdmFormat.SanitizeFileName(srvName);
+                            string targetName = IdmFormat.SanitizeFileName(srvName);
+                            if (string.Equals(GetSelectedQualityKey(), "audio", StringComparison.OrdinalIgnoreCase) &&
+                                targetName.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase))
+                            {
+                                targetName = targetName.Substring(0, targetName.Length - 4) + ".m4a";
+                            }
+                            txtFileName.Text = targetName;
                             programmaticUpdate = false;
                             UpdateCategoryAndDir(urlToProbe, txtFileName.Text);
                         }
-                        string sizeTxt = totalBytes > 0 ? IdmFormat.FormatBytes(totalBytes) : "Luồng động (Stream)";
-                        string resumeTxt = acceptRanges ? "Hỗ trợ Resume 64/128 Luồng" : "1 Luồng";
+
+                        if (probedChoices.Count > 0)
+                        {
+                            string prevKey = GetSelectedQualityKey();
+                            programmaticUpdate = true;
+                            cmbQuality.BeginUpdate();
+                            cmbQuality.Items.Clear();
+                            int selIdx = 0;
+                            for (int i = 0; i < probedChoices.Count; i++)
+                            {
+                                cmbQuality.Items.Add(probedChoices[i]);
+                                if (string.Equals(probedChoices[i].Key, prevKey, StringComparison.OrdinalIgnoreCase)) selIdx = i;
+                            }
+                            if (cmbQuality.Items.Count > 0) cmbQuality.SelectedIndex = selIdx;
+                            cmbQuality.EndUpdate();
+                            probedHasQualities = true;
+                            programmaticUpdate = false;
+                        }
+
+                        QualityChoice activeChoice = GetSelectedQualityChoice();
+                        long displayBytes = (activeChoice != null && activeChoice.Bytes > 0) ? activeChoice.Bytes : totalBytes;
+                        string sizeTxt = displayBytes > 0 ? IdmFormat.FormatBytes(displayBytes) : "Luồng động (Stream)";
+                        string resumeTxt = string.Equals(resolverType, "youtube", StringComparison.OrdinalIgnoreCase)
+                            ? "Đa luồng YouTube 64/128 Luồng"
+                            : (acceptRanges ? "Hỗ trợ Resume 64/128 Luồng" : "1 Luồng");
                         string zipTxt = isZip ? " • Có hỗ trợ Xem trước ZIP" : "";
                         lblStatus.ForeColor = Color.FromArgb(5, 150, 105);
                         lblStatus.Text = string.Format("✓ Dung lượng: {0} • {1}{2}", sizeTxt, resumeTxt, zipTxt);
@@ -4882,6 +5074,7 @@ namespace HyperIDM
             if (string.IsNullOrEmpty(saveDir)) saveDir = TrayAgentContext.GetBaseDownloadDir();
 
             int threads = cmbThreads.SelectedIndex == 1 ? 128 : 64;
+            string qualityKey = GetSelectedQualityKey();
 
             SetBusy(true, queueForLater ? "Đang thêm vào danh sách chờ..." : "Đang khởi tạo 64/128 luồng tải siêu tốc...");
 
@@ -4901,6 +5094,7 @@ namespace HyperIDM
                     payload["saveDir"] = saveDir;
                     payload["autoCategory"] = false;
                     payload["maxConnections"] = threads;
+                    payload["videoQuality"] = qualityKey;
                     if (queueForLater) payload["paused"] = true;
 
                     Dictionary<string, string> mergedHeaders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);

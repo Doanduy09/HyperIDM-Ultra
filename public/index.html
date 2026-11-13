@@ -1318,6 +1318,7 @@
   <div class="quick-url-bar">
     <span style="font-weight:700; color:var(--accent); font-size:12px;">🔗 Nhập nhanh URL:</span>
     <input id="quickUrlInput" class="quick-url-input" type="text" placeholder="Dán link tải xuống (.zip, .ipsw, .exe, .mp4, YouTube, IPSW.me...) rồi nhấn Enter hoặc bấm Tải Ngay..." onkeydown="if(event.key==='Enter') startQuickBarDownload()" />
+    <select id="quickQualitySelect" class="quick-select" style="max-width:170px;" title="Chất lượng Video YouTube (Auto / 12K / 8K / 4K / 2K / Full HD / HD / Audio)"></select>
     <select id="quickConnSelect" class="quick-select">
       <option value="16">16 Luồng</option>
       <option value="32">32 Luồng (IDM Max)</option>
@@ -1509,13 +1510,20 @@
       <div class="dialog-body">
         <div class="form-row">
           <label>Địa chỉ URL (Hỗ trợ HTTP/HTTPS, YouTube, IPSW.me, mẫu hàng loạt file[01-10].zip):</label>
-          <input type="text" id="modalUrlInput" placeholder="https://..." />
+          <input type="text" id="modalUrlInput" placeholder="https://..." oninput="scheduleModalProbe()" />
+          <div id="modalProbeHint" style="font-size:11px; color:var(--accent); margin-top:4px; min-height:14px;"></div>
         </div>
         <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
           <div class="form-row">
             <label>Tên tệp lưu (Để trống = Tự động nhận diện):</label>
-            <input type="text" id="modalFileNameInput" placeholder="Tự động từ URL / Content-Disposition" />
+            <input type="text" id="modalFileNameInput" placeholder="Tự động từ URL / Content-Disposition" oninput="modalFileEdited=true" />
           </div>
+          <div class="form-row">
+            <label>Chất lượng Video (YouTube):</label>
+            <select id="modalVideoQualitySelect" onchange="onModalQualityChange()"></select>
+          </div>
+        </div>
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
           <div class="form-row">
             <label>Số luồng kết nối đồng thời:</label>
             <select id="modalConnSelect">
@@ -1525,10 +1533,10 @@
               <option value="128">128 Luồng (Extreme)</option>
             </select>
           </div>
-        </div>
-        <div class="form-row">
-          <label>Thư mục lưu trữ (Tự động phân loại theo Thể loại nếu để mặc định):</label>
-          <input type="text" id="modalSaveDirInput" placeholder="C:\Users\admin\Downloads\Duytai" />
+          <div class="form-row">
+            <label>Thư mục lưu trữ (Mặc định = Tự phân loại):</label>
+            <input type="text" id="modalSaveDirInput" placeholder="C:\Users\admin\Downloads\Duytai" />
+          </div>
         </div>
         <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
           <div class="form-row">
@@ -2246,6 +2254,49 @@
     }
 
     // Toolbar & API Actions
+    const VIDEO_QUALITY_PRESETS = [
+      { key: 'best', label: 'Tự động (Cao nhất)' },
+      { key: '12k', label: '12K Ultra HD (8640p)' },
+      { key: '8k', label: '8K Ultra HD (4320p)' },
+      { key: '4k', label: '4K Ultra HD (2160p)' },
+      { key: '2k', label: '2K QHD (1440p)' },
+      { key: '1080p', label: 'Full HD (1080p)' },
+      { key: '720p', label: 'HD (720p)' },
+      { key: '480p', label: 'SD (480p)' },
+      { key: '360p', label: '360p' },
+      { key: 'audio', label: 'Chỉ Âm thanh (M4A)' }
+    ];
+
+    function populateQualitySelect(selectEl, probedQualities = null, preserveSelection = true) {
+      if (!selectEl) return;
+      const prev = preserveSelection && selectEl.value ? selectEl.value : 'best';
+      const byKey = new Map(Array.isArray(probedQualities) ? probedQualities.map(q => [q.key, q]) : []);
+      selectEl.innerHTML = '';
+      for (const p of VIDEO_QUALITY_PRESETS) {
+        const q = byKey.get(p.key);
+        const opt = document.createElement('option');
+        opt.value = p.key;
+        let text = (q && q.label) ? q.label : p.label;
+        if (q) {
+          if (q.available === false && p.key !== 'best') {
+            text += ' (Không có)';
+          } else if (q.bytes > 0) {
+            text += ' • ' + formatBytes(q.bytes);
+          }
+        }
+        opt.textContent = text;
+        selectEl.appendChild(opt);
+      }
+      selectEl.value = Array.from(selectEl.options).some(o => o.value === prev) ? prev : 'best';
+    }
+
+    function isVideoPlatformUrl(url) {
+      return /(?:youtube\.com\/(?:watch\?v=|shorts\/)|youtu\.be\/)/i.test(String(url || ''));
+    }
+
+    populateQualitySelect(document.getElementById('quickQualitySelect'), null, false);
+    populateQualitySelect(document.getElementById('modalVideoQualitySelect'), null, false);
+
     async function startQuickBarDownload() {
       const input = document.getElementById('quickUrlInput');
       const url = input.value.trim();
@@ -2254,8 +2305,10 @@
         return;
       }
       const maxConnections = parseInt(document.getElementById('quickConnSelect').value, 10) || 64;
+      const qualityEl = document.getElementById('quickQualitySelect');
+      const videoQuality = qualityEl ? qualityEl.value : 'best';
       input.value = '';
-      await createJob({ url, saveDir: defaultSaveDir, maxConnections });
+      await createJob({ url, saveDir: defaultSaveDir, maxConnections, videoQuality });
     }
 
     async function quickDownload(url, fileName, maxConnections = 64) {
@@ -2374,7 +2427,80 @@
       document.getElementById(id).classList.remove('open');
     }
 
+    let modalProbeTimer = null;
+    let modalProbeSeq = 0;
+    let modalFileEdited = false;
+
+    function onModalQualityChange() {
+      const qEl = document.getElementById('modalVideoQualitySelect');
+      const fnEl = document.getElementById('modalFileNameInput');
+      if (!qEl || !fnEl || !fnEl.value.trim()) return;
+      if (qEl.value === 'audio') {
+        fnEl.value = fnEl.value.replace(/\.(mp4|webm|mkv)$/i, '.m4a');
+      } else {
+        fnEl.value = fnEl.value.replace(/\.m4a$/i, '.mp4');
+      }
+    }
+
+    function scheduleModalProbe(immediate = false) {
+      if (modalProbeTimer) {
+        clearTimeout(modalProbeTimer);
+        modalProbeTimer = null;
+      }
+      const url = (document.getElementById('modalUrlInput').value || '').trim();
+      const hintEl = document.getElementById('modalProbeHint');
+      if (!isVideoPlatformUrl(url)) {
+        modalProbeSeq++;
+        if (hintEl) hintEl.textContent = '';
+        populateQualitySelect(document.getElementById('modalVideoQualitySelect'), null, true);
+        return;
+      }
+      if (hintEl) hintEl.textContent = '⏳ Đang kiểm tra các mức chất lượng (HD/Full HD/2K/4K/8K/12K) từ YouTube...';
+      if (immediate) {
+        probeModalUrl(url);
+      } else {
+        modalProbeTimer = setTimeout(() => probeModalUrl(url), 350);
+      }
+    }
+
+    async function probeModalUrl(url) {
+      const seq = ++modalProbeSeq;
+      const hintEl = document.getElementById('modalProbeHint');
+      try {
+        const res = await fetch('/api/probe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url })
+        });
+        if (!res.ok) throw new Error('Probe failed');
+        const info = await res.json();
+        if (seq !== modalProbeSeq) return;
+        const fnEl = document.getElementById('modalFileNameInput');
+        if (fnEl && info.fileName && (!modalFileEdited || !fnEl.value.trim())) {
+          fnEl.value = info.fileName;
+          onModalQualityChange();
+        }
+        if (Array.isArray(info.qualities) && info.qualities.length > 0) {
+          populateQualitySelect(document.getElementById('modalVideoQualitySelect'), info.qualities, true);
+        }
+        if (hintEl) {
+          const maxTag = info.maxHeight ? ` • Cao nhất: ${info.maxHeight}p` : '';
+          hintEl.textContent = info.title
+            ? `✅ ${info.title}${maxTag}`
+            : '✅ Đã nhận diện luồng YouTube đa chất lượng';
+        }
+      } catch {
+        if (seq === modalProbeSeq && hintEl) {
+          hintEl.textContent = 'ℹ Không lấy được kích thước trước — vẫn có thể chọn độ phân giải và tải ngay.';
+        }
+      }
+    }
+
     async function openAddUrlModal() {
+      modalFileEdited = false;
+      const hintEl = document.getElementById('modalProbeHint');
+      if (hintEl) hintEl.textContent = '';
+      populateQualitySelect(document.getElementById('modalVideoQualitySelect'), null, false);
       document.getElementById('addUrlModalBackdrop').classList.add('open');
       const urlField = document.getElementById('modalUrlInput');
       if (autoCaptureEnabled && navigator.clipboard && navigator.clipboard.readText) {
@@ -2384,6 +2510,9 @@
             urlField.value = clip;
           }
         } catch {}
+      }
+      if (isVideoPlatformUrl(urlField.value.trim())) {
+        scheduleModalProbe(true);
       }
       urlField.focus();
     }
@@ -2396,6 +2525,8 @@
       }
       const fileName = document.getElementById('modalFileNameInput').value.trim();
       const maxConnections = parseInt(document.getElementById('modalConnSelect').value, 10) || 64;
+      const qualityEl = document.getElementById('modalVideoQualitySelect');
+      const videoQuality = qualityEl ? qualityEl.value : 'best';
       const saveDir = document.getElementById('modalSaveDirInput').value.trim() || defaultSaveDir;
       const cookieRaw = document.getElementById('modalCookieInput').value.trim();
       const expectedHash = document.getElementById('modalHashInput').value.trim();
@@ -2408,10 +2539,13 @@
           headers['Cookie'] = cookieRaw;
         }
       }
+      modalProbeSeq++;
       document.getElementById('modalUrlInput').value = '';
       document.getElementById('modalFileNameInput').value = '';
+      const hintEl = document.getElementById('modalProbeHint');
+      if (hintEl) hintEl.textContent = '';
       closeModal('addUrlModalBackdrop');
-      await createJob({ url, fileName, saveDir, maxConnections, headers, expectedHash });
+      await createJob({ url, fileName, saveDir, maxConnections, videoQuality, headers, expectedHash });
     }
 
     function openBatchModal() {

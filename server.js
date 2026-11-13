@@ -87,7 +87,8 @@ async function loadHistory() {
             saveDir: item.saveDir || DEFAULT_SAVE_DIR,
             fileName: item.fileName,
             maxConnections: item.maxConnections || 64,
-            headers: item.headers || {}
+            headers: item.headers || {},
+            videoQuality: item.videoQuality || 'best'
           });
           job.finalUrl = item.finalUrl || item.url;
           job.filePath = item.filePath || path.join(job.saveDir, item.fileName || '');
@@ -534,11 +535,15 @@ const server = http.createServer(async (req, res) => {
         resolvedName = ipsw.fileName || '';
       } else if (/(?:youtube\.com\/(?:watch\?v=|shorts\/)|youtu\.be\/)/i.test(rawUrl)) {
         const cat = 'Video';
+        const ytMeta = await DownloadJob.probeYoutubeInfo(rawUrl, 7500).catch(() => null);
         return sendJson(res, 200, {
           url: rawUrl,
           finalUrl: rawUrl,
-          fileName: body.fileName || '',
-          totalBytes: 0,
+          fileName: (ytMeta && ytMeta.fileName) || body.fileName || '',
+          title: (ytMeta && ytMeta.title) || '',
+          totalBytes: (ytMeta && ytMeta.totalBytes) || 0,
+          maxHeight: (ytMeta && ytMeta.maxHeight) || 0,
+          qualities: (ytMeta && ytMeta.qualities) || [],
           acceptRanges: true,
           resolverType: 'youtube',
           category: cat,
@@ -699,6 +704,7 @@ const server = http.createServer(async (req, res) => {
         referrer: body.referrer || '',
         source: body.source || 'Bắt link từ Trình duyệt',
         headers: (body.headers && typeof body.headers === 'object') ? body.headers : {},
+        videoQuality: body.videoQuality ? String(body.videoQuality).trim() : '',
         category: cat,
         saveDir: path.join(DEFAULT_SAVE_DIR, cat),
         timestamp: now
