@@ -1861,6 +1861,30 @@ namespace HyperIDM
             }
         }
 
+        internal static string ExtractHttpError(Exception ex)
+        {
+            WebException wex = ex as WebException;
+            if (wex != null && wex.Response != null)
+            {
+                try
+                {
+                    using (Stream rs = wex.Response.GetResponseStream())
+                    using (StreamReader sr = new StreamReader(rs, Encoding.UTF8))
+                    {
+                        string raw = sr.ReadToEnd();
+                        Match m = Regex.Match(raw, "\"error\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"");
+                        if (m.Success)
+                        {
+                            return Regex.Unescape(m.Groups[1].Value);
+                        }
+                        if (!string.IsNullOrEmpty(raw)) return raw;
+                    }
+                }
+                catch { }
+            }
+            return ex != null ? ex.Message : "Lỗi không xác định";
+        }
+
         internal void ExitApplication()
         {
             isExiting = true;
@@ -3447,15 +3471,26 @@ namespace HyperIDM
             }
             ThreadPool.QueueUserWorkItem(delegate
             {
+                string firstError = null;
                 for (int i = 0; i < targets.Count; i++)
                 {
                     try
                     {
                         TrayAgentContext.HttpRequest("POST", Program.AppUrl + "/api/jobs/" + Uri.EscapeDataString(targets[i].Id) + "/restart", "{}", 4000);
                     }
-                    catch { }
+                    catch (Exception ex)
+                    {
+                        if (firstError == null) firstError = TrayAgentContext.ExtractHttpError(ex);
+                    }
                 }
                 TriggerImmediateRefresh();
+                if (!string.IsNullOrEmpty(firstError) && !IsDisposed)
+                {
+                    BeginInvoke(new MethodInvoker(delegate
+                    {
+                        MessageBox.Show(this, firstError, "Không thể tải lại từ đầu — Duytai", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    }));
+                }
             });
         }
 
@@ -3955,8 +3990,8 @@ namespace HyperIDM
         {
             string fn = string.IsNullOrEmpty(initialFileName) ? "Đang tải..." : initialFileName;
             Text = string.Format("0,00% của {0} — Duytai ({1} Luồng)", fn, threads > 0 ? threads : 64);
-            ClientSize = new Size(585, 470);
-            MinimumSize = new Size(520, 420);
+            ClientSize = new Size(620, 470);
+            MinimumSize = new Size(560, 420);
             StartPosition = FormStartPosition.CenterScreen;
             BackColor = Color.FromArgb(245, 246, 248);
             Font = new Font("Segoe UI", 9f, FontStyle.Regular);
@@ -3964,7 +3999,7 @@ namespace HyperIDM
 
             tabs = new TabControl();
             tabs.Location = new Point(10, 10);
-            tabs.Size = new Size(565, 232);
+            tabs.Size = new Size(600, 232);
             tabs.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
 
             // Tab 1: Trạng thái tải xuống
@@ -3973,7 +4008,7 @@ namespace HyperIDM
 
             lblUrlVal = new Label();
             lblUrlVal.Location = new Point(12, 10);
-            lblUrlVal.Size = new Size(535, 18);
+            lblUrlVal.Size = new Size(570, 18);
             lblUrlVal.AutoEllipsis = true;
             lblUrlVal.ForeColor = Color.FromArgb(30, 64, 175);
             lblUrlVal.Text = initialUrl ?? "";
@@ -4011,27 +4046,27 @@ namespace HyperIDM
 
             progressBar = new ProgressBar();
             progressBar.Location = new Point(14, 165);
-            progressBar.Size = new Size(340, 22);
+            progressBar.Size = new Size(346, 22);
             progressBar.Maximum = 1000;
             progressBar.Style = ProgressBarStyle.Continuous;
             tabStatus.Controls.Add(progressBar);
 
-            btnRestartJob = MakeActionBtn("Tải lại từ đầu", 360, 101, 186);
+            btnRestartJob = MakeActionBtn("Tải lại từ đầu", 370, 101, 216);
             btnRestartJob.Padding = new Padding(0);
             btnRestartJob.Click += delegate { RestartThisJob(); };
 
-            btnPauseResume = MakeActionBtn("Tạm dừng", 360, 163, 96);
+            btnPauseResume = MakeActionBtn("Tạm dừng", 370, 163, 118);
             btnPauseResume.Padding = new Padding(0);
             btnPauseResume.Click += delegate { TogglePauseResume(); };
 
-            btnCancelJob = MakeActionBtn("Hủy bỏ", 460, 163, 86);
+            btnCancelJob = MakeActionBtn("Hủy bỏ", 494, 163, 92);
             btnCancelJob.Click += delegate { CancelOrClose(); };
 
-            btnOpenFolder = MakeActionBtn("Mở thư mục", 360, 132, 96);
+            btnOpenFolder = MakeActionBtn("Mở thư mục", 370, 132, 118);
             btnOpenFolder.Padding = new Padding(0);
             btnOpenFolder.Click += delegate { TrayAgentContext.OpenFolderSelectFile(currentFilePath, currentSaveDir); };
 
-            btnHide = MakeActionBtn("Ẩn", 460, 132, 86);
+            btnHide = MakeActionBtn("Ẩn", 494, 132, 92);
             btnHide.Click += delegate { Close(); };
 
             tabStatus.Controls.Add(btnRestartJob);
@@ -4338,13 +4373,24 @@ namespace HyperIDM
             completionHandled = false;
             ThreadPool.QueueUserWorkItem(delegate
             {
+                string errMsg = null;
                 try
                 {
                     TrayAgentContext.HttpRequest("POST", Program.AppUrl + "/api/jobs/" + Uri.EscapeDataString(jobId) + "/restart", "{}", 4000);
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    errMsg = TrayAgentContext.ExtractHttpError(ex);
+                }
                 PollJobOnce();
                 agent.RefreshMainFormNow();
+                if (!string.IsNullOrEmpty(errMsg) && !IsDisposed)
+                {
+                    BeginInvoke(new MethodInvoker(delegate
+                    {
+                        MessageBox.Show(this, errMsg, "Không thể tải lại từ đầu — Duytai", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    }));
+                }
             });
         }
 

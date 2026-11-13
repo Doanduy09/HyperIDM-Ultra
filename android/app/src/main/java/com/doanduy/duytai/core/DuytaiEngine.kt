@@ -152,6 +152,12 @@ class DuytaiEngine(
 
     fun restart(id: String) {
         val job = jobs[id] ?: return
+        if (!job.rawUrl.startsWith("http://", ignoreCase = true) && !job.rawUrl.startsWith("https://", ignoreCase = true)) {
+            job.error = "Không thể tải lại tệp không có URL HTTP/HTTPS hợp lệ"
+            job.status = JobStatus.ERROR
+            emitStates()
+            return
+        }
         val prevRunner = job.runnerJob
         job.pausedOrStopped.set(true)
         job.status = JobStatus.QUEUED

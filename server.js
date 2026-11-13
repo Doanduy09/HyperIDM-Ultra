@@ -10,7 +10,7 @@ const idmFeatures = require('./idm-features');
 
 const PORT = parseInt(process.env.HYPER_IDM_PORT || '17890', 10);
 const PUBLIC_DIR = path.join(__dirname, 'public');
-const HISTORY_FILE = path.join(__dirname, 'jobs-history.json');
+const HISTORY_FILE = process.env.HYPER_IDM_HISTORY_FILE || path.join(__dirname, 'jobs-history.json');
 const USER_HOME = process.env.USERPROFILE || process.env.HOME || os.homedir();
 const DEFAULT_SAVE_DIR = path.join(USER_HOME, 'Downloads', 'Duytai');
 const LEGACY_SAVE_DIR = path.join(USER_HOME, 'Downloads', 'HyperIDM');
@@ -76,6 +76,11 @@ async function loadHistory() {
       const list = JSON.parse(raw);
       if (Array.isArray(list)) {
         for (const item of list) {
+          if (!item) continue;
+          const isGhostLocal = String(item.id || '').startsWith('local-')
+            && /^file:\/\//i.test(String(item.url || ''))
+            && (item.status === 'error' || !item.filePath || !fs.existsSync(item.filePath));
+          if (isGhostLocal) continue;
           const job = new DownloadJob({
             id: item.id,
             url: item.url,
@@ -87,6 +92,8 @@ async function loadHistory() {
           job.finalUrl = item.finalUrl || item.url;
           job.filePath = item.filePath || path.join(job.saveDir, item.fileName || '');
           job.stateFilePath = `${job.filePath}.hyper.json`;
+          job.isLocalOnly = /^file:\/\//i.test(job.url || '');
+          job.error = item.error || null;
           job.status = ['downloading', 'probing', 'resolving', 'muxing'].includes(item.status) ? 'paused' : (item.status || 'paused');
           job.totalBytes = item.totalBytes || 0;
           job.downloadedBytes = item.downloadedBytes || 0;
@@ -204,13 +211,10 @@ async function syncIdmRegistryItems() {
 async function syncExistingDownloads() {
   try {
     await syncIdmRegistryItems();
-    const downloadsRoot = path.join(USER_HOME, 'Downloads');
     const existingPaths = new Set(Array.from(jobs.values()).map(j => (j.filePath || '').toLowerCase()));
-    const scanDirs = [downloadsRoot, DEFAULT_SAVE_DIR, LEGACY_SAVE_DIR];
+    const scanDirs = [DEFAULT_SAVE_DIR];
     for (const folder of Object.keys(idmFeatures.CATEGORIES || {})) {
       scanDirs.push(path.join(DEFAULT_SAVE_DIR, folder));
-      scanDirs.push(path.join(LEGACY_SAVE_DIR, folder));
-      scanDirs.push(path.join(downloadsRoot, folder));
     }
 
     const foundFiles = [];
@@ -222,6 +226,17 @@ async function syncExistingDownloads() {
         if (ent.name.endsWith('.hyper.json') || ent.name === 'desktop.ini') continue;
         const fullPath = path.join(dir, ent.name);
         if (existingPaths.has(fullPath.toLowerCase())) continue;
+        // Skip partial/managed files belonging to active or historical HTTP jobs
+        if (fs.existsSync(`${fullPath}.hyper.json`)) continue;
+        let hasManagedJob = false;
+        for (const existingJob of jobs.values()) {
+          if (existingJob.fileName && existingJob.fileName.toLowerCase() === ent.name.toLowerCase() &&
+              existingJob.saveDir && existingJob.saveDir.toLowerCase() === dir.toLowerCase()) {
+            hasManagedJob = true;
+            break;
+          }
+        }
+        if (hasManagedJob) continue;
         try {
           const st = await fsp.stat(fullPath);
           if (st.size > 0) {
@@ -244,6 +259,7 @@ async function syncExistingDownloads() {
         fileName: f.name,
         maxConnections: 64
       });
+      job.isLocalOnly = true;
       job.filePath = f.fullPath;
       job.status = 'completed';
       job.totalBytes = f.size;
@@ -264,6 +280,16 @@ async function syncExistingDownloads() {
   } catch {}
 }
 
+function serializeJobsForHistory() {
+  return Array.from(jobs.values()).map((j) => {
+    const dto = j.toJSON();
+    if (dto.status === 'completed' && Array.isArray(dto.segments) && dto.segments.length > 0) {
+      dto.segments = [];
+    }
+    return dto;
+  });
+}
+
 let saveDebounce = null;
 function scheduleSaveHistory(immediate = false) {
   if (saveDebounce) {
@@ -276,8 +302,7 @@ function scheduleSaveHistory(immediate = false) {
   saveDebounce = setTimeout(async () => {
     saveDebounce = null;
     try {
-      const serialized = Array.from(jobs.values()).map(j => j.toJSON());
-      await fsp.writeFile(HISTORY_FILE, JSON.stringify(serialized), 'utf8');
+      await fsp.writeFile(HISTORY_FILE, JSON.stringify(serializeJobsForHistory()), 'utf8');
     } catch {}
   }, delayMs);
 }
@@ -474,8 +499,8 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/jobs' && req.method === 'POST') {
     try {
       const body = await readJsonBody(req);
-      if (!body.url || typeof body.url !== 'string') {
-        return sendJson(res, 400, { error: 'URL không hợp lệ' });
+      if (!body.url || typeof body.url !== 'string' || !/^https?:\/\//i.test(body.url.trim())) {
+        return sendJson(res, 400, { error: 'URL không hợp lệ (cần http:// hoặc https://)' });
       }
       // Check if URL contains a batch pattern like file[01-10].zip
       const expanded = idmFeatures.expandBatchPattern(body.url);
@@ -736,6 +761,7 @@ const server = http.createServer(async (req, res) => {
         const job = jobs.get(id);
         if (!job) continue;
         batchQueue.remove(job);
+        speedLimiter.setJobLimit(id, 0);
         await job.cancel(deleteFile);
         jobs.delete(id);
         deletedCount++;
@@ -772,8 +798,41 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, job.toJSON(), req);
     }
     if (action === 'restart') {
-      await job.restart();
-      return sendJson(res, 200, job.toJSON(), req);
+      if (!/^https?:\/\//i.test(job.url || '')) {
+        // Recover original HTTP/HTTPS URL from sidecar journal or sibling job before rejecting
+        let recoveredUrl = '';
+        if (job.filePath && fs.existsSync(`${job.filePath}.hyper.json`)) {
+          try {
+            const jdata = JSON.parse(fs.readFileSync(`${job.filePath}.hyper.json`, 'utf8'));
+            const candidate = jdata.url || jdata.finalUrl || '';
+            if (/^https?:\/\//i.test(candidate)) recoveredUrl = candidate;
+          } catch {}
+        }
+        if (!recoveredUrl) {
+          for (const sibling of jobs.values()) {
+            if (sibling === job || !/^https?:\/\//i.test(sibling.url || '')) continue;
+            const samePath = sibling.filePath && job.filePath && sibling.filePath.toLowerCase() === job.filePath.toLowerCase();
+            if (samePath) {
+              recoveredUrl = sibling.url;
+              break;
+            }
+          }
+        }
+        if (!recoveredUrl) {
+          return sendJson(res, 400, {
+            error: 'Mục này là tệp có sẵn trên ổ đĩa (chưa có URL HTTP/HTTPS gốc). Vui lòng dùng "Đổi Link Mới" hoặc "Thêm URL" — tệp cũ vẫn được giữ nguyên.'
+          }, req);
+        }
+        job.url = recoveredUrl;
+        job.finalUrl = recoveredUrl;
+        job.isLocalOnly = false;
+      }
+      try {
+        await job.restart();
+        return sendJson(res, 200, job.toJSON(), req);
+      } catch (e) {
+        return sendJson(res, 400, { error: e.message }, req);
+      }
     }
     if (action === 'refresh-url') {
       try {
@@ -835,6 +894,7 @@ const server = http.createServer(async (req, res) => {
     if (!job) return sendJson(res, 404, { error: 'Không tìm thấy tác vụ tải' });
     const deleteFile = parsedUrl.searchParams.get('deleteFile') === 'true';
     batchQueue.remove(job);
+    speedLimiter.setJobLimit(id, 0);
     await job.cancel(deleteFile);
     jobs.delete(id);
     broadcastState();
@@ -1037,8 +1097,7 @@ async function gracefulShutdown() {
         await job.pause().catch(() => {});
       }
     }
-    const serialized = Array.from(jobs.values()).map(j => j.toJSON());
-    fs.writeFileSync(HISTORY_FILE, JSON.stringify(serialized), 'utf8');
+    fs.writeFileSync(HISTORY_FILE, JSON.stringify(serializeJobsForHistory()), 'utf8');
   } catch {}
   try { server.close(); } catch {}
   process.exit(0);

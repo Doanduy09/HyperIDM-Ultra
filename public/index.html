@@ -2288,7 +2288,13 @@
     }
 
     async function jobAction(id, action) {
-      await fetch(`/api/jobs/${id}/${action}`, { method: 'POST' });
+      const res = await fetch(`/api/jobs/${id}/${action}`, { method: 'POST' });
+      if (!res.ok) {
+        try {
+          const data = await res.json();
+          if (data && data.error) alert(data.error);
+        } catch {}
+      }
     }
 
     async function deleteJob(id, deleteFile = false) {

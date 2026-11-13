@@ -1,5 +1,6 @@
 const http = require('http');
 const https = require('https');
+const net = require('net');
 const dns = require('dns').promises;
 const fs = require('fs');
 const fsp = require('fs').promises;
@@ -7,6 +8,29 @@ const path = require('path');
 const { EventEmitter } = require('events');
 const crypto = require('crypto');
 const { execFile } = require('child_process');
+
+// Bounded DNS + Edge Latency Pool Cache (30s TTL, max 200 hostnames)
+const DNS_POOL_CACHE = new Map();
+const DNS_POOL_TTL_MS = 30000;
+const RESERVED_TARGET_PATHS = new Map(); // normalizedPath -> jobId (prevents concurrent filename collisions)
+
+function probeTcpLatency(ip, port, timeoutMs = 850) {
+  return new Promise((resolve) => {
+    const start = Date.now();
+    let settled = false;
+    const sock = net.createConnection({ host: ip, port });
+    const done = (latency) => {
+      if (settled) return;
+      settled = true;
+      try { sock.destroy(); } catch {}
+      resolve(latency);
+    };
+    sock.setTimeout(timeoutMs);
+    sock.once('connect', () => done(Date.now() - start));
+    sock.once('timeout', () => done(Infinity));
+    sock.once('error', () => done(Infinity));
+  });
+}
 
 // Persistent Keep-Alive Connection Pools (0ms TLS/TCP reuse during Work-Stealing)
 const sharedHttpAgent = new http.Agent({
@@ -110,13 +134,16 @@ class DownloadJob extends EventEmitter {
 
     this._speedTimer = null;
     this._stateTimer = null;
+    this._retryTimers = new Set();
+    this._telemetryTick = 0;
+    this._ewmaWriteMs = 0;
     this._lastTickBytes = 0;
     this._lastTickTime = 0;
     this._minSplitSize = 1024 * 1024; // 1 MB minimum steal size
     this._writeBufferSize = 1024 * 1024; // 1 MB write coalescing buffer
     this._globalPendingWriteBytes = 0;
-    this._maxGlobalPendingWriteBytes = 96 * 1024 * 1024; // 96 MB global write-queue RAM cap
-    this._maxWorkerPendingWriteBytes = 8 * 1024 * 1024; // 8 MB per-worker write-queue cap
+    this._maxGlobalPendingWriteBytes = 48 * 1024 * 1024; // 48 MB per-job write-queue RAM cap
+    this._maxWorkerPendingWriteBytes = 4 * 1024 * 1024; // 4 MB per-worker write-queue cap
     this._savingState = false;
     this._stateSaveQueued = false;
   }
@@ -456,6 +483,9 @@ class DownloadJob extends EventEmitter {
   }
 
   async restart() {
+    if (!/^https?:\/\//i.test(this.url || '')) {
+      throw new Error('Không thể tải lại từ đầu khi chưa có URL HTTP/HTTPS hợp lệ');
+    }
     this.status = 'paused';
     if (this._rateLimitTimer) {
       clearTimeout(this._rateLimitTimer);
@@ -490,6 +520,9 @@ class DownloadJob extends EventEmitter {
     this.hedgeWins = 0;
     this.segments = [];
     this.activeWorkers.clear();
+    this._badIps.clear();
+    this._ipStats.clear();
+    this._ewmaWriteMs = 0;
     this.filePath = '';
     this.stateFilePath = '';
     this._lastTickBytes = 0;
@@ -600,6 +633,14 @@ class DownloadJob extends EventEmitter {
   async _resolveCdnPool(targetUrl) {
     try {
       const parsed = new URL(targetUrl);
+      const port = Number(parsed.port) || (parsed.protocol === 'https:' ? 443 : 80);
+      const cacheKey = `${parsed.hostname}:${port}`;
+      const cached = DNS_POOL_CACHE.get(cacheKey);
+      if (cached && cached.expiresAt > Date.now() && cached.ips.length > 0) {
+        this.cdnIps = cached.ips.slice();
+        return;
+      }
+
       const unique = new Set();
       try {
         const ips4 = await dns.resolve4(parsed.hostname);
@@ -611,7 +652,25 @@ class DownloadJob extends EventEmitter {
           if (Array.isArray(all)) for (const entry of all) if (entry && entry.address) unique.add(entry.address);
         } catch {}
       }
-      this.cdnIps = unique.size > 0 ? Array.from(unique) : [parsed.hostname];
+
+      let pool = unique.size > 0 ? Array.from(unique) : [parsed.hostname];
+      if (pool.length > 1) {
+        const probeTargets = pool.slice(0, 6);
+        const latResults = await Promise.all(probeTargets.map(async (ip) => ({
+          ip,
+          rtt: await probeTcpLatency(ip, port, 850)
+        })));
+        latResults.sort((a, b) => a.rtt - b.rtt);
+        const sortedSet = new Set(latResults.map(r => r.ip));
+        pool = [...latResults.map(r => r.ip), ...pool.filter(ip => !sortedSet.has(ip))];
+      }
+
+      if (DNS_POOL_CACHE.size >= 200) {
+        const firstKey = DNS_POOL_CACHE.keys().next().value;
+        if (firstKey !== undefined) DNS_POOL_CACHE.delete(firstKey);
+      }
+      DNS_POOL_CACHE.set(cacheKey, { ips: pool.slice(), expiresAt: Date.now() + DNS_POOL_TTL_MS });
+      this.cdnIps = pool;
     } catch {
       try {
         const parsed = new URL(targetUrl);
@@ -910,10 +969,13 @@ class DownloadJob extends EventEmitter {
       this._globalPendingWriteBytes += lenToWrite;
 
       writeChain = writeChain.then(async () => {
+        const writeStart = Date.now();
         try {
           if (diskWriteError.err) return;
           if (this.fileHandle && (this.status === 'downloading' || this.status === 'paused')) {
             await this._writeVectorAtOffset(bufs, lenToWrite, offsetToWrite);
+            const writeMs = Date.now() - writeStart;
+            this._ewmaWriteMs = this._ewmaWriteMs ? (this._ewmaWriteMs * 0.8 + writeMs * 0.2) : writeMs;
           }
         } catch (err) {
           diskWriteError.err = err;
@@ -937,6 +999,25 @@ class DownloadJob extends EventEmitter {
       return writeChain;
     };
 
+    const noopErr = () => {};
+    let detached = false;
+    const detachListeners = () => {
+      if (detached) return;
+      detached = true;
+      try {
+        if (res) {
+          res.removeListener('data', onChunk);
+          res.removeListener('end', onEnd);
+          res.removeListener('error', settleFailure);
+          res.once('error', noopErr);
+        }
+        if (req) {
+          req.removeListener('error', settleFailure);
+          req.once('error', noopErr);
+        }
+      } catch {}
+    };
+
     const workerEntry = {
       req,
       flushBuffer,
@@ -947,6 +1028,7 @@ class DownloadJob extends EventEmitter {
         if (finalized || workerSettled) return writeChain;
         finalized = true;
         workerSettled = true;
+        detachListeners();
         try { if (res && !res.destroyed) res.destroy(); } catch {}
         try { if (req && !req.destroyed) req.destroy(); } catch {}
         return flushBuffer();
@@ -957,6 +1039,7 @@ class DownloadJob extends EventEmitter {
     const settleFailure = (err) => {
       if (workerSettled || finalized) return;
       workerSettled = true;
+      detachListeners();
       if (this.activeWorkers.get(seg.id) !== workerEntry) return;
       flushBuffer().then(() => {
         if (this.activeWorkers.get(seg.id) === workerEntry) {
@@ -967,6 +1050,7 @@ class DownloadJob extends EventEmitter {
 
     const onChunk = (chunk) => {
       if (this.status !== 'downloading' || finalized || workerSettled) {
+        detachListeners();
         if (res && !res.destroyed) res.destroy();
         return;
       }
@@ -976,6 +1060,7 @@ class DownloadJob extends EventEmitter {
         const remainingAllowed = seg.end - seg.current + 1;
         if (remainingAllowed <= 0) {
           finalized = true;
+          detachListeners();
           if (res && !res.destroyed) res.destroy();
           this._completeSegment(seg, flushBuffer, workerEntry);
           return;
@@ -1009,8 +1094,20 @@ class DownloadJob extends EventEmitter {
 
       if (seg.end >= 0 && seg.current > seg.end) {
         finalized = true;
+        detachListeners();
         if (res && !res.destroyed) res.destroy();
         this._completeSegment(seg, flushBuffer, workerEntry);
+      }
+    };
+
+    const onEnd = () => {
+      detachListeners();
+      if (finalized || workerSettled || this.status !== 'downloading') return;
+      if (seg.end < 0 || seg.current > seg.end) {
+        finalized = true;
+        this._completeSegment(seg, flushBuffer, workerEntry);
+      } else {
+        settleFailure(new Error('Stream ended prematurely'));
       }
     };
 
@@ -1020,15 +1117,7 @@ class DownloadJob extends EventEmitter {
     }
 
     res.on('data', onChunk);
-    res.on('end', () => {
-      if (finalized || workerSettled || this.status !== 'downloading') return;
-      if (seg.end < 0 || seg.current > seg.end) {
-        finalized = true;
-        this._completeSegment(seg, flushBuffer, workerEntry);
-      } else {
-        settleFailure(new Error('Stream ended prematurely'));
-      }
-    });
+    res.on('end', onEnd);
     res.on('error', settleFailure);
     req.on('error', settleFailure);
     return workerEntry;
@@ -1241,11 +1330,14 @@ class DownloadJob extends EventEmitter {
     const backoffMs = isRateLimited
       ? Math.min(12000, (err && err.retryAfterMs) || Math.round(800 * Math.pow(1.2, expStep)))
       : Math.min(10000, Math.round(500 * Math.pow(1.25, expStep)));
-    setTimeout(() => {
+    const retryTimer = setTimeout(() => {
+      this._retryTimers.delete(retryTimer);
       if (this.status === 'downloading') {
         this._scheduleWorkers();
       }
     }, backoffMs);
+    retryTimer.unref?.();
+    this._retryTimers.add(retryTimer);
   }
 
   _startTelemetryLoop() {
@@ -1298,16 +1390,36 @@ class DownloadJob extends EventEmitter {
         this._ipStats.set(ip, { ewmaBps: ewma, updatedAt: now });
       }
 
-      // Dynamic BDP Write-Coalescing Buffer Auto-Tuner
-      if (this.currentSpeedBps > 150 * 1024 * 1024) {
+      // Adaptive Write-Coalescing Buffer Auto-Tuner (NVMe burst + slow HDD backpressure guard)
+      if (this._ewmaWriteMs > 45) {
+        this._writeBufferSize = 256 * 1024;
+      } else if (this.currentSpeedBps > 120 * 1024 * 1024 && this._ewmaWriteMs < 20) {
         this._writeBufferSize = 2 * 1024 * 1024;
-      } else if (this.currentSpeedBps > 25 * 1024 * 1024) {
+      } else if (this.currentSpeedBps > 20 * 1024 * 1024) {
         this._writeBufferSize = 1024 * 1024;
       } else {
         this._writeBufferSize = 256 * 1024;
       }
 
+      // Periodically prune expired IP health/telemetry entries (zero unbounded Map growth)
+      this._telemetryTick++;
+      if (this._telemetryTick % 10 === 0) {
+        for (const [ip, until] of this._badIps.entries()) {
+          if (now >= until) this._badIps.delete(ip);
+        }
+        if (this._ipStats.size > 64) {
+          for (const [ip, st] of this._ipStats.entries()) {
+            if (now - st.updatedAt > 120000) this._ipStats.delete(ip);
+          }
+        }
+      }
+
       const connLimit = this.effectiveMaxConnections || this.maxConnections;
+      let medianSegSpeed = 0;
+      if (activeSegs.length >= 3) {
+        const sorted = activeSegs.map(s => s.speedBps).sort((a, b) => a - b);
+        medianSegSpeed = sorted[sorted.length >> 1] || 0;
+      }
 
       // Tail-Latency, Hedged Racing & Anti-Throttle Straggler Watchdog
       for (const seg of activeSegs) {
@@ -1342,11 +1454,14 @@ class DownloadJob extends EventEmitter {
           }
           continue;
         }
-        // 2) Recycle heavily throttled socket compared to sibling connections
+        // 2) Preemptive EWMA-median straggler cut (< 22% median or < 12% avg for 1.0s)
         if (activeSegs.length >= 2 && this.currentSpeedBps > 1024 * 1024) {
-          if (rem > 512 * 1024 && seg.speedBps < avgSegSpeed * 0.10) {
+          const threshold = medianSegSpeed > 0
+            ? Math.min(avgSegSpeed * 0.25, medianSegSpeed * 0.22)
+            : (avgSegSpeed * 0.12);
+          if (rem > 512 * 1024 && seg.speedBps < threshold) {
             seg.slowTicks = (seg.slowTicks || 0) + 1;
-            if (seg.slowTicks >= 3) {
+            if (seg.slowTicks >= 2) {
               seg.slowTicks = 0;
               this.recycleCount++;
               if (w && w.req) {
@@ -1388,6 +1503,12 @@ class DownloadJob extends EventEmitter {
       clearTimeout(this._rateLimitTimer);
       this._rateLimitTimer = null;
     }
+    if (this._retryTimers && this._retryTimers.size > 0) {
+      for (const t of this._retryTimers) {
+        clearTimeout(t);
+      }
+      this._retryTimers.clear();
+    }
   }
 
   async _checkCompletion() {
@@ -1413,6 +1534,10 @@ class DownloadJob extends EventEmitter {
     if (this.stateFilePath && fs.existsSync(this.stateFilePath)) {
       await fsp.unlink(this.stateFilePath).catch(() => {});
     }
+    if (this.filePath) {
+      const key = this.filePath.toLowerCase();
+      if (RESERVED_TARGET_PATHS.get(key) === this.id) RESERVED_TARGET_PATHS.delete(key);
+    }
 
     this.emit('update', this.toJSON());
     this.emit('completed', this.toJSON());
@@ -1422,9 +1547,13 @@ class DownloadJob extends EventEmitter {
     this._stopTelemetryLoop();
     const flushes = [];
     for (const [, worker] of this.activeWorkers.entries()) {
-      if (worker.flushBuffer) flushes.push(worker.flushBuffer());
-      if (worker.req) worker.req.destroy();
-      if (worker.getWriteChain) flushes.push(worker.getWriteChain());
+      if (worker.abortSilently) {
+        flushes.push(worker.abortSilently());
+      } else {
+        if (worker.flushBuffer) flushes.push(worker.flushBuffer());
+        if (worker.req) worker.req.destroy();
+        if (worker.getWriteChain) flushes.push(worker.getWriteChain());
+      }
     }
     this.activeWorkers.clear();
     await Promise.allSettled(flushes);
@@ -1439,6 +1568,10 @@ class DownloadJob extends EventEmitter {
 
   async _cleanupHandles() {
     this._stopTelemetryLoop();
+    if (this.filePath) {
+      const key = this.filePath.toLowerCase();
+      if (RESERVED_TARGET_PATHS.get(key) === this.id) RESERVED_TARGET_PATHS.delete(key);
+    }
     if (this.fileHandle) {
       try {
         if (this.totalBytes > 0 && this.totalBytes <= 512 * 1024 * 1024) {
@@ -1536,19 +1669,37 @@ class DownloadJob extends EventEmitter {
   }
 
   async _resolveUniqueFilePath(initialPath) {
-    if (fs.existsSync(`${initialPath}.hyper.json`)) {
-      return initialPath;
+    const reserve = (chosenPath) => {
+      RESERVED_TARGET_PATHS.set(chosenPath.toLowerCase(), this.id);
+      return chosenPath;
+    };
+    const isTakenByOther = (candidatePath) => {
+      const owner = RESERVED_TARGET_PATHS.get(candidatePath.toLowerCase());
+      if (owner && owner !== this.id) return true;
+      return fs.existsSync(candidatePath) || fs.existsSync(`${candidatePath}.hyper.json`);
+    };
+
+    const journalPath = `${initialPath}.hyper.json`;
+    if (fs.existsSync(journalPath)) {
+      try {
+        const meta = JSON.parse(fs.readFileSync(journalPath, 'utf8'));
+        if (meta && meta.id === this.id) {
+          return reserve(initialPath);
+        }
+      } catch {}
+    } else if (this.filePath === initialPath && this.downloadedBytes > 0 && fs.existsSync(initialPath)) {
+      return reserve(initialPath);
     }
-    if (!fs.existsSync(initialPath)) return initialPath;
+    if (!isTakenByOther(initialPath)) return reserve(initialPath);
 
     const dir = path.dirname(initialPath);
     const ext = path.extname(initialPath);
     const base = path.basename(initialPath, ext);
     for (let i = 1; i < 1000; i++) {
       const candidate = path.join(dir, `${base} (${i})${ext}`);
-      if (!fs.existsSync(candidate)) return candidate;
+      if (!isTakenByOther(candidate)) return reserve(candidate);
     }
-    return path.join(dir, `${base}_${Date.now()}${ext}`);
+    return reserve(path.join(dir, `${base}_${Date.now()}${ext}`));
   }
 }
 

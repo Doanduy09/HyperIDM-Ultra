@@ -108,6 +108,14 @@ class DuytaiEngineTest {
             assertEquals(JobStatus.COMPLETED, restartedState?.status)
             assertEquals(payload.size.toLong(), restartedState?.downloadedBytes)
             assertEquals(expectedSha, restartedState?.sha256)
+
+            // Non-HTTP file:// jobs must refuse restart cleanly without wiping files on disk
+            val localFile = File(tempDir, "keep_intact.bin").apply { writeText("SAFE_BYTES") }
+            val badId = engine.enqueue("file://${localFile.absolutePath}", startImmediately = false)
+            engine.restart(badId)
+            val badState = engine.jobList.value.firstOrNull { it.id == badId }
+            assertEquals(JobStatus.ERROR, badState?.status)
+            assertTrue(localFile.exists() && localFile.readText() == "SAFE_BYTES")
         } finally {
             engine.shutdown()
             serverSocket.close()
