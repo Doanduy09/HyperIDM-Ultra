@@ -225,23 +225,17 @@ final class DuytaiMacApp: NSObject, NSApplicationDelegate, WKNavigationDelegate,
 
     private func waitAndLoadUI() {
         let targetURL = URL(string: "http://127.0.0.1:\(serverPort)")!
-        DispatchQueue.global(qos: .userInitiated).async {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            var serverReady = false
             for _ in 0..<40 {
-                var req = URLRequest(url: targetURL)
-                req.timeoutInterval = 0.3
-                let sem = DispatchSemaphore(value: 0)
-                var ready = false
-                URLSession.shared.dataTask(with: req) { _, resp, _ in
-                    if let http = resp as? HTTPURLResponse, http.statusCode < 500 {
-                        ready = true
-                    }
-                    sem.signal()
-                }.resume()
-                sem.wait()
-                if ready { break }
+                if (try? Data(contentsOf: targetURL)) != nil {
+                    serverReady = true
+                    break
+                }
                 Thread.sleep(forTimeInterval: 0.15)
             }
-            DispatchQueue.main.async { [weak self] in
+            let ready = serverReady
+            DispatchQueue.main.async {
                 guard let self = self else { return }
                 if ready {
                     self.webView.load(URLRequest(url: targetURL))
@@ -307,12 +301,15 @@ final class DuytaiMacApp: NSObject, NSApplicationDelegate, WKNavigationDelegate,
                   let data = data,
                   let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let items = obj["items"] as? [[String: Any]], !items.isEmpty else { return }
+            let pairs: [(String, String)] = items.compactMap { item in
+                guard let u = item["url"] as? String, !u.isEmpty else { return nil }
+                return (u, (item["source"] as? String) ?? "Browser Extension")
+            }
+            guard !pairs.isEmpty else { return }
             DispatchQueue.main.async {
                 self.showMainWindow()
-                for item in items {
-                    if let u = item["url"] as? String, !u.isEmpty {
-                        self.enqueueDownload(urlString: u, source: (item["source"] as? String) ?? "Browser Extension")
-                    }
+                for (u, src) in pairs {
+                    self.enqueueDownload(urlString: u, source: src)
                 }
             }
         }.resume()

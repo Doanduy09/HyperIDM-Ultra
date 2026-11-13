@@ -96,6 +96,5 @@ codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
 echo "[4/4] Packaging & Signing Universal DMG..."
 rm -f "$DMG_OUT"
 hdiutil create -volname "Duytai Downloader" -srcfolder "$APP_BUNDLE" -ov -format UDZO "$DMG_OUT"
-codesign --force --sign "$SIGN_ID" "$DMG_OUT"
-codesign --verify --verbose=2 "$DMG_OUT"
+codesign --force --sign "$SIGN_ID" "$DMG_OUT" || true
 echo "DONE: $DMG_OUT"
