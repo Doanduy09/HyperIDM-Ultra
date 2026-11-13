@@ -748,20 +748,32 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
-  const actionMatch = /^\/api\/jobs\/([^/]+)\/(pause|resume|open-folder|open-file|refresh-url|antivirus-scan)$/.exec(pathname);
+  const actionMatch = /^\/api\/jobs\/([^/]+)\/(pause|resume|restart|open-folder|open-file|refresh-url|antivirus-scan)$/.exec(pathname);
   if (actionMatch && req.method === 'POST') {
     const id = decodeURIComponent(actionMatch[1]);
     const action = actionMatch[2];
     const job = jobs.get(id);
-    if (!job) return sendJson(res, 404, { error: 'Không tìm thấy tác vụ tải' });
+    if (!job) return sendJson(res, 404, { error: 'Không tìm thấy tác vụ tải' }, req);
 
     if (action === 'pause') {
       await job.pause();
-      return sendJson(res, 200, job.toJSON());
+      return sendJson(res, 200, job.toJSON(), req);
     }
     if (action === 'resume') {
+      job.error = null;
+      job._rateLimitUntil = 0;
+      if (Array.isArray(job.segments)) {
+        for (const s of job.segments) {
+          s.retries = 0;
+          if (s.status !== 'completed') s.status = 'pending';
+        }
+      }
       job.start();
-      return sendJson(res, 200, job.toJSON());
+      return sendJson(res, 200, job.toJSON(), req);
+    }
+    if (action === 'restart') {
+      await job.restart();
+      return sendJson(res, 200, job.toJSON(), req);
     }
     if (action === 'refresh-url') {
       try {

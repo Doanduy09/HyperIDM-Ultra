@@ -96,6 +96,18 @@ class DuytaiEngineTest {
             assertEquals(payload.size.toLong(), doneState?.downloadedBytes)
             assertEquals(expectedSha, doneState?.sha256)
             assertTrue(File(tempDir, "Firmware_ISO/test_firmware.ipsw").exists())
+
+            // Verify restart() cleans previous partial/completed file and redownloads cleanly from 0
+            engine.restart(id)
+            var restartedState = engine.jobList.value.firstOrNull { it.id == id }
+            repeat(80) {
+                delay(150)
+                restartedState = engine.jobList.value.firstOrNull { it.id == id }
+                if (restartedState?.status == JobStatus.COMPLETED || restartedState?.status == JobStatus.ERROR) return@repeat
+            }
+            assertEquals(JobStatus.COMPLETED, restartedState?.status)
+            assertEquals(payload.size.toLong(), restartedState?.downloadedBytes)
+            assertEquals(expectedSha, restartedState?.sha256)
         } finally {
             engine.shutdown()
             serverSocket.close()

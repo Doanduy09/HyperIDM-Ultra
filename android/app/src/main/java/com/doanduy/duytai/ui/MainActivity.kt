@@ -357,6 +357,17 @@ class MainActivity : Activity() {
                 }
                 actionRow.addView(toggleBtn)
             }
+            val restartBtn = Button(this).apply {
+                text = "Tải lại"
+                setBackgroundColor(Color.parseColor("#0F766E"))
+                setTextColor(Color.WHITE)
+                setOnClickListener {
+                    engineRef?.restart(job.id)
+                }
+            }
+            actionRow.addView(restartBtn, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                leftMargin = 12
+            })
             card.addView(actionRow)
 
             jobsContainer.addView(card, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {

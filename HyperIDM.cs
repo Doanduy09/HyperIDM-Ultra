@@ -1981,6 +1981,12 @@ namespace HyperIDM
 
         public event Action<int, Rectangle> ButtonClicked;
 
+        public void AppendButton(IdmToolbarButtonDef def)
+        {
+            if (def != null) buttons.Add(def);
+            Invalidate();
+        }
+
         public IdmToolbarPanel()
         {
             DoubleBuffered = true;
@@ -2301,6 +2307,25 @@ namespace HyperIDM
                         g.DrawLine(p, mx, my - 7f, mx, my + 7f);
                     }
                     break;
+
+                case 12: // Tải lại từ đầu: Circular Refresh Arrow
+                    using (Pen p = new Pen(c, 2.0f))
+                    {
+                        p.StartCap = LineCap.Round;
+                        p.EndCap = LineCap.Round;
+                        g.DrawArc(p, mx - 7f, my - 7f, 14f, 14f, 35f, 285f);
+                    }
+                    using (SolidBrush b = new SolidBrush(c))
+                    {
+                        PointF[] arr = new PointF[]
+                        {
+                            new PointF(mx + 4.5f, my - 8.5f),
+                            new PointF(mx + 8.5f, my - 3.0f),
+                            new PointF(mx + 2.0f, my - 2.5f)
+                        };
+                        g.FillPolygon(b, arr);
+                    }
+                    break;
             }
         }
 
@@ -2383,6 +2408,15 @@ namespace HyperIDM
 
             BuildMenus();
             BuildToolbar();
+            toolbar.AppendButton(new IdmToolbarButtonDef
+            {
+                Label = "Tải lại",
+                Tooltip = "Xóa dữ liệu dở và tải lại tệp đã chọn từ đầu (0 bytes)",
+                IconKind = 12,
+                FillColor = Color.FromArgb(224, 242, 254),
+                RingColor = Color.FromArgb(2, 132, 199),
+                GlyphColor = Color.FromArgb(3, 105, 161)
+            });
             BuildMainSplit();
             BuildStatusBar();
             BuildRowContextMenu();
@@ -2467,6 +2501,7 @@ namespace HyperIDM
             mFile.DropDownItems.Add("Quét Virus (Windows Defender) & Kiểm tra SHA-256", null, delegate { ScanAntivirusSelected(); });
             mFile.DropDownItems.Add(new ToolStripSeparator());
             mFile.DropDownItems.Add("Tải tiếp", null, delegate { ResumeSelectedJob(); });
+            mFile.DropDownItems.Add("Tải lại từ đầu (0 bytes)", null, delegate { RestartSelectedJob(); });
             mFile.DropDownItems.Add("Dừng tải", null, delegate { PauseSelectedJob(); });
             mFile.DropDownItems.Add(new ToolStripSeparator());
             mFile.DropDownItems.Add("Chọn tất cả (Ctrl+A)", null, delegate { SelectAllFilteredJobs(); });
@@ -2580,6 +2615,9 @@ namespace HyperIDM
                         break;
                     case 11: // Test nhanh
                         quickTestMenu.Show(toolbar, new Point(slotRect.Left, toolbar.Height - 2));
+                        break;
+                    case 12: // Tải lại
+                        RestartSelectedJob();
                         break;
                 }
             };
@@ -2920,6 +2958,7 @@ namespace HyperIDM
             rowContextMenu.Items.Add("Mở thư mục chứa tệp", null, delegate { OpenSelectedFolder(); });
             rowContextMenu.Items.Add(new ToolStripSeparator());
             rowContextMenu.Items.Add("Tải tiếp", null, delegate { ResumeSelectedJob(); });
+            rowContextMenu.Items.Add("Tải lại từ đầu (0 bytes)", null, delegate { RestartSelectedJob(); });
             rowContextMenu.Items.Add("Tạm dừng", null, delegate { PauseSelectedJob(); });
             rowContextMenu.Items.Add(new ToolStripSeparator());
             rowContextMenu.Items.Add("Làm mới địa chỉ tải (Refresh Expired URL)...", null, delegate { OpenRefreshUrlSelected(); });
@@ -3377,6 +3416,45 @@ namespace HyperIDM
                     TrayAgentContext.HttpRequest("POST", Program.AppUrl + "/api/jobs/" + Uri.EscapeDataString(job.Id) + "/resume", "{}", 3000);
                 }
                 catch { }
+                TriggerImmediateRefresh();
+            });
+        }
+
+        private void RestartSelectedJob()
+        {
+            List<JobSnapshot> targets = GetTargetJobs();
+            if (targets.Count == 0) return;
+
+            bool hasProgress = false;
+            for (int i = 0; i < targets.Count; i++)
+            {
+                if (targets[i].DownloadedBytes > 0) { hasProgress = true; break; }
+            }
+            if (hasProgress)
+            {
+                string msg = targets.Count == 1
+                    ? string.Format("Xóa dữ liệu cũ của \"{0}\" và tải lại từ đầu (0 bytes)?", targets[0].FileName)
+                    : string.Format("Xóa dữ liệu cũ của {0} mục đã chọn và tải lại từ đầu (0 bytes)?", targets.Count);
+                if (MessageBox.Show(this, msg, "Xác nhận tải lại từ đầu — Duytai", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+                {
+                    return;
+                }
+            }
+
+            if (targets.Count == 1)
+            {
+                agent.OpenProgressForm(targets[0].Id, targets[0].FileName, targets[0].Url, targets[0].MaxConnections);
+            }
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                for (int i = 0; i < targets.Count; i++)
+                {
+                    try
+                    {
+                        TrayAgentContext.HttpRequest("POST", Program.AppUrl + "/api/jobs/" + Uri.EscapeDataString(targets[i].Id) + "/restart", "{}", 4000);
+                    }
+                    catch { }
+                }
                 TriggerImmediateRefresh();
             });
         }
@@ -3840,6 +3918,7 @@ namespace HyperIDM
         private Label lblResumeVal;
         private ProgressBar progressBar;
         private Button btnPauseResume;
+        private Button btnRestartJob;
         private Button btnCancelJob;
         private Button btnOpenFolder;
         private Button btnHide;
@@ -3937,18 +4016,25 @@ namespace HyperIDM
             progressBar.Style = ProgressBarStyle.Continuous;
             tabStatus.Controls.Add(progressBar);
 
-            btnPauseResume = MakeActionBtn("Tạm dừng", 364, 163, 90);
+            btnRestartJob = MakeActionBtn("Tải lại từ đầu", 360, 101, 186);
+            btnRestartJob.Padding = new Padding(0);
+            btnRestartJob.Click += delegate { RestartThisJob(); };
+
+            btnPauseResume = MakeActionBtn("Tạm dừng", 360, 163, 96);
+            btnPauseResume.Padding = new Padding(0);
             btnPauseResume.Click += delegate { TogglePauseResume(); };
 
             btnCancelJob = MakeActionBtn("Hủy bỏ", 460, 163, 86);
             btnCancelJob.Click += delegate { CancelOrClose(); };
 
-            btnOpenFolder = MakeActionBtn("Mở thư mục", 364, 132, 90);
+            btnOpenFolder = MakeActionBtn("Mở thư mục", 360, 132, 96);
+            btnOpenFolder.Padding = new Padding(0);
             btnOpenFolder.Click += delegate { TrayAgentContext.OpenFolderSelectFile(currentFilePath, currentSaveDir); };
 
             btnHide = MakeActionBtn("Ẩn", 460, 132, 86);
             btnHide.Click += delegate { Close(); };
 
+            tabStatus.Controls.Add(btnRestartJob);
             tabStatus.Controls.Add(btnPauseResume);
             tabStatus.Controls.Add(btnCancelJob);
             tabStatus.Controls.Add(btnOpenFolder);
@@ -4237,6 +4323,29 @@ namespace HyperIDM
             {
                 listSegments.EndUpdate();
             }
+        }
+
+        private void RestartThisJob()
+        {
+            if (MessageBox.Show(this,
+                "Xóa dữ liệu đã tải của tác vụ này và tải lại từ đầu (0 bytes)?",
+                "Xác nhận tải lại từ đầu — Duytai",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Question) != DialogResult.Yes)
+            {
+                return;
+            }
+            completionHandled = false;
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                try
+                {
+                    TrayAgentContext.HttpRequest("POST", Program.AppUrl + "/api/jobs/" + Uri.EscapeDataString(jobId) + "/restart", "{}", 4000);
+                }
+                catch { }
+                PollJobOnce();
+                agent.RefreshMainFormNow();
+            });
         }
 
         private void TogglePauseResume()

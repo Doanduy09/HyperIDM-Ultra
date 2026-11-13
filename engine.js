@@ -170,6 +170,16 @@ class DownloadJob extends EventEmitter {
   async start() {
     if (this.status === 'downloading' || this.status === 'probing' || this.status === 'resolving') return;
     this.error = null;
+    this._rateLimitUntil = 0;
+    if (Array.isArray(this.segments)) {
+      for (const seg of this.segments) {
+        seg.retries = 0;
+        if (seg.current <= seg.end || seg.end < 0) {
+          seg.status = 'pending';
+        }
+      }
+    }
+    this.effectiveMaxConnections = Math.max(16, this.effectiveMaxConnections || this.maxConnections);
     this.status = 'resolving';
     this.emit('update', this.toJSON());
 
@@ -443,6 +453,54 @@ class DownloadJob extends EventEmitter {
     await this._saveStateJournal();
     await this._cleanupHandles();
     this.emit('update', this.toJSON());
+  }
+
+  async restart() {
+    this.status = 'paused';
+    if (this._rateLimitTimer) {
+      clearTimeout(this._rateLimitTimer);
+      this._rateLimitTimer = null;
+    }
+    await this._abortAllWorkers();
+    await this._cleanupHandles();
+
+    const oldFilePath = this.filePath;
+    const oldStatePath = this.stateFilePath || (oldFilePath ? `${oldFilePath}.hyper.json` : '');
+    if (oldFilePath && fs.existsSync(oldFilePath)) {
+      await fsp.unlink(oldFilePath).catch(() => {});
+    }
+    if (oldStatePath && fs.existsSync(oldStatePath)) {
+      await fsp.unlink(oldStatePath).catch(() => {});
+    }
+
+    this.error = null;
+    this.finalUrl = this.url;
+    this.downloadedBytes = 0;
+    this.totalBytes = 0;
+    this.acceptRanges = false;
+    this.startTime = 0;
+    this.endTime = 0;
+    this.elapsedMs = 0;
+    this.currentSpeedBps = 0;
+    this.peakSpeedBps = 0;
+    this.etaSeconds = null;
+    this.speedHistory = [];
+    this.stealCount = 0;
+    this.recycleCount = 0;
+    this.hedgeWins = 0;
+    this.segments = [];
+    this.activeWorkers.clear();
+    this.filePath = '';
+    this.stateFilePath = '';
+    this._lastTickBytes = 0;
+    this._lastTickTime = 0;
+    this._globalPendingWriteBytes = 0;
+    this._rateLimitUntil = 0;
+    this.effectiveMaxConnections = this.maxConnections;
+    this.status = 'queued';
+
+    this.emit('update', this.toJSON());
+    this.start().catch(() => {});
   }
 
   async cancel(deleteFile = true) {
@@ -932,6 +990,9 @@ class DownloadJob extends EventEmitter {
       bufferedBytes += usableLen;
 
       seg.current += usableLen;
+      if (usableLen > 0) {
+        seg.retries = 0; // Forward progress clears transient failure streak
+      }
       seg.bytesInWindow += usableLen;
       seg.lastDataTime = Date.now();
       this.downloadedBytes += usableLen;
@@ -1032,7 +1093,7 @@ class DownloadJob extends EventEmitter {
     });
 
     req.on('error', failEarly);
-    req.setTimeout(12000, () => {
+    req.setTimeout(30000, () => {
       if (this.status === 'downloading') {
         req.destroy(new Error('Socket read timeout'));
       }
@@ -1154,27 +1215,32 @@ class DownloadJob extends EventEmitter {
     seg.speedBps = 0;
 
     const code = err && err.statusCode;
+    const msg = (err && err.message) || '';
     const isRateLimited = code === 429 || code === 503;
-    const isResetBurst = !code && seg.retries >= 2 && /ECONNRESET|ETIMEDOUT|prematurely/i.test((err && err.message) || '');
+    const isResetBurst = !code && seg.retries >= 2 && /ECONNRESET|ETIMEDOUT|ECONNABORTED|EPIPE|timeout|prematurely/i.test(msg);
 
     if (isRateLimited || isResetBurst) {
       this._completedSinceDecrease = 0;
       this.effectiveMaxConnections = Math.max(4, Math.floor((this.effectiveMaxConnections || this.maxConnections) / 2));
-      const cooldown = (err && err.retryAfterMs) || Math.min(8000, 1000 * seg.retries);
+      const cooldown = (err && err.retryAfterMs) || Math.min(10000, 1000 * seg.retries);
       this._rateLimitUntil = Math.max(this._rateLimitUntil, Date.now() + cooldown);
     }
 
-    const maxRetries = isRateLimited ? 24 : 12;
+    // Track consecutive zero-progress failures; max 30/45 avoids killing large downloads on transient Wi-Fi/ISP hiccups
+    const maxRetries = isRateLimited ? 45 : 30;
     if (seg.retries > maxRetries) {
       this.status = 'error';
-      this.error = `Segment #${seg.id} failed after ${maxRetries} retries: ${err.message}`;
+      this.error = `Segment #${seg.id} failed after ${maxRetries} retries: ${msg}`;
       this._abortAllWorkers().then(() => this._cleanupHandles());
       this.emit('update', this.toJSON());
       return;
     }
 
     seg.status = 'pending';
-    const backoffMs = isRateLimited ? Math.min(8000, (err && err.retryAfterMs) || 800 * seg.retries) : Math.min(2000, 150 * seg.retries);
+    const expStep = Math.min(seg.retries, 14);
+    const backoffMs = isRateLimited
+      ? Math.min(12000, (err && err.retryAfterMs) || Math.round(800 * Math.pow(1.2, expStep)))
+      : Math.min(10000, Math.round(500 * Math.pow(1.25, expStep)));
     setTimeout(() => {
       if (this.status === 'downloading') {
         this._scheduleWorkers();

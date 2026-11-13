@@ -311,6 +311,7 @@
 
     .ico-add { background: linear-gradient(145deg, #22c55e, #15803d); }
     .ico-resume { background: linear-gradient(145deg, #3b82f6, #1d4ed8); }
+    .ico-restart { background: linear-gradient(145deg, #06b6d4, #0284c7); }
     .ico-pause { background: linear-gradient(145deg, #f59e0b, #b45309); }
     .ico-stopall { background: linear-gradient(145deg, #ef4444, #b91c1c); }
     .ico-delete { background: linear-gradient(145deg, #fb7185, #be123c); }
@@ -1138,6 +1139,7 @@
         <button class="menu-item">Tệp tin</button>
         <div class="menu-dropdown">
           <div class="menu-dd-item" onclick="toolbarAction('resume')"><span>▶️ Tải tiếp tệp đang chọn</span></div>
+          <div class="menu-dd-item" onclick="toolbarAction('restart')"><span>🔄 Tải lại từ đầu (0 bytes)</span></div>
           <div class="menu-dd-item" onclick="toolbarAction('pause')"><span>⏸️ Dừng tệp đang chọn</span></div>
           <div class="menu-dd-item" onclick="toolbarAction('open-folder')"><span>📂 Mở thư mục chứa tệp</span></div>
           <div class="menu-dd-sep"></div>
@@ -1201,6 +1203,13 @@
         <svg viewBox="0 0 24 24"><polygon points="6 4 20 12 6 20 6 4" fill="#fff"/></svg>
       </div>
       <span class="tb-label">Tải tiếp</span>
+    </button>
+
+    <button class="toolbar-btn" id="btnTbRestart" onclick="restartSelectedJobs()" title="Xóa dữ liệu dở và tải lại tệp đang chọn từ đầu (0 bytes)">
+      <div class="tb-icon ico-restart">
+        <svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+      </div>
+      <span class="tb-label">Tải lại</span>
     </button>
 
     <button class="toolbar-btn" id="btnTbPause" onclick="toolbarAction('pause')" title="Tạm dừng tệp đang chọn">
@@ -1480,6 +1489,7 @@
           <button class="btn-std" onclick="dialogJobAction('open-file')">🚀 Mở tệp</button>
           <button class="btn-std" onclick="dialogJobAction('open-folder')">📂 Mở thư mục</button>
           <button class="btn-std" onclick="dialogRefreshUrl()">🔄 Đổi Link Mới</button>
+          <button class="btn-std" onclick="dialogRestartJob()">🔁 Tải lại từ đầu</button>
         </div>
         <div style="display:flex; gap:6px;">
           <button class="btn-std primary" id="dlgPauseResumeBtn" onclick="dialogTogglePauseResume()">⏸ Tạm dừng</button>
@@ -1975,6 +1985,7 @@
                 ${job.status === 'downloading'
                   ? `<button class="mini-btn" onclick="jobAction('${job.id}', 'pause')" title="Tạm dừng">⏸</button>`
                   : (job.status !== 'completed' ? `<button class="mini-btn" onclick="jobAction('${job.id}', 'resume')" title="Tiếp tục">▶</button>` : `<button class="mini-btn" onclick="jobAction('${job.id}', 'open-file')" title="Mở tệp">🚀</button>`)}
+                <button class="mini-btn" onclick="restartSingleJob('${job.id}')" title="Tải lại từ đầu (0 bytes)">🔄</button>
                 <button class="mini-btn" onclick="jobAction('${job.id}', 'open-folder')" title="Mở thư mục">📂</button>
               </div>
             </td>
@@ -2189,6 +2200,31 @@
       }
     }
 
+    async function dialogRestartJob() {
+      const job = currentJobs.find(j => j.id === activeDialogJobId);
+      if (!job) return;
+      if ((job.downloadedBytes || 0) > 0 && !confirm(`Xóa dữ liệu cũ của "${job.fileName}" và tải lại từ đầu (0 bytes)?`)) return;
+      await jobAction(job.id, 'restart');
+    }
+
+    async function restartSingleJob(id) {
+      const job = currentJobs.find(j => j.id === id);
+      const name = job ? job.fileName : 'tệp này';
+      if (job && (job.downloadedBytes || 0) > 0 && !confirm(`Xóa dữ liệu cũ của "${name}" và tải lại từ đầu (0 bytes)?`)) return;
+      await jobAction(id, 'restart');
+    }
+
+    async function restartSelectedJobs() {
+      const targets = getTargetJobIds();
+      if (targets.length === 0 && currentJobs.length > 0) {
+        selectedJobId = currentJobs[0].id;
+        targets.push(selectedJobId);
+      }
+      if (targets.length === 0) return;
+      if (!confirm(`Xóa dữ liệu tải dở của ${targets.length} tệp đã chọn và tải lại từ đầu (0 bytes)?`)) return;
+      await Promise.all(targets.map(id => jobAction(id, 'restart')));
+    }
+
     async function dialogJobAction(action) {
       if (!activeDialogJobId) return;
       await jobAction(activeDialogJobId, action);
@@ -2289,7 +2325,9 @@
         targets.push(selectedJobId);
       }
       if (targets.length === 0) return;
-      if (action === 'delete') {
+      if (action === 'restart') {
+        await restartSelectedJobs();
+      } else if (action === 'delete') {
         await batchDeleteJobs(targets, false);
       } else {
         await Promise.all(targets.map(id => jobAction(id, action)));

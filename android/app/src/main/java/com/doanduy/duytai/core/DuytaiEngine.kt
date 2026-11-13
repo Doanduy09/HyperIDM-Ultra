@@ -137,9 +137,50 @@ class DuytaiEngine(
         if (job.status == JobStatus.DOWNLOADING || job.status == JobStatus.COMPLETED) return
         job.pausedOrStopped.set(false)
         job.error = null
+        job.rateLimitUntil = 0L
+        job.effectiveMaxConnections = job.maxConnections.coerceIn(1, 128)
+        synchronized(job.segments) {
+            job.segments.forEach {
+                it.retries = 0
+                if (it.status == "downloading") it.status = "pending"
+            }
+        }
         job.status = JobStatus.PROBING
         emitStates()
         job.runnerJob = scope.launch { executeJob(job) }
+    }
+
+    fun restart(id: String) {
+        val job = jobs[id] ?: return
+        val prevRunner = job.runnerJob
+        job.pausedOrStopped.set(true)
+        job.status = JobStatus.QUEUED
+        job.speedBps = 0L
+        job.error = null
+        emitStates()
+        job.runnerJob = scope.launch {
+            runCatching { prevRunner?.cancelAndJoin() }
+            closeFileHandles(job)
+            job.stagingFile?.delete()
+            job.stateJournalFile?.delete()
+            synchronized(job.segments) { job.segments.clear() }
+            job.counters.downloadedBytes.set(0L)
+            job.counters.activeWorkers.set(0)
+            job.counters.hedgeWins.set(0)
+            job.counters.recycleCount.set(0)
+            job.counters.completedSinceDecrease.set(0)
+            job.totalBytes = 0L
+            job.peakSpeedBps = 0L
+            job.sha256 = ""
+            job.publicPath = ""
+            job.publicUri = ""
+            job.rateLimitUntil = 0L
+            job.effectiveMaxConnections = job.maxConnections.coerceIn(1, 128)
+            job.pausedOrStopped.set(false)
+            job.status = JobStatus.PROBING
+            emitStates()
+            executeJob(job)
+        }
     }
 
     fun pause(id: String) {
@@ -509,7 +550,7 @@ class DuytaiEngine(
                 return
             }
             val t0 = System.nanoTime()
-            conn = openRangeConnection(job, if (job.acceptRanges) reqStart else -1L, if (job.acceptRanges) reqEnd else -1L, timeoutMs = 15_000)
+            conn = openRangeConnection(job, if (job.acceptRanges) reqStart else -1L, if (job.acceptRanges) reqEnd else -1L, timeoutMs = 30_000)
             val code = conn.responseCode
             if (code == 429 || code == 503) {
                 job.counters.completedSinceDecrease.set(0)
@@ -547,8 +588,8 @@ class DuytaiEngine(
         } catch (e: Exception) {
             seg.retries++
             seg.speedBps = 0L
-            if (seg.retries <= 8 && !job.pausedOrStopped.get()) {
-                delay(min(4000L, 400L * seg.retries))
+            if (seg.retries <= 25 && !job.pausedOrStopped.get()) {
+                delay(min(10_000L, 500L * seg.retries))
                 seg.status = "pending"
             } else {
                 throw e
@@ -587,6 +628,7 @@ class DuytaiEngine(
             val allowed = if (seg.end >= 0) min(read.toLong(), seg.end - seg.current + 1).toInt() else read
             if (allowed <= 0) break
             writeSegmentSlice(job, seg, buf, allowed)
+            seg.retries = 0
             winBytes += allowed
             val now = System.currentTimeMillis()
             val dt = now - winStart
