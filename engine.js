@@ -330,11 +330,14 @@ class DownloadJob extends EventEmitter {
     const ffmpeg = findBinary('ffmpeg.exe');
 
     // Choose optimal high-speed direct HTTPS byte-range formats (avoids slow HLS m3u8 playlists)
-    const formatSelector = this.videoQuality === '1080p'
-      ? '299+140/137+140/bestvideo[height<=1080][protocol=https]+bestaudio[protocol=https]/best[height<=1080]'
-      : (this.videoQuality === '720p'
-        ? '298+140/136+140/bestvideo[height<=720][protocol=https]+bestaudio[protocol=https]/best[height<=720]'
-        : '135+140/134+140/18/best[protocol=https]');
+    const ytQualityFormats = {
+      best: 'bestvideo[ext=mp4][protocol=https]+bestaudio[ext=m4a][protocol=https]/bestvideo[protocol=https]+bestaudio[ext=m4a][protocol=https]/bestvideo[protocol=https]+bestaudio[protocol=https]/299+140/137+140/best[protocol=https]/best',
+      '1080p': '299+140/137+140/bestvideo[height<=1080][ext=mp4][protocol=https]+bestaudio[ext=m4a][protocol=https]/bestvideo[height<=1080][protocol=https]+bestaudio[protocol=https]/best[height<=1080]',
+      '720p': '298+140/136+140/bestvideo[height<=720][ext=mp4][protocol=https]+bestaudio[ext=m4a][protocol=https]/bestvideo[height<=720][protocol=https]+bestaudio[protocol=https]/best[height<=720]',
+      '480p': '135+140/bestvideo[height<=480][ext=mp4][protocol=https]+bestaudio[ext=m4a][protocol=https]/best[height<=480]',
+      '360p': '134+140/18/best[height<=360][protocol=https]/best[protocol=https]'
+    };
+    const formatSelector = ytQualityFormats[this.videoQuality] || ytQualityFormats.best;
 
     const info = await new Promise((resolve, reject) => {
       execFile(ytdlp, ['--no-warnings', '-f', formatSelector, '--dump-single-json', this.url], {
