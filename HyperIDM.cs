@@ -3025,6 +3025,8 @@ namespace HyperIDM
             list.ImageSize = new Size(16, 16);
             list.ColorDepth = ColorDepth.Depth32Bit;
 
+            IntPtr forceHandle = list.Handle; // Ensure native HIMAGELIST is created
+
             Color[] colors = new Color[]
             {
                 Color.FromArgb(245, 158, 11),  // 0: All (Gold folder)
@@ -3042,24 +3044,22 @@ namespace HyperIDM
 
             for (int i = 0; i < colors.Length; i++)
             {
-                using (Bitmap bmp = new Bitmap(16, 16, PixelFormat.Format32bppArgb))
+                Bitmap bmp = new Bitmap(16, 16, PixelFormat.Format32bppArgb);
+                using (Graphics g = Graphics.FromImage(bmp))
                 {
-                    using (Graphics g = Graphics.FromImage(bmp))
+                    g.SmoothingMode = SmoothingMode.AntiAlias;
+                    g.Clear(Color.Transparent);
+                    using (SolidBrush tabBrush = new SolidBrush(colors[i]))
                     {
-                        g.SmoothingMode = SmoothingMode.AntiAlias;
-                        g.Clear(Color.Transparent);
-                        using (SolidBrush tabBrush = new SolidBrush(colors[i]))
-                        {
-                            g.FillRectangle(tabBrush, 2, 3, 5, 3);
-                            g.FillRectangle(tabBrush, 2, 5, 12, 8);
-                        }
-                        using (Pen outline = new Pen(Color.FromArgb(180, 30, 41, 59), 0.8f))
-                        {
-                            g.DrawRectangle(outline, 2, 5, 11, 7);
-                        }
+                        g.FillRectangle(tabBrush, 2, 3, 5, 3);
+                        g.FillRectangle(tabBrush, 2, 5, 12, 8);
                     }
-                    list.Images.Add(bmp);
+                    using (Pen outline = new Pen(Color.FromArgb(180, 30, 41, 59), 0.8f))
+                    {
+                        g.DrawRectangle(outline, 2, 5, 11, 7);
+                    }
                 }
+                list.Images.Add(bmp);
             }
             return list;
         }
