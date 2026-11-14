@@ -38,7 +38,7 @@ function queryNativeHost(payload) {
 async function getApiToken(forceRefresh = false) {
   if (cachedApiToken && !forceRefresh) return cachedApiToken;
   try {
-    const res = await fetchWithTimeout(API_HANDSHAKE, { method: 'POST' }, 2500);
+    const res = await fetchWithTimeout(API_HANDSHAKE, { method: 'POST' }, 1200);
     if (res.ok) {
       const data = await res.json();
       if (data && data.token) {
@@ -56,6 +56,7 @@ async function getApiToken(forceRefresh = false) {
   } catch (_) {}
   return '';
 }
+getApiToken().catch(() => {});
 
 async function enabled() {
   const { autoCapture = true } = await chrome.storage.local.get('autoCapture');

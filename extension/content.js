@@ -25,6 +25,10 @@
     if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
     const anchor = e.target && e.target.closest ? e.target.closest('a[href], area[href]') : null;
     if (!anchor) return;
+    if (anchor.dataset && anchor.dataset.duytaiBypass === '1') {
+      delete anchor.dataset.duytaiBypass;
+      return;
+    }
     const href = anchor.href;
     if (!href || !/^https?:/i.test(href)) return;
     if (/^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?\//i.test(href)) return;
@@ -38,11 +42,14 @@
 
     const dlAttr = (anchor.getAttribute('download') || '').trim();
     const fallbackNative = () => {
-      if (anchor.isConnected) {
-        anchor.click();
-      } else {
-        location.href = href;
-      }
+      try {
+        if (anchor.isConnected) {
+          anchor.dataset.duytaiBypass = '1';
+          anchor.click();
+          return;
+        }
+      } catch (_) {}
+      location.href = href;
     };
     try {
       chrome.runtime.sendMessage({

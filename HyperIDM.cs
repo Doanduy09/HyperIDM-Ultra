@@ -306,7 +306,7 @@ namespace HyperIDM
                 using (TcpClient client = new TcpClient())
                 {
                     IAsyncResult result = client.BeginConnect("127.0.0.1", Port, null, null);
-                    bool success = result.AsyncWaitHandle.WaitOne(TimeSpan.FromMilliseconds(180));
+                    bool success = result.AsyncWaitHandle.WaitOne(TimeSpan.FromMilliseconds(800));
                     if (!success) return false;
                     client.EndConnect(result);
                     return true;
@@ -708,6 +708,11 @@ namespace HyperIDM
 
         [DllImport("kernel32.dll", SetLastError = true)]
         private static extern bool CloseHandle(IntPtr hObject);
+
+        [DllImport("user32.dll")]
+        private static extern uint GetClipboardSequenceNumber();
+
+        private uint lastClipboardSeq = 0;
 
         internal const string DefaultIdmFileTypes =
             "3GP 7Z AAC ACE AIF AIFF APK APKS XAPK ARJ ASF AVI BIN BZ2 CAB CRX CSV DEB DMG DOC DOCX EPUB ESD EXE F4V FLAC FLV GZ GZIP HEX IMG IPA IPSW ISO JAR JPG JPEG JSON LHA LZH LZMA M2TS M3U8 M4A M4V MKV MOBI MOV MP3 MP4 MPA MPD MPE MPEG MPG MSI MSIX MSU NUPKG OGG OGV OPUS OTA OVA OVF PDF PKG PLJ PNG PPS PPT PPTX PSD QCOW2 QT R0* R1* RA RAM RAR RM RMVB ROM RPM RTF SEA SIT SITX SQL SQLITE SVG TAR TBZ2 TGZ TIF TIFF TORRENT TS TXT UF2 VHD VHDX VMDK VOB WAV WEBM WEBP WHL WIM WMA WMV XLS XLSX XML XZ Z ZIP ZST";
@@ -1185,7 +1190,6 @@ namespace HyperIDM
 
             if (browserInterceptEnabled)
             {
-                CheckIdmRegistryIntercept();
                 PollBrowserInterceptQueueAsync();
             }
         }
@@ -1285,12 +1289,19 @@ namespace HyperIDM
 
                                 if (CanPromptUrl(url0))
                                 {
-                                    ShowDownloadDialog(
-                                        url0,
-                                        string.IsNullOrEmpty(decodedName) ? null : decodedName,
-                                        referer,
-                                        hdrs.Count > 0 ? hdrs : null,
-                                        "Bắt tự động từ Chrome/Edge");
+                                    string finalName = decodedName;
+                                    string finalRef = referer;
+                                    Dictionary<string, string> finalHdrs = hdrs.Count > 0 ? hdrs : null;
+                                    RunOnUiThread(new MethodInvoker(delegate
+                                    {
+                                        if (isExiting) return;
+                                        ShowDownloadDialog(
+                                            url0,
+                                            string.IsNullOrEmpty(finalName) ? null : finalName,
+                                            finalRef,
+                                            finalHdrs,
+                                            "Bắt tự động từ Chrome/Edge");
+                                    }));
                                 }
                             }
                         }
@@ -1430,6 +1441,10 @@ namespace HyperIDM
         {
             try
             {
+                uint seq = GetClipboardSequenceNumber();
+                if (seq != 0 && seq == lastClipboardSeq) return;
+                lastClipboardSeq = seq;
+
                 if (!Clipboard.ContainsText()) return;
                 string text = Clipboard.GetText();
                 if (string.IsNullOrEmpty(text)) return;
@@ -1488,7 +1503,7 @@ namespace HyperIDM
             DateTime lastShown;
             if (recentPromptedUrls.TryGetValue(url, out lastShown))
             {
-                if ((DateTime.UtcNow - lastShown).TotalSeconds < 12) return false;
+                if ((DateTime.UtcNow - lastShown).TotalSeconds < 1.5) return false;
             }
             return true;
         }
@@ -1501,6 +1516,8 @@ namespace HyperIDM
             {
                 try
                 {
+                    CheckIdmRegistryIntercept();
+
                     string json = HttpRequest("GET", Program.AppUrl + "/api/intercept-queue", null, 800);
                     if (string.IsNullOrEmpty(json)) return;
 
@@ -1772,6 +1789,7 @@ namespace HyperIDM
                 if (!string.IsNullOrEmpty(normalized))
                 {
                     activeDialogUrls.Remove(normalized);
+                    recentPromptedUrls.Remove(normalized);
                 }
             };
             form.Show();
@@ -2630,8 +2648,9 @@ namespace HyperIDM
             mFile.DropDownItems.Add(new ToolStripSeparator());
             mFile.DropDownItems.Add("Chọn tất cả (Ctrl+A)", null, delegate { SelectAllFilteredJobs(); });
             mFile.DropDownItems.Add("Bỏ chọn tất cả", null, delegate { ClearAllSelectionAndChecks(); });
-            mFile.DropDownItems.Add("Xóa các mục đã chọn khỏi danh sách", null, delegate { DeleteSelectedJob(false); });
-            mFile.DropDownItems.Add("Xóa các mục đã chọn kèm tệp trên ổ đĩa", null, delegate { DeleteSelectedJob(true); });
+            mFile.DropDownItems.Add("Tùy chọn xóa mục đã chọn (Del)...", null, delegate { PromptDeleteSelectedJobs(); });
+            mFile.DropDownItems.Add("1. Chỉ xóa khỏi danh sách Duytai (Giữ tệp trên máy)", null, delegate { DeleteSelectedJob(false); });
+            mFile.DropDownItems.Add("2. Xóa khỏi Duytai & Cho thẳng vào Thùng rác (Shift+Del)", null, delegate { DeleteSelectedJob(true); });
 
             ToolStripMenuItem mDownload = new ToolStripMenuItem("Tải xuống");
             mDownload.DropDownItems.Add("Bắt đầu tải toàn bộ hàng đợi", null, delegate { StartAllQueuedJobs(); });
@@ -2717,7 +2736,7 @@ namespace HyperIDM
                         agent.PauseAllActiveJobsAsync();
                         break;
                     case 4: // Xóa
-                        DeleteSelectedJob(false);
+                        PromptDeleteSelectedJobs();
                         break;
                     case 5: // Xóa các ...
                         ClearCompletedJobs();
@@ -2960,7 +2979,8 @@ namespace HyperIDM
             {
                 if (e.KeyCode == Keys.Delete)
                 {
-                    DeleteSelectedJob(e.Shift);
+                    if (e.Shift) DeleteSelectedJob(true);
+                    else PromptDeleteSelectedJobs();
                     e.Handled = true;
                 }
                 else if (e.Control && e.KeyCode == Keys.A)
@@ -3101,8 +3121,8 @@ namespace HyperIDM
             });
             rowContextMenu.Items.Add("Chọn tất cả (Ctrl+A)", null, delegate { SelectAllFilteredJobs(); });
             rowContextMenu.Items.Add("Bỏ chọn tất cả", null, delegate { ClearAllSelectionAndChecks(); });
-            menuCtxDeleteList = new ToolStripMenuItem("Xóa khỏi danh sách", null, delegate { DeleteSelectedJob(false); });
-            menuCtxDeleteDisk = new ToolStripMenuItem("Xóa kèm tệp trên ổ đĩa", null, delegate { DeleteSelectedJob(true); });
+            menuCtxDeleteList = new ToolStripMenuItem("📋 1. Chỉ xóa khỏi Duytai (Giữ tệp trên máy)", null, delegate { DeleteSelectedJob(false); });
+            menuCtxDeleteDisk = new ToolStripMenuItem("🗑️ 2. Xóa khỏi Duytai & Cho thẳng vào Thùng rác (Shift+Del)", null, delegate { DeleteSelectedJob(true); });
             rowContextMenu.Items.Add(menuCtxDeleteList);
             rowContextMenu.Items.Add(menuCtxDeleteDisk);
             rowContextMenu.Opening += delegate
@@ -3110,13 +3130,13 @@ namespace HyperIDM
                 int cnt = GetTargetJobs().Count;
                 if (cnt > 1)
                 {
-                    menuCtxDeleteList.Text = string.Format("Xóa {0} mục đã chọn khỏi danh sách (Del)", cnt);
-                    menuCtxDeleteDisk.Text = string.Format("Xóa {0} mục đã chọn kèm tệp trên ổ đĩa (Shift+Del)", cnt);
+                    menuCtxDeleteList.Text = string.Format("📋 1. Chỉ xóa {0} mục đã chọn khỏi Duytai (Giữ tệp)", cnt);
+                    menuCtxDeleteDisk.Text = string.Format("🗑️ 2. Xóa {0} mục khỏi Duytai & Cho thẳng vào Thùng rác (Shift+Del)", cnt);
                 }
                 else
                 {
-                    menuCtxDeleteList.Text = "Xóa khỏi danh sách (Del)";
-                    menuCtxDeleteDisk.Text = "Xóa kèm tệp trên ổ đĩa (Shift+Del)";
+                    menuCtxDeleteList.Text = "📋 1. Chỉ xóa khỏi Duytai (Giữ tệp trên máy)";
+                    menuCtxDeleteDisk.Text = "🗑️ 2. Xóa khỏi Duytai & Cho thẳng vào Thùng rác (Shift+Del)";
                 }
             };
         }
@@ -3614,23 +3634,133 @@ namespace HyperIDM
             });
         }
 
+        private void PromptDeleteSelectedJobs()
+        {
+            List<JobSnapshot> targets = GetTargetJobs();
+            if (targets.Count == 0)
+            {
+                MessageBox.Show(this, "Vui lòng chọn hoặc tích (☑) ít nhất 1 mục trong danh sách để xóa.", "Xóa mục tải xuống — Duytai", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            using (Form dlg = new Form())
+            {
+                dlg.Text = "Tùy chọn Xóa tệp — Duytai 64-Bit";
+                dlg.ClientSize = new Size(520, 228);
+                dlg.FormBorderStyle = FormBorderStyle.FixedDialog;
+                dlg.MaximizeBox = false;
+                dlg.MinimizeBox = false;
+                dlg.StartPosition = FormStartPosition.CenterParent;
+                dlg.BackColor = Color.White;
+                dlg.Font = new Font("Segoe UI", 9.25f, FontStyle.Regular);
+                dlg.TopMost = true;
+                try { dlg.Icon = agent.SharedIcon; } catch { }
+
+                string summaryText = targets.Count == 1
+                    ? string.Format("Mục đang chọn: {0}", targets[0].FileName)
+                    : string.Format("Đang chọn: {0} mục tải xuống ({1}, ...)", targets.Count, targets[0].FileName);
+
+                Label lblTitle = new Label
+                {
+                    Text = "Chọn chế độ xóa cho mục đã chọn:",
+                    Font = new Font("Segoe UI", 10.5f, FontStyle.Bold),
+                    ForeColor = Color.FromArgb(15, 23, 42),
+                    Location = new Point(20, 16),
+                    Size = new Size(480, 22)
+                };
+
+                Label lblSub = new Label
+                {
+                    Text = summaryText,
+                    Font = new Font("Segoe UI", 9f, FontStyle.Regular),
+                    ForeColor = Color.FromArgb(71, 85, 105),
+                    Location = new Point(20, 42),
+                    Size = new Size(480, 22),
+                    AutoEllipsis = true
+                };
+
+                int choice = 0; // 0 = cancel, 1 = list only, 2 = recycle bin
+
+                Button btnListOnly = new Button
+                {
+                    Text = "📋  1. Chỉ xóa khỏi danh sách Duytai (Giữ nguyên tệp trên máy)",
+                    Location = new Point(20, 74),
+                    Size = new Size(480, 42),
+                    FlatStyle = FlatStyle.Flat,
+                    BackColor = Color.FromArgb(2, 132, 199),
+                    ForeColor = Color.White,
+                    Font = new Font("Segoe UI", 9.5f, FontStyle.Bold),
+                    TextAlign = ContentAlignment.MiddleLeft,
+                    Padding = new Padding(12, 0, 0, 0),
+                    Cursor = Cursors.Hand
+                };
+                btnListOnly.FlatAppearance.BorderSize = 0;
+                btnListOnly.Click += delegate { choice = 1; dlg.Close(); };
+
+                Button btnTrash = new Button
+                {
+                    Text = "🗑️  2. Xóa khỏi Duytai & Cho thẳng tệp vào Thùng rác (Recycle Bin)",
+                    Location = new Point(20, 124),
+                    Size = new Size(480, 42),
+                    FlatStyle = FlatStyle.Flat,
+                    BackColor = Color.FromArgb(220, 38, 38),
+                    ForeColor = Color.White,
+                    Font = new Font("Segoe UI", 9.5f, FontStyle.Bold),
+                    TextAlign = ContentAlignment.MiddleLeft,
+                    Padding = new Padding(12, 0, 0, 0),
+                    Cursor = Cursors.Hand
+                };
+                btnTrash.FlatAppearance.BorderSize = 0;
+                btnTrash.Click += delegate { choice = 2; dlg.Close(); };
+
+                Button btnCancel = new Button
+                {
+                    Text = "Hủy bỏ",
+                    Location = new Point(400, 178),
+                    Size = new Size(100, 34),
+                    UseVisualStyleBackColor = true,
+                    Cursor = Cursors.Hand
+                };
+                btnCancel.Click += delegate { choice = 0; dlg.Close(); };
+
+                dlg.Controls.AddRange(new Control[] { lblTitle, lblSub, btnListOnly, btnTrash, btnCancel });
+                dlg.AcceptButton = btnListOnly;
+                dlg.CancelButton = btnCancel;
+                dlg.ShowDialog(this);
+
+                if (choice == 1)
+                {
+                    ExecuteDeleteJobs(targets, false);
+                }
+                else if (choice == 2)
+                {
+                    ExecuteDeleteJobs(targets, true);
+                }
+            }
+        }
+
         private void DeleteSelectedJob(bool deleteFile)
         {
             List<JobSnapshot> targets = GetTargetJobs();
             if (targets.Count == 0) return;
 
-            if (targets.Count > 1 || deleteFile)
+            if (deleteFile)
             {
-                string msg = deleteFile
-                    ? string.Format("Bạn có chắc chắn muốn XÓA {0} tệp đã chọn khỏi danh sách VÀ XÓA VĨNH VIỄN tệp trên ổ đĩa?", targets.Count)
-                    : string.Format("Bạn có chắc chắn muốn xóa {0} mục đã chọn khỏi danh sách Duytai?", targets.Count);
-                if (MessageBox.Show(this, msg, "Xác nhận xóa nhiều tệp — Duytai", MessageBoxButtons.YesNo,
-                    deleteFile ? MessageBoxIcon.Warning : MessageBoxIcon.Question) != DialogResult.Yes)
+                string msg = targets.Count == 1
+                    ? string.Format("Xóa \"{0}\" khỏi Duytai và chuyển tệp vào Thùng rác (Recycle Bin)?", targets[0].FileName)
+                    : string.Format("Xóa {0} mục đã chọn khỏi Duytai và chuyển toàn bộ tệp vào Thùng rác (Recycle Bin)?", targets.Count);
+                if (MessageBox.Show(this, msg, "Xác nhận chuyển vào Thùng rác — Duytai", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
                 {
                     return;
                 }
             }
 
+            ExecuteDeleteJobs(targets, deleteFile);
+        }
+
+        private void ExecuteDeleteJobs(List<JobSnapshot> targets, bool deleteFile)
+        {
+            if (targets == null || targets.Count == 0) return;
             List<string> ids = new List<string>(targets.Count);
             for (int i = 0; i < targets.Count; i++)
             {
@@ -3649,6 +3779,7 @@ namespace HyperIDM
                     Dictionary<string, object> payload = new Dictionary<string, object>();
                     payload["ids"] = ids.ToArray();
                     payload["deleteFile"] = deleteFile;
+                    payload["moveToTrash"] = true;
                     TrayAgentContext.HttpRequest("POST", Program.AppUrl + "/api/jobs/batch-delete", js.Serialize(payload), 15000);
                 }
                 catch { }
@@ -3987,59 +4118,52 @@ namespace HyperIDM
             int h = Height - 2;
 
             using (SolidBrush bg = new SolidBrush(Color.FromArgb(236, 240, 245)))
+            using (SolidBrush activeBrush = new SolidBrush(Color.FromArgb(14, 165, 233)))
+            using (SolidBrush idleBrush = new SolidBrush(Color.FromArgb(0, 120, 215)))
+            using (Pen div = new Pen(Color.FromArgb(120, 255, 255, 255), 1f))
+            using (Pen border = new Pen(Color.FromArgb(180, 188, 200), 1f))
             {
                 g.FillRectangle(bg, 1, 1, w, h);
-            }
 
-            if (segments != null && segments.Count > 0)
-            {
-                int n = segments.Count;
-                for (int i = 0; i < n; i++)
+                if (segments != null && segments.Count > 0)
                 {
-                    SegmentSnapshot s = segments[i];
-                    float x0 = 1f + (float)(w * (double)i / n);
-                    float x1 = 1f + (float)(w * (double)(i + 1) / n);
-                    float segW = Math.Max(1f, x1 - x0);
+                    int n = segments.Count;
+                    for (int i = 0; i < n; i++)
+                    {
+                        SegmentSnapshot s = segments[i];
+                        float x0 = 1f + (float)(w * (double)i / n);
+                        float x1 = 1f + (float)(w * (double)(i + 1) / n);
+                        float segW = Math.Max(1f, x1 - x0);
 
-                    double ratio = 0;
-                    if (s.Status == "completed")
-                    {
-                        ratio = 1.0;
-                    }
-                    else if (s.End >= s.Start && s.End > 0)
-                    {
-                        long len = Math.Max(1L, s.End - s.Start + 1);
-                        ratio = Math.Min(1.0, Math.Max(0.0, (double)(s.Current - s.Start) / len));
-                    }
-                    else if (totalBytes > 0)
-                    {
-                        ratio = Math.Min(1.0, Math.Max(0.0, s.Progress / 100.0));
-                    }
-
-                    if (ratio > 0)
-                    {
-                        float fillW = (float)(segW * ratio);
-                        Color fillC = (s.Status == "downloading")
-                            ? Color.FromArgb(14, 165, 233)
-                            : Color.FromArgb(0, 120, 215);
-                        using (SolidBrush sb = new SolidBrush(fillC))
+                        double ratio = 0;
+                        if (s.Status == "completed")
                         {
+                            ratio = 1.0;
+                        }
+                        else if (s.End >= s.Start && s.End > 0)
+                        {
+                            long len = Math.Max(1L, s.End - s.Start + 1);
+                            ratio = Math.Min(1.0, Math.Max(0.0, (double)(s.Current - s.Start) / len));
+                        }
+                        else if (totalBytes > 0)
+                        {
+                            ratio = Math.Min(1.0, Math.Max(0.0, s.Progress / 100.0));
+                        }
+
+                        if (ratio > 0)
+                        {
+                            float fillW = (float)(segW * ratio);
+                            SolidBrush sb = (s.Status == "downloading") ? activeBrush : idleBrush;
                             g.FillRectangle(sb, x0, 1f, Math.Max(1f, fillW), h);
                         }
-                    }
 
-                    if (n <= 128 && i > 0)
-                    {
-                        using (Pen div = new Pen(Color.FromArgb(120, 255, 255, 255), 1f))
+                        if (n <= 128 && i > 0)
                         {
                             g.DrawLine(div, x0, 1f, x0, h + 1f);
                         }
                     }
                 }
-            }
 
-            using (Pen border = new Pen(Color.FromArgb(180, 188, 200), 1f))
-            {
                 g.DrawRectangle(border, 0, 0, Width - 1, Height - 1);
             }
         }
@@ -4344,14 +4468,16 @@ namespace HyperIDM
         private static string BuildSegmentBarSignature(string status, long totalBytes, long downloadedBytes, List<SegmentSnapshot> segs)
         {
             StringBuilder sb = new StringBuilder(128);
-            sb.Append(status).Append('|').Append(totalBytes).Append('|').Append(downloadedBytes).Append('|');
+            sb.Append(status).Append('|').Append(totalBytes).Append('|').Append(downloadedBytes / (1024 * 1024)).Append('|');
             if (segs != null)
             {
                 sb.Append(segs.Count);
                 for (int i = 0; i < segs.Count; i++)
                 {
                     SegmentSnapshot s = segs[i];
-                    sb.Append(',').Append(s.Status).Append(':').Append(s.Current);
+                    long span = Math.Max(1L, s.End - s.Start + 1);
+                    int permille = (int)Math.Min(1000L, Math.Max(0L, (s.Current - s.Start) * 1000L / span));
+                    sb.Append(',').Append(s.Status).Append(':').Append(permille);
                 }
             }
             return sb.ToString();
@@ -4449,56 +4575,8 @@ namespace HyperIDM
         {
             if (segs == null) return;
             int n = segs.Count;
-            string[] col0Arr = new string[n];
-            string[] col1Arr = new string[n];
-            string[] col2Arr = new string[n];
-            bool anyChanged = listSegments.Items.Count != n;
-
-            for (int i = 0; i < n; i++)
-            {
-                SegmentSnapshot s = segs[i];
-                string col0 = (s.Id + 1).ToString();
-                long doneBytes = Math.Max(0, s.Current - s.Start);
-                long totalSegBytes = s.End >= s.Start ? (s.End - s.Start + 1) : 0;
-                string col1 = totalSegBytes > 0
-                    ? (IdmFormat.FormatBytes(doneBytes) + " / " + IdmFormat.FormatBytes(totalSegBytes))
-                    : IdmFormat.FormatBytes(doneBytes);
-
-                string col2;
-                if (s.Status == "completed")
-                {
-                    col2 = "Hoàn thành";
-                }
-                else if (s.Status == "downloading")
-                {
-                    string sp = s.SpeedBps > 0 ? (" (" + IdmFormat.FormatSpeed(s.SpeedBps, false) + ")") : "";
-                    string ip = !string.IsNullOrEmpty(s.Ip) ? (" • " + s.Ip) : "";
-                    col2 = "Đang nhận dữ liệu..." + sp + ip;
-                }
-                else
-                {
-                    col2 = currentStatus == "paused" ? "Đã tạm dừng" : "Đang chờ kết nối...";
-                }
-
-                col0Arr[i] = col0;
-                col1Arr[i] = col1;
-                col2Arr[i] = col2;
-
-                if (!anyChanged)
-                {
-                    ListViewItem existing = listSegments.Items[i];
-                    if (existing.SubItems[0].Text != col0 ||
-                        existing.SubItems[1].Text != col1 ||
-                        existing.SubItems[2].Text != col2)
-                    {
-                        anyChanged = true;
-                    }
-                }
-            }
-
-            if (!anyChanged) return;
-
-            listSegments.BeginUpdate();
+            bool countChanged = listSegments.Items.Count != n;
+            if (countChanged) listSegments.BeginUpdate();
             try
             {
                 while (listSegments.Items.Count > n)
@@ -4515,15 +4593,39 @@ namespace HyperIDM
 
                 for (int i = 0; i < n; i++)
                 {
+                    SegmentSnapshot s = segs[i];
+                    string col0 = (s.Id + 1).ToString();
+                    long doneBytes = Math.Max(0, s.Current - s.Start);
+                    long totalSegBytes = s.End >= s.Start ? (s.End - s.Start + 1) : 0;
+                    string col1 = totalSegBytes > 0
+                        ? (IdmFormat.FormatBytes(doneBytes) + " / " + IdmFormat.FormatBytes(totalSegBytes))
+                        : IdmFormat.FormatBytes(doneBytes);
+
+                    string col2;
+                    if (s.Status == "completed")
+                    {
+                        col2 = "Hoàn thành";
+                    }
+                    else if (s.Status == "downloading")
+                    {
+                        string sp = s.SpeedBps > 0 ? (" (" + IdmFormat.FormatSpeed(s.SpeedBps, false) + ")") : "";
+                        string ip = !string.IsNullOrEmpty(s.Ip) ? (" • " + s.Ip) : "";
+                        col2 = "Đang nhận dữ liệu..." + sp + ip;
+                    }
+                    else
+                    {
+                        col2 = currentStatus == "paused" ? "Đã tạm dừng" : "Đang chờ kết nối...";
+                    }
+
                     ListViewItem item = listSegments.Items[i];
-                    if (item.SubItems[0].Text != col0Arr[i]) item.SubItems[0].Text = col0Arr[i];
-                    if (item.SubItems[1].Text != col1Arr[i]) item.SubItems[1].Text = col1Arr[i];
-                    if (item.SubItems[2].Text != col2Arr[i]) item.SubItems[2].Text = col2Arr[i];
+                    if (item.SubItems[0].Text != col0) item.SubItems[0].Text = col0;
+                    if (item.SubItems[1].Text != col1) item.SubItems[1].Text = col1;
+                    if (item.SubItems[2].Text != col2) item.SubItems[2].Text = col2;
                 }
             }
             finally
             {
-                listSegments.EndUpdate();
+                if (countChanged) listSegments.EndUpdate();
             }
         }
 

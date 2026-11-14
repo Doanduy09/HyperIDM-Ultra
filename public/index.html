@@ -589,6 +589,7 @@
       display: flex;
       align-items: baseline;
       gap: 5px;
+      font-variant-numeric: tabular-nums;
     }
 
     #speedCanvas {
@@ -674,6 +675,7 @@
       overflow: hidden;
       text-overflow: ellipsis;
       vertical-align: middle;
+      font-variant-numeric: tabular-nums;
     }
 
     .file-cell {
@@ -821,6 +823,7 @@
       gap: 4px;
       padding-right: 10px;
       border-right: 1px solid var(--border-main);
+      font-variant-numeric: tabular-nums;
     }
 
     .sb-item:last-child {
@@ -1761,6 +1764,31 @@
     </div>
   </div>
 
+  <!-- MODAL: DELETE CHOICE (1. Xóa khỏi Duytai | 2. Xóa thẳng vào Thùng rác) -->
+  <div class="modal-backdrop" id="deleteChoiceModalBackdrop">
+    <div class="modal-card" style="width: 500px;">
+      <div class="dialog-titlebar">
+        <span>🗑️ Tùy chọn Xóa tệp — Duytai 64-Bit</span>
+        <button class="dialog-close" onclick="closeModal('deleteChoiceModalBackdrop')">✕</button>
+      </div>
+      <div class="modal-body" style="display:flex; flex-direction:column; gap:10px;">
+        <div id="deleteChoiceTitle" style="font-size:13px; font-weight:700; color:var(--text-main);">Bạn đang chọn xóa mục đã đánh dấu:</div>
+        <div id="deleteChoicePreview" style="font-size:11.5px; color:var(--text-sub); background:var(--bg-panel); border:1px solid var(--border-soft); border-radius:6px; padding:8px 10px; line-height:1.5; white-space:pre-line;"></div>
+        <div style="font-size:12px; font-weight:600; color:var(--text-main); margin-top:2px;">Vui lòng chọn hình thức xóa:</div>
+        <button class="btn-std primary" style="padding:10px 14px; text-align:left; font-weight:700; font-size:12.5px;" onclick="confirmDeleteChoice(false)">
+          📋  1. Chỉ xóa khỏi danh sách Duytai (Giữ nguyên tệp trên máy)
+        </button>
+        <button class="btn-std danger" style="padding:10px 14px; text-align:left; font-weight:700; font-size:12.5px;" onclick="confirmDeleteChoice(true)">
+          🗑️  2. Xóa khỏi Duytai &amp; Cho thẳng tệp vào Thùng rác (Recycle Bin)
+        </button>
+      </div>
+      <div class="dialog-footer">
+        <span>Mẹo: Nhấn Shift + Delete để cho thẳng vào Thùng rác</span>
+        <button class="btn-std" onclick="closeModal('deleteChoiceModalBackdrop')">Hủy bỏ</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     let currentJobs = [];
     let defaultSaveDir = '';
@@ -2021,7 +2049,19 @@
         queued: 'Trong hàng đợi'
       };
 
-      tbody.innerHTML = filtered.map(job => {
+      const existingRows = new Map();
+      tbody.querySelectorAll('tr[data-job-id]').forEach(tr => {
+        existingRows.set(tr.getAttribute('data-job-id'), tr);
+      });
+      const currentIds = new Set(filtered.map(j => j.id));
+      for (const [id, tr] of existingRows) {
+        if (!currentIds.has(id)) {
+          tr.remove();
+          existingRows.delete(id);
+        }
+      }
+
+      filtered.forEach(job => {
         const cat = inferJobCategory(job);
         const ico = getFileIconSpec(job.fileName, cat);
         const isChecked = selectedJobIds.has(job.id);
@@ -2048,8 +2088,19 @@
         const safeChkText = escapeHtml(chkText);
         const progWidth = Math.max(0, Math.min(100, Number(job.progress || 0)));
 
-        return `
-          <tr class="${isSel}" onclick="selectRow('${safeId}', event)" ondblclick="onRowDoubleClick('${safeId}')" title="Giữ Ctrl/Shift hoặc tích ô vuông để chọn nhiều tệp • Nhấn đúp để mở tiến trình">
+        let tr = existingRows.get(job.id);
+        if (!tr) {
+          tr = document.createElement('tr');
+          tr.setAttribute('data-job-id', job.id);
+          tr.title = "Giữ Ctrl/Shift hoặc tích ô vuông để chọn nhiều tệp • Nhấn đúp để mở tiến trình";
+          tbody.appendChild(tr);
+          existingRows.set(job.id, tr);
+        }
+
+        tr.className = isSel;
+        tr.onclick = (e) => selectRow(safeId, e);
+        tr.ondblclick = () => onRowDoubleClick(safeId);
+        tr.innerHTML = `
             <td style="text-align:center;" onclick="event.stopPropagation()"><input type="checkbox" ${isChecked ? 'checked' : ''} onchange="toggleRowCheckbox('${safeId}', this.checked)" /></td>
             <td>
               <div class="file-cell">
@@ -2080,11 +2131,11 @@
                   : (job.status !== 'completed' ? `<button class="mini-btn" onclick="jobAction('${safeId}', 'resume')" title="Tiếp tục">▶</button>` : `<button class="mini-btn" onclick="jobAction('${safeId}', 'open-file')" title="Mở tệp">🚀</button>`)}
                 <button class="mini-btn" onclick="restartSingleJob('${safeId}')" title="Tải lại từ đầu (0 bytes)">🔄</button>
                 <button class="mini-btn" onclick="jobAction('${safeId}', 'open-folder')" title="Mở thư mục">📂</button>
+                <button class="mini-btn" onclick="openDeleteChoiceModal(['${safeId}'])" title="Xóa khỏi Duytai hoặc cho vào Thùng rác">🗑️</button>
               </div>
             </td>
-          </tr>
         `;
-      }).join('');
+      });
     }
 
     function drawSparkline() {
@@ -2468,25 +2519,56 @@
       }
     }
 
+    let pendingDeleteIds = [];
+
     async function deleteJob(id, deleteFile = false) {
-      await apiFetch(`/api/jobs/${encodeURIComponent(id)}?deleteFile=${deleteFile}`, { method: 'DELETE' });
+      await apiFetch(`/api/jobs/${encodeURIComponent(id)}?deleteFile=${deleteFile}&moveToTrash=${deleteFile}`, { method: 'DELETE' });
       if (selectedJobId === id) selectedJobId = null;
       selectedJobIds.delete(id);
       if (activeDialogJobId === id) closeProgressDialog();
     }
 
-    async function batchDeleteJobs(ids, deleteFile = false) {
+    function openDeleteChoiceModal(ids) {
+      const targetIds = Array.isArray(ids) && ids.length > 0 ? ids : getTargetJobIds();
+      if (!targetIds || targetIds.length === 0) return;
+      pendingDeleteIds = [...targetIds];
+      const titleEl = document.getElementById('deleteChoiceTitle');
+      const prevEl = document.getElementById('deleteChoicePreview');
+      if (titleEl) {
+        titleEl.textContent = `Bạn đang chọn xóa ${pendingDeleteIds.length} mục khỏi Duytai:`;
+      }
+      if (prevEl) {
+        const names = pendingDeleteIds.slice(0, 4).map(id => {
+          const j = currentJobs.find(x => x.id === id);
+          return '• ' + (j && j.fileName ? j.fileName : id);
+        });
+        if (pendingDeleteIds.length > 4) {
+          names.push(`... và ${pendingDeleteIds.length - 4} mục khác`);
+        }
+        prevEl.textContent = names.join('\n');
+      }
+      document.getElementById('deleteChoiceModalBackdrop').classList.add('open');
+    }
+
+    async function confirmDeleteChoice(deleteFile) {
+      const ids = [...pendingDeleteIds];
+      pendingDeleteIds = [];
+      closeModal('deleteChoiceModalBackdrop');
+      await batchDeleteJobs(ids, deleteFile, true);
+    }
+
+    async function batchDeleteJobs(ids, deleteFile = false, skipConfirm = false) {
       if (!ids || ids.length === 0) return;
-      if (ids.length > 1 || deleteFile) {
+      if (!skipConfirm && (ids.length > 1 || deleteFile)) {
         const msg = deleteFile
-          ? `Xóa ${ids.length} tệp đã chọn VÀ xóa vĩnh viễn trên ổ đĩa?`
-          : `Xóa ${ids.length} mục đã chọn khỏi danh sách Duytai?`;
+          ? `Xóa ${ids.length} mục đã chọn khỏi Duytai VÀ chuyển tệp vào Thùng rác (Recycle Bin)?`
+          : `Chỉ xóa ${ids.length} mục đã chọn khỏi danh sách Duytai (Giữ nguyên tệp trên máy)?`;
         if (!confirm(msg)) return;
       }
       await apiFetch('/api/jobs/batch-delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ids, deleteFile })
+        body: JSON.stringify({ ids, deleteFile, moveToTrash: deleteFile })
       });
       ids.forEach(id => {
         selectedJobIds.delete(id);
@@ -2505,7 +2587,7 @@
       if (action === 'restart') {
         await restartSelectedJobs();
       } else if (action === 'delete') {
-        await batchDeleteJobs(targets, false);
+        openDeleteChoiceModal(targets);
       } else {
         await Promise.all(targets.map(id => jobAction(id, action)));
       }
@@ -2810,10 +2892,14 @@
         toggleSelectAllRows(true);
       } else if (!isEditing && e.key === 'Delete') {
         e.preventDefault();
-        batchDeleteJobs(getTargetJobIds(), e.shiftKey);
+        if (e.shiftKey) {
+          batchDeleteJobs(getTargetJobIds(), true, false);
+        } else {
+          openDeleteChoiceModal(getTargetJobIds());
+        }
       } else if (e.key === 'Escape') {
         closeProgressDialog();
-        ['addUrlModalBackdrop', 'batchModalBackdrop', 'optionsModalBackdrop', 'compareModalBackdrop', 'grabberModalBackdrop', 'zipPreviewModalBackdrop'].forEach(closeModal);
+        ['addUrlModalBackdrop', 'batchModalBackdrop', 'optionsModalBackdrop', 'compareModalBackdrop', 'grabberModalBackdrop', 'zipPreviewModalBackdrop', 'deleteChoiceModalBackdrop'].forEach(closeModal);
       }
     });
 
@@ -2824,6 +2910,9 @@
     }
 
     let sseRetryMs = 1500;
+    let pendingSnapshot = null;
+    let rAFHandle = null;
+
     function connectSSE() {
       const token = getApiToken();
       const url = token ? `/api/events?token=${encodeURIComponent(token)}` : '/api/events';
@@ -2836,8 +2925,15 @@
       es.onmessage = (ev) => {
         try {
           const data = JSON.parse(ev.data);
-          if (data.type === 'snapshot') renderSnapshot(data);
-          else if (data.type === 'intercept' && data.item && data.item.url && autoCaptureEnabled) {
+          if (data.type === 'snapshot') {
+            pendingSnapshot = data;
+            if (!rAFHandle) {
+              rAFHandle = requestAnimationFrame(() => {
+                rAFHandle = null;
+                if (pendingSnapshot) renderSnapshot(pendingSnapshot);
+              });
+            }
+          } else if (data.type === 'intercept' && data.item && data.item.url && autoCaptureEnabled) {
             if (!document.querySelector('.modal-backdrop.open')) {
               openAddUrlModal(data.item.url, data.item.fileName || '');
             }

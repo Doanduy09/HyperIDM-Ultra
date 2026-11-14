@@ -1,3 +1,4 @@
+process.env.UV_THREADPOOL_SIZE = process.env.UV_THREADPOOL_SIZE || '16';
 const http = require('http');
 const https = require('https');
 const net = require('net');
@@ -249,12 +250,17 @@ class DownloadJob extends EventEmitter {
     this._maxWorkerPendingWriteBytes = 4 * 1024 * 1024; // 4 MB per-worker write-queue cap
     this._savingState = false;
     this._stateSaveQueued = false;
+    this._journalLoaded = false;
+    this._firstPendingIdx = 0;
   }
 
   toJSON() {
     const progress = this.totalBytes > 0
       ? Math.min(100, Number(((this.downloadedBytes / this.totalBytes) * 100).toFixed(2)))
       : 0;
+    const displaySegs = this.segments.length > 64
+      ? summarizeSegments(this.segments, 64, 0)
+      : this.segments;
     return {
       id: this.id,
       url: this.url,
@@ -283,7 +289,7 @@ class DownloadJob extends EventEmitter {
       stealCount: this.stealCount,
       recycleCount: this.recycleCount,
       speedHistory: this.speedHistory.slice(-40),
-      segments: this.segments.map(s => ({
+      segments: displaySegs.map(s => ({
         id: s.id,
         start: s.start,
         current: s.current,
@@ -332,8 +338,11 @@ class DownloadJob extends EventEmitter {
     }
 
     if (Array.isArray(this.segments)) {
+      this._firstPendingIdx = 0;
       for (const seg of this.segments) {
         seg.retries = 0;
+        seg.bytesInWindow = 0;
+        if (typeof seg.committed !== 'number') seg.committed = seg.current;
         if (seg.current <= seg.end || seg.end < 0) {
           seg.status = 'pending';
         }
@@ -397,6 +406,9 @@ class DownloadJob extends EventEmitter {
           this._initializeSegments();
         }
       } else {
+        if (!this._journalLoaded && this.stateFilePath && fs.existsSync(this.stateFilePath)) {
+          await this._tryLoadStateJournal();
+        }
         await this._resolveCdnPool(this.finalUrl);
       }
 
@@ -871,22 +883,49 @@ class DownloadJob extends EventEmitter {
     this.start().catch(() => {});
   }
 
-  async cancel(deleteFile = true) {
+  async cancel(deleteFile = true, options = {}) {
     this.status = 'canceled';
     this.currentSpeedBps = 0;
     this._speedWindow = [];
     this._etaSpeedEwma = 0;
     this.etaSeconds = null;
     this._activeHedges = 0;
-    await this._abortYoutubeSubJobs(deleteFile);
+    await this._abortYoutubeSubJobs(false);
     await this._abortAllWorkers();
     await this._cleanupHandles();
+
+    const baseFile = this.filePath || (this.saveDir && this.fileName ? path.join(this.saveDir, this.fileName) : '');
+    const journalsToDelete = [
+      this.stateFilePath,
+      baseFile ? `${baseFile}.hyper.json` : '',
+      baseFile ? `${baseFile}.video.tmp.hyper.json` : '',
+      baseFile ? `${baseFile}.audio.tmp.hyper.json` : ''
+    ].filter(Boolean);
+
     if (deleteFile) {
-      if (this.filePath && fs.existsSync(this.filePath)) {
-        await fsp.unlink(this.filePath).catch(() => {});
+      const filesToRemove = [
+        baseFile,
+        baseFile ? `${baseFile}.video.tmp` : '',
+        baseFile ? `${baseFile}.audio.tmp` : ''
+      ].filter(p => p && fs.existsSync(p));
+
+      if (filesToRemove.length > 0) {
+        if (options && typeof options.moveToTrashFn === 'function') {
+          await options.moveToTrashFn(filesToRemove).catch(async () => {
+            for (const p of filesToRemove) await fsp.unlink(p).catch(() => {});
+          });
+        } else {
+          for (const p of filesToRemove) {
+            await fsp.unlink(p).catch(() => {});
+          }
+        }
       }
-      if (this.stateFilePath && fs.existsSync(this.stateFilePath)) {
-        await fsp.unlink(this.stateFilePath).catch(() => {});
+      for (const jp of journalsToDelete) {
+        if (fs.existsSync(jp)) await fsp.unlink(jp).catch(() => {});
+      }
+    } else if (this.status !== 'completed') {
+      for (const jp of journalsToDelete) {
+        if (fs.existsSync(jp)) await fsp.unlink(jp).catch(() => {});
       }
     }
     this.emit('update', this.toJSON());
@@ -901,12 +940,12 @@ class DownloadJob extends EventEmitter {
     return new Promise((resolve, reject) => {
       const req = transport.request(targetUrl, {
         method: 'GET',
-        agent: isHttps ? sharedHttpsAgent : sharedHttpAgent,
+        agent: false,
         headers: {
           'User-Agent': this.userAgent,
           'Accept': '*/*',
           'Range': 'bytes=0-0',
-          'Connection': 'keep-alive',
+          'Connection': 'close',
           ...this.headers
         },
         timeout: 15000,
@@ -948,7 +987,8 @@ class DownloadJob extends EventEmitter {
           fileName = fnPlain[1].trim();
         }
 
-        res.destroy();
+        try { res.destroy(); } catch {}
+        try { req.destroy(); } catch {}
 
         resolve({
           finalUrl: targetUrl,
@@ -1084,11 +1124,12 @@ class DownloadJob extends EventEmitter {
     this._targetMaxConnections = Math.max(1, smartCap);
     this.effectiveMaxConnections = this._targetMaxConnections;
 
-    // For googlevideo.com, slice into <= 4MB micro-chunks to bypass YouTube per-connection throttling
+    // For googlevideo.com, slice into bounded range chunks (4MB..16MB) to bypass YouTube per-connection throttling without segment bloat
     const isGoogleVideo = this.finalUrl.includes('googlevideo.com');
     if (isGoogleVideo && this.totalBytes > 4 * 1024 * 1024) {
-      const microSize = 4 * 1024 * 1024;
+      const microSize = Math.max(4 * 1024 * 1024, Math.min(16 * 1024 * 1024, Math.ceil(this.totalBytes / 1024)));
       const numChunks = Math.ceil(this.totalBytes / microSize);
+      this._firstPendingIdx = 0;
       for (let i = 0; i < numChunks; i++) {
         const start = i * microSize;
         const end = Math.min(this.totalBytes - 1, (i + 1) * microSize - 1);
@@ -1108,6 +1149,7 @@ class DownloadJob extends EventEmitter {
       return;
     }
 
+    this._firstPendingIdx = 0;
     const count = Math.min(
       this.maxConnections,
       Math.max(1, Math.floor(this.totalBytes / this._minSplitSize))
@@ -1133,16 +1175,22 @@ class DownloadJob extends EventEmitter {
   }
 
   async _openAndPreallocateTargetFile() {
+    if (this.fileHandle) {
+      try { await this.fileHandle.close(); } catch {}
+      this.fileHandle = null;
+    }
     const exists = fs.existsSync(this.filePath);
     this.fileHandle = await fsp.open(this.filePath, exists ? 'r+' : 'w+');
 
     if (!exists && this.totalBytes > 0) {
       if (process.platform === 'win32') {
-        await new Promise((resolve) => {
-          execFile('fsutil', ['sparse', 'setflag', this.filePath], () => resolve());
-        });
+        try {
+          execFile('fsutil', ['sparse', 'setflag', this.filePath], () => {});
+        } catch {}
       }
-      await this.fileHandle.truncate(this.totalBytes);
+      try {
+        await this.fileHandle.truncate(this.totalBytes);
+      } catch {}
     }
   }
 
@@ -1161,10 +1209,25 @@ class DownloadJob extends EventEmitter {
     }
 
     const connLimit = this.effectiveMaxConnections || this.maxConnections;
+    let spawnedThisWave = 0;
+    const waveBatch = 16;
+    let hasMorePending = false;
+
     for (const seg of this.segments) {
-      if (seg.status === 'pending' && this.activeWorkers.size < connLimit) {
-        this._spawnWorker(seg);
+      if (seg.status === 'pending') {
+        if (this.activeWorkers.size < connLimit && spawnedThisWave < waveBatch) {
+          this._spawnWorker(seg);
+          spawnedThisWave++;
+        } else if (this.activeWorkers.size < connLimit) {
+          hasMorePending = true;
+        }
       }
+    }
+
+    if (hasMorePending && this.status === 'downloading') {
+      setTimeout(() => {
+        if (this.status === 'downloading') this._scheduleWorkers();
+      }, 40).unref?.();
     }
 
     while (this.acceptRanges && this.activeWorkers.size < connLimit) {
@@ -1174,6 +1237,27 @@ class DownloadJob extends EventEmitter {
     }
 
     this._checkCompletion();
+  }
+
+  _compactCompletedSegments() {
+    if (!Array.isArray(this.segments) || this.segments.length < 64) return;
+    const sorted = this.segments.slice().sort((a, b) => a.start - b.start);
+    const compacted = [];
+    for (const seg of sorted) {
+      const prev = compacted[compacted.length - 1];
+      if (prev && prev.status === 'completed' && seg.status === 'completed' &&
+          !this.activeWorkers.has(prev.id) && !this.activeWorkers.has(seg.id) &&
+          (prev.end + 1 === seg.start)) {
+        prev.end = seg.end;
+        prev.current = Math.max(prev.current, seg.current);
+        prev.committed = Math.max(prev.committed || prev.current, seg.committed || seg.current);
+      } else {
+        compacted.push(seg);
+      }
+    }
+    if (compacted.length < this.segments.length) {
+      this.segments = compacted;
+    }
   }
 
   _tryStealFromLargestSegment() {
@@ -1194,7 +1278,10 @@ class DownloadJob extends EventEmitter {
     const isFinalPhase = this.totalBytes > 0 && (this.downloadedBytes / this.totalBytes) > 0.96;
     const isEndSprint = this.totalBytes > 0 && (this.downloadedBytes / this.totalBytes) > 0.99;
     const isHugeFile = this.totalBytes > 2 * 1024 * 1024 * 1024;
-    if (this.segments.length >= 1024) return null;
+    if (this.segments.length >= 1024) {
+      this._compactCompletedSegments();
+      if (this.segments.length >= 1024) return null;
+    }
     const minSplit = isEndSprint
       ? (128 * 1024)
       : (isHugeFile
@@ -1211,8 +1298,9 @@ class DownloadJob extends EventEmitter {
 
     largest.end = newStart - 1;
 
+    this._nextSegId = Math.max(this._nextSegId || 0, this.segments.length) + 1;
     const newSeg = {
-      id: this.segments.length,
+      id: this._nextSegId,
       start: newStart,
       current: newStart,
       committed: newStart,
@@ -1446,7 +1534,11 @@ class DownloadJob extends EventEmitter {
       if (seg.end >= 0 && seg.current > seg.end) {
         finalized = true;
         detachListeners();
-        if (res && !res.destroyed) res.destroy();
+        if (usableLen < chunk.length) {
+          if (res && !res.destroyed) res.destroy();
+        } else {
+          try { if (res && !res.destroyed) res.resume(); } catch {}
+        }
         this._completeSegment(seg, flushBuffer, workerEntry);
       }
     };
@@ -1525,11 +1617,13 @@ class DownloadJob extends EventEmitter {
           if (this.status === 'downloading' && seg.status === 'downloading') {
             workerEntry = this._consumeSegmentStream(seg, req, res);
           } else {
-            res.destroy();
+            try { res.destroy(); } catch {}
+        try { req.destroy(); } catch {}
           }
           return;
         }
-        res.destroy();
+        try { res.destroy(); } catch {}
+        try { req.destroy(); } catch {}
         const rangeErr = new Error('Server returned HTTP 200 instead of 206 Partial Content');
         rangeErr.fatalRangeError = true;
         failEarly(rangeErr);
@@ -1537,7 +1631,8 @@ class DownloadJob extends EventEmitter {
       }
       if (code < 200 || code >= 300) {
         const retryAfterRaw = res.headers['retry-after'];
-        res.destroy();
+        try { res.destroy(); } catch {}
+        try { req.destroy(); } catch {}
         const err = new Error(`HTTP ${code}`);
         err.statusCode = code;
         if (retryAfterRaw) {
@@ -1548,7 +1643,8 @@ class DownloadJob extends EventEmitter {
         return;
       }
       if (this.status !== 'downloading' || seg.status !== 'downloading') {
-        res.destroy();
+        try { res.destroy(); } catch {}
+        try { req.destroy(); } catch {}
         return;
       }
       workerEntry = this._consumeSegmentStream(seg, req, res);
@@ -1598,10 +1694,12 @@ class DownloadJob extends EventEmitter {
 
     const stopHedge = (res) => {
       seg._hedging = false;
+      seg._abortHedge = null;
       releaseHedgeSlot();
       try { if (res && !res.destroyed) res.destroy(); } catch {}
       try { if (!req.destroyed) req.destroy(); } catch {}
     };
+    seg._abortHedge = () => stopHedge(null);
 
     const req = transport.request(reqOptions, (res) => {
       const code = res.statusCode || 0;
@@ -1627,6 +1725,7 @@ class DownloadJob extends EventEmitter {
         // Hedge đến điểm mới trước primary -> chiếm quyền ghi nguyên tử
         claimed = true;
         seg._hedging = false;
+        seg._abortHedge = null;
         releaseHedgeSlot();
         res.removeListener('data', onFirstHedgeData);
         const firstSlice = curr > streamPos ? chunk.subarray(curr - streamPos) : chunk;
@@ -1664,6 +1763,10 @@ class DownloadJob extends EventEmitter {
   }
 
   _completeSegment(seg, flushBuffer, workerEntry) {
+    if (seg._abortHedge) {
+      seg._abortHedge();
+      seg._abortHedge = null;
+    }
     flushBuffer().then(() => {
       if (!workerEntry || this.activeWorkers.get(seg.id) === workerEntry) {
         this.activeWorkers.delete(seg.id);
@@ -1671,6 +1774,7 @@ class DownloadJob extends EventEmitter {
       if (this.status !== 'downloading') return;
       seg.status = 'completed';
       seg.speedBps = 0;
+      this._compactCompletedSegments();
       // AIMD Slow-Start Recovery: khôi phục dần số luồng khi kết nối ổn định trở lại
       const targetCap = this._targetMaxConnections || this.maxConnections;
       if (this.effectiveMaxConnections < targetCap) {
@@ -1685,6 +1789,10 @@ class DownloadJob extends EventEmitter {
   }
 
   _handleWorkerFailure(seg, err) {
+    if (seg._abortHedge) {
+      seg._abortHedge();
+      seg._abortHedge = null;
+    }
     this.activeWorkers.delete(seg.id);
     if (this.status !== 'downloading') return;
 
@@ -1717,13 +1825,13 @@ class DownloadJob extends EventEmitter {
     const code = err && err.statusCode;
     const msg = (err && err.message) || '';
     const isRateLimited = code === 429 || code === 503;
-    const isResetBurst = !code && seg.retries >= 2 && /ECONNRESET|ETIMEDOUT|ECONNABORTED|EPIPE|timeout|prematurely/i.test(msg);
 
-    if (isRateLimited || isResetBurst) {
+    if (isRateLimited) {
       this._completedSinceDecrease = 0;
       this._lastCongestionAt = Date.now();
-      this.effectiveMaxConnections = Math.max(4, Math.floor((this.effectiveMaxConnections || this.maxConnections) / 2));
-      const cooldown = (err && err.retryAfterMs) || Math.min(8000, 800 * seg.retries);
+      const targetCap = this._targetMaxConnections || this.maxConnections;
+      this.effectiveMaxConnections = Math.max(8, Math.floor((this.effectiveMaxConnections || targetCap) / 2));
+      const cooldown = (err && err.retryAfterMs) || Math.min(5000, 1000 * Math.min(seg.retries, 5));
       this._rateLimitUntil = Math.max(this._rateLimitUntil, Date.now() + cooldown);
     }
 
@@ -1741,7 +1849,7 @@ class DownloadJob extends EventEmitter {
     const expStep = Math.min(seg.retries, 14);
     const backoffMs = isRateLimited
       ? Math.min(12000, (err && err.retryAfterMs) || Math.round(800 * Math.pow(1.2, expStep)))
-      : Math.min(10000, Math.round(500 * Math.pow(1.25, expStep)));
+      : Math.min(1500, Math.round(150 * Math.pow(1.15, expStep)));
     const retryTimer = setTimeout(() => {
       this._retryTimers.delete(retryTimer);
       if (this.status === 'downloading') {
@@ -1831,14 +1939,12 @@ class DownloadJob extends EventEmitter {
       }
 
       // Adaptive Write-Coalescing Buffer Auto-Tuner (NVMe burst + slow HDD backpressure guard)
-      if (this._ewmaWriteMs > 45) {
-        this._writeBufferSize = 256 * 1024;
-      } else if (this.currentSpeedBps > 120 * 1024 * 1024 && this._ewmaWriteMs < 20) {
+      if (this.currentSpeedBps > 100 * 1024 * 1024) {
         this._writeBufferSize = 2 * 1024 * 1024;
-      } else if (this.currentSpeedBps > 20 * 1024 * 1024) {
+      } else if (this.currentSpeedBps > 10 * 1024 * 1024 || this._ewmaWriteMs > 35) {
         this._writeBufferSize = 1024 * 1024;
       } else {
-        this._writeBufferSize = 256 * 1024;
+        this._writeBufferSize = 512 * 1024;
       }
 
       // Periodically prune expired IP health/telemetry entries (zero unbounded Map growth)
@@ -2017,6 +2123,12 @@ class DownloadJob extends EventEmitter {
 
   async _abortAllWorkers() {
     this._stopTelemetryLoop();
+    for (const seg of this.segments) {
+      if (seg._abortHedge) {
+        seg._abortHedge();
+        seg._abortHedge = null;
+      }
+    }
     const flushes = [];
     for (const [, worker] of this.activeWorkers.entries()) {
       if (worker.abortSilently) {
@@ -2091,7 +2203,13 @@ class DownloadJob extends EventEmitter {
         })
       };
       const jsonStr = this.segments.length > 128 ? JSON.stringify(payload) : JSON.stringify(payload, null, 2);
-      await fsp.writeFile(this.stateFilePath, jsonStr, 'utf8').catch(() => {});
+      const tmpPath = `${this.stateFilePath}.tmp`;
+      try {
+        await fsp.writeFile(tmpPath, jsonStr, 'utf8');
+        await fsp.rename(tmpPath, this.stateFilePath);
+      } catch {
+        await fsp.writeFile(this.stateFilePath, jsonStr, 'utf8').catch(() => {});
+      }
     } finally {
       this._savingState = false;
       if (this._stateSaveQueued && this.status === 'downloading') {
@@ -2104,11 +2222,14 @@ class DownloadJob extends EventEmitter {
   }
 
   async _tryLoadStateJournal() {
-    if (!this.stateFilePath || !fs.existsSync(this.stateFilePath) || !fs.existsSync(this.filePath)) {
+    const targetPath = fs.existsSync(this.stateFilePath)
+      ? this.stateFilePath
+      : (fs.existsSync(`${this.stateFilePath}.tmp`) ? `${this.stateFilePath}.tmp` : '');
+    if (!targetPath || !fs.existsSync(this.filePath)) {
       return false;
     }
     try {
-      const raw = await fsp.readFile(this.stateFilePath, 'utf8');
+      const raw = await fsp.readFile(targetPath, 'utf8');
       const data = JSON.parse(raw);
       if (data.totalBytes !== this.totalBytes || !Array.isArray(data.segments)) return false;
       if (this.etag && data.etag && data.etag !== this.etag) return false;

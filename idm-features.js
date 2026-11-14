@@ -183,11 +183,15 @@ class ProgressiveHasher {
   }
 
   _completedPrefix() {
-    const segs = this.job.segments.filter(s => s.status === 'completed' && s.end >= s.start).sort((a, b) => a.start - b.start);
+    const segs = (this.job.segments || [])
+      .filter(s => (s.status === 'completed' || (s.committed && s.committed > s.start)) && s.end >= s.start)
+      .sort((a, b) => a.start - b.start);
     let cursor = 0;
     for (const s of segs) {
       if (s.start > cursor) break;
-      cursor = Math.max(cursor, s.end + 1);
+      const reachable = s.status === 'completed' ? (s.end + 1) : Math.min(s.end + 1, s.committed || s.current);
+      if (reachable <= cursor) continue;
+      cursor = reachable;
     }
     return cursor;
   }
@@ -202,6 +206,9 @@ class ProgressiveHasher {
 
   pump(limit) {
     if (this._busy) return this._busy;
+    if (limit == null && this.job && ((this.job._globalPendingWriteBytes || 0) > 8 * 1024 * 1024 || (this.job._ewmaWriteMs || 0) > 35)) {
+      return Promise.resolve(); // yield disk IOPS to active network-to-disk writes
+    }
     const target = limit != null ? limit : this._completedPrefix();
     if (target <= this.offset || !this.job.filePath || !fs.existsSync(this.job.filePath)) return Promise.resolve();
     this._busy = hashFile(this.job.filePath, null, { start: this.offset, end: target, hashers: { [this.algo]: this.hash } })
@@ -449,10 +456,15 @@ class SpeedLimiter {
     this._lastTick = Date.now();
   }
 
-  setGlobalLimit(bps) { this.globalBps = Math.max(0, bps | 0); this._ensure(); }
+  setGlobalLimit(bps) {
+    this.globalBps = Math.max(0, Math.floor(Number(bps) || 0));
+    this._ensure();
+  }
 
   setJobLimit(jobId, bps) {
-    if (bps > 0) this.jobBps.set(jobId, bps | 0); else { this.jobBps.delete(jobId); this._state.delete(`job:${jobId}`); }
+    const val = Math.max(0, Math.floor(Number(bps) || 0));
+    if (val > 0) this.jobBps.set(jobId, val);
+    else { this.jobBps.delete(jobId); this._state.delete(`job:${jobId}`); }
     this._ensure();
   }
 

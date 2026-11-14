@@ -1,3 +1,4 @@
+process.env.UV_THREADPOOL_SIZE = process.env.UV_THREADPOOL_SIZE || '16';
 const http = require('http');
 const fs = require('fs');
 const fsp = require('fs').promises;
@@ -91,8 +92,71 @@ function createAndRegisterJob(opts, startImmediately = true) {
   });
 
   jobs.set(job.id, job);
+  if (job.filePath) deletedPaths.delete(job.filePath.toLowerCase());
+  deletedIds.delete(job.id);
   if (startImmediately) job.start();
   return job;
+}
+
+const DELETED_ITEMS_FILE = path.join(DATA_DIR, 'deleted-items.json');
+const deletedIds = new Set();
+const deletedPaths = new Set();
+
+function loadDeletedItemsRegistry() {
+  try {
+    if (fs.existsSync(DELETED_ITEMS_FILE)) {
+      const data = JSON.parse(fs.readFileSync(DELETED_ITEMS_FILE, 'utf8'));
+      if (Array.isArray(data.ids)) data.ids.forEach(x => deletedIds.add(String(x)));
+      if (Array.isArray(data.paths)) data.paths.forEach(x => deletedPaths.add(String(x).toLowerCase()));
+    }
+  } catch {}
+}
+
+function recordDeletedJob(job) {
+  if (!job) return;
+  if (job.id) deletedIds.add(String(job.id));
+  if (job.filePath) deletedPaths.add(String(job.filePath).toLowerCase());
+}
+
+async function saveDeletedItemsRegistry() {
+  try {
+    await fsp.mkdir(DATA_DIR, { recursive: true });
+    const payload = {
+      ids: Array.from(deletedIds).slice(-3000),
+      paths: Array.from(deletedPaths).slice(-3000)
+    };
+    await fsp.writeFile(DELETED_ITEMS_FILE, JSON.stringify(payload, null, 2), 'utf8');
+  } catch {}
+}
+
+async function moveFilesToRecycleBin(filePaths) {
+  const existing = Array.from(new Set((filePaths || []).filter(p => p && fs.existsSync(p))));
+  if (existing.length === 0) return;
+
+  if (process.platform === 'win32') {
+    await new Promise((resolve) => {
+      const psScript = "Add-Type -AssemblyName Microsoft.VisualBasic; foreach ($p in $args) { if (Test-Path -LiteralPath $p) { try { [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile($p, 'OnlyErrorDialogs', 'SendToRecycleBin') } catch { Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue } } }";
+      const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', psScript, '--', ...existing], { windowsHide: true });
+      const timer = setTimeout(() => { try { child.kill(); } catch {} resolve(); }, 10000);
+      child.on('close', () => { clearTimeout(timer); resolve(); });
+      child.on('error', () => { clearTimeout(timer); resolve(); });
+    });
+    for (const p of existing) {
+      if (fs.existsSync(p)) await fsp.unlink(p).catch(() => {});
+    }
+    return;
+  }
+
+  const trashDir = process.platform === 'darwin'
+    ? path.join(os.homedir(), '.Trash')
+    : path.join(os.homedir(), '.local', 'share', 'Trash', 'files');
+  await fsp.mkdir(trashDir, { recursive: true }).catch(() => {});
+  for (const p of existing) {
+    const dest = path.join(trashDir, `${Date.now()}_${path.basename(p)}`);
+    await fsp.rename(p, dest).catch(async () => {
+      await fsp.unlink(p).catch(() => {});
+    });
+  }
 }
 
 const batchQueue = new idmFeatures.DownloadQueue({
@@ -115,6 +179,7 @@ async function loadHistory() {
   try {
     await fsp.mkdir(DEFAULT_SAVE_DIR, { recursive: true });
     await fsp.mkdir(DATA_DIR, { recursive: true });
+    loadDeletedItemsRegistry();
     const historySource = fs.existsSync(HISTORY_FILE)
       ? HISTORY_FILE
       : (fs.existsSync(LEGACY_HISTORY_FILE) ? LEGACY_HISTORY_FILE : '');
@@ -124,6 +189,8 @@ async function loadHistory() {
       if (Array.isArray(list)) {
         for (const item of list) {
           if (!item) continue;
+          if (item.id && deletedIds.has(String(item.id))) continue;
+          if (item.filePath && deletedPaths.has(String(item.filePath).toLowerCase())) continue;
           const isGhostLocal = String(item.id || '').startsWith('local-')
             && /^file:\/\//i.test(String(item.url || ''))
             && (item.status === 'error' || !item.filePath || !fs.existsSync(item.filePath));
@@ -210,7 +277,7 @@ async function syncIdmRegistryItems() {
         const list = Array.isArray(parsed) ? parsed : (parsed ? [parsed] : []);
         for (const item of list) {
           const id = 'idm-reg-' + item.regId;
-          if (jobs.has(id)) continue;
+          if (jobs.has(id) || deletedIds.has(id)) continue;
           let fn = item.fileName || '';
           if (!fn || fn === 'dl_google_com' || fn === 'de-s3_storage_bunnyc' || fn === 'img01_71360_com') {
             try {
@@ -236,6 +303,7 @@ async function syncIdmRegistryItems() {
             headers
           });
           job.filePath = path.join(saveDir, fn);
+          if (deletedPaths.has(job.filePath.toLowerCase())) continue;
           job.totalBytes = Number(item.totalBytes) || 0;
           job.downloadedBytes = item.idmStatus === 3 ? job.totalBytes : (Number(item.downloadedBytes) || 0);
           job.status = item.idmStatus === 3 ? 'completed' : 'paused';
@@ -275,7 +343,7 @@ async function syncExistingDownloads() {
         if (!ent.isFile()) continue;
         if (ent.name.endsWith('.hyper.json') || ent.name === 'desktop.ini') continue;
         const fullPath = path.join(dir, ent.name);
-        if (existingPaths.has(fullPath.toLowerCase())) continue;
+        if (existingPaths.has(fullPath.toLowerCase()) || deletedPaths.has(fullPath.toLowerCase())) continue;
         // Skip partial/managed files belonging to active or historical HTTP jobs
         if (fs.existsSync(`${fullPath}.hyper.json`)) continue;
         let hasManagedJob = false;
@@ -301,7 +369,7 @@ async function syncExistingDownloads() {
       if (existingPaths.has(f.fullPath.toLowerCase())) continue;
       existingPaths.add(f.fullPath.toLowerCase());
       const id = 'local-' + crypto.createHash('sha1').update(f.fullPath.toLowerCase()).digest('hex').slice(0, 16);
-      if (jobs.has(id)) continue;
+      if (jobs.has(id) || deletedIds.has(id)) continue;
       const job = new DownloadJob({
         id,
         url: `file:///${f.fullPath.replace(/\\/g, '/')}`,
@@ -357,17 +425,36 @@ function scheduleSaveHistory(immediate = false) {
   }, delayMs);
 }
 
-function broadcastState() {
+let broadcastTimer = null;
+let lastBroadcastAt = 0;
+
+function broadcastState(immediate = false) {
   if (sseClients.size === 0) return;
+  const now = Date.now();
+  if (!immediate && (now - lastBroadcastAt < 150)) {
+    if (!broadcastTimer) {
+      broadcastTimer = setTimeout(() => {
+        broadcastTimer = null;
+        broadcastState(false);
+      }, 150 - (now - lastBroadcastAt));
+    }
+    return;
+  }
+  if (broadcastTimer) {
+    clearTimeout(broadcastTimer);
+    broadcastTimer = null;
+  }
+  lastBroadcastAt = now;
   const payload = JSON.stringify({
     type: 'snapshot',
-    timestamp: Date.now(),
+    timestamp: now,
     defaultSaveDir: DEFAULT_SAVE_DIR,
     globalLimitBps: speedLimiter.globalBps,
     jobs: Array.from(jobs.values()).map(j => j.toJSON())
   });
   for (const res of sseClients) {
     try {
+      if (res.writableNeedDrain || res.writableLength > 512 * 1024) continue;
       res.write(`data: ${payload}\n\n`);
     } catch {
       sseClients.delete(res);
@@ -377,11 +464,11 @@ function broadcastState() {
 
 function attachJobEvents(job) {
   job.on('update', () => {
-    broadcastState();
+    broadcastState(false);
     scheduleSaveHistory(false);
   });
   job.on('completed', () => {
-    broadcastState();
+    broadcastState(true);
     scheduleSaveHistory(true);
   });
 }
@@ -870,10 +957,12 @@ const server = http.createServer(async (req, res) => {
     let removedCount = 0;
     for (const [id, job] of jobs.entries()) {
       if (job.status === 'completed') {
+        recordDeletedJob(job);
         jobs.delete(id);
         removedCount++;
       }
     }
+    saveDeletedItemsRegistry().catch(() => {});
     broadcastState();
     scheduleSaveHistory();
     return sendJson(res, 200, { ok: true, removedCount }, req);
@@ -886,19 +975,22 @@ const server = http.createServer(async (req, res) => {
       const rawIds = Array.isArray(body.ids) ? body.ids : [];
       const uniqueIds = Array.from(new Set(rawIds.map(x => String(x || '').trim()).filter(Boolean))).slice(0, 2000);
       const deleteFile = Boolean(body.deleteFile);
+      const moveToTrash = body.moveToTrash !== false;
       let deletedCount = 0;
       for (const id of uniqueIds) {
         const job = jobs.get(id);
         if (!job) continue;
+        recordDeletedJob(job);
         batchQueue.remove(job);
         speedLimiter.setJobLimit(id, 0);
-        await job.cancel(deleteFile);
+        await job.cancel(deleteFile, { moveToTrashFn: (deleteFile && moveToTrash) ? moveFilesToRecycleBin : null });
         jobs.delete(id);
         deletedCount++;
       }
+      saveDeletedItemsRegistry().catch(() => {});
       broadcastState();
       scheduleSaveHistory();
-      return sendJson(res, 200, { ok: true, deletedCount }, req);
+      return sendJson(res, 200, { ok: true, deletedCount, deleteFile, moveToTrash }, req);
     } catch (e) {
       return sendJson(res, 400, { error: e.message }, req);
     }
@@ -1028,13 +1120,16 @@ const server = http.createServer(async (req, res) => {
     const job = jobs.get(id);
     if (!job) return sendJson(res, 404, { error: 'Không tìm thấy tác vụ tải' }, req);
     const deleteFile = parsedUrl.searchParams.get('deleteFile') === 'true';
+    const moveToTrash = parsedUrl.searchParams.get('moveToTrash') !== 'false';
+    recordDeletedJob(job);
     batchQueue.remove(job);
     speedLimiter.setJobLimit(id, 0);
-    await job.cancel(deleteFile);
+    await job.cancel(deleteFile, { moveToTrashFn: (deleteFile && moveToTrash) ? moveFilesToRecycleBin : null });
     jobs.delete(id);
+    saveDeletedItemsRegistry().catch(() => {});
     broadcastState();
     scheduleSaveHistory();
-    return sendJson(res, 200, { ok: true }, req);
+    return sendJson(res, 200, { ok: true, deleteFile, moveToTrash }, req);
   }
 
   const safeRel = pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, '');
@@ -1140,6 +1235,19 @@ function startBrowserSqliteDownloadWatcher() {
 
   function pollOneBrowser(b) {
     if (!fs.existsSync(b.path)) return;
+    try {
+      const st = fs.statSync(b.path);
+      const walSrc = `${b.path}-wal`;
+      let walMod = 0;
+      if (fs.existsSync(walSrc)) {
+        try { walMod = fs.statSync(walSrc).mtimeMs; } catch {}
+      }
+      const sig = `${st.mtimeMs}:${st.size}:${walMod}`;
+      if (b.lastSig === sig && b.maxId >= 0) return;
+      b.lastSig = sig;
+    } catch {
+      return;
+    }
     const tmpDb = path.join(os.tmpdir(), `hyperidm_${b.name.toLowerCase()}_hist.db`);
     const walSrc = `${b.path}-wal`;
     const shmSrc = `${b.path}-shm`;

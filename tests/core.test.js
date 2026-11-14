@@ -308,6 +308,38 @@ test('idm-features blocks SSRF URLs, expands batch patterns, categorizes files, 
   limiter._tick();
   assert.equal(normalResumed, 1);
   assert.equal(diskPausedResumed, 0);
+
+  // Verify cancel() supports both list-only removal (deleteFile=false) and Recycle Bin handler (deleteFile=true)
+  const cancelDir = makeTempDir('duytai-cancel-');
+  try {
+    const dummyJob = new DownloadJob({
+      id: 'cancel-test-1',
+      url: 'https://93.184.216.34/video.mp4',
+      saveDir: cancelDir,
+      fileName: 'video.mp4',
+      maxConnections: 2
+    });
+    const baseFile = path.join(cancelDir, 'video.mp4');
+    dummyJob.filePath = baseFile;
+    fs.writeFileSync(baseFile, 'main', 'utf8');
+    fs.writeFileSync(`${baseFile}.video.tmp`, 'vtrack', 'utf8');
+    fs.writeFileSync(`${baseFile}.audio.tmp`, 'atrack', 'utf8');
+    fs.writeFileSync(`${baseFile}.video.tmp.hyper.json`, '{}', 'utf8');
+
+    const trashed = [];
+    await dummyJob.cancel(true, {
+      moveToTrashFn: async (files) => {
+        for (const f of files) {
+          trashed.push(path.basename(f));
+          await fsp.unlink(f);
+        }
+      }
+    });
+    assert.deepEqual(trashed.sort(), ['video.mp4', 'video.mp4.audio.tmp', 'video.mp4.video.tmp']);
+    assert.equal(fs.existsSync(`${baseFile}.video.tmp.hyper.json`), false);
+  } finally {
+    fs.rmSync(cancelDir, { recursive: true, force: true });
+  }
 });
 
 test('server.js enforces token auth, Host/Origin checks, safe zip-preview, single token on EADDRINUSE, and clean shutdown', async () => {
