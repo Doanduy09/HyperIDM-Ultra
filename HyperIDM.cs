@@ -740,6 +740,20 @@ namespace HyperIDM
         [DllImport("user32.dll")]
         private static extern bool EnableWindow(IntPtr hWnd, bool bEnable);
 
+        [StructLayout(LayoutKind.Sequential)]
+        internal struct SYSTEM_POWER_STATUS
+        {
+            public byte ACLineStatus;
+            public byte BatteryFlag;
+            public byte BatteryLifePercent;
+            public byte SystemStatusFlag;
+            public int BatteryLifeTime;
+            public int BatteryFullLifeTime;
+        }
+
+        [DllImport("kernel32.dll")]
+        internal static extern bool GetSystemPowerStatus(out SYSTEM_POWER_STATUS status);
+
         public TrayAgentContext(string initialUrl, bool startMinimized)
         {
             uiHost = new Control();
@@ -3088,11 +3102,30 @@ namespace HyperIDM
         internal void UpdateCaptureStatusLabel()
         {
             if (lblStatusCapture == null) return;
+            string powerText = GetPowerStatusText();
             lblStatusCapture.Text = string.Format(
-                "Bắt Clipboard: {0} | Bắt Trình duyệt: {1} | Mặc định: {2} Luồng",
+                "Bắt Clipboard: {0} | Bắt Trình duyệt: {1} | Mặc định: {2} Luồng | {3}",
                 agent.ClipboardEnabled ? "BẬT" : "TẮT",
                 agent.BrowserInterceptEnabled ? "BẬT" : "TẮT",
-                agent.DefaultThreads);
+                agent.DefaultThreads,
+                powerText);
+        }
+
+        internal static string GetPowerStatusText()
+        {
+            try
+            {
+                TrayAgentContext.SYSTEM_POWER_STATUS sps;
+                if (TrayAgentContext.GetSystemPowerStatus(out sps))
+                {
+                    if (sps.ACLineStatus == 1)
+                        return "⚡ Nguồn điện: AC (Max công suất)";
+                    if (sps.ACLineStatus == 0)
+                        return string.Format("🔋 Pin: {0}% (Tiết kiệm pin)", sps.BatteryLifePercent);
+                }
+            }
+            catch { }
+            return "⚡ Nguồn: Tiêu chuẩn";
         }
 
         private void BuildRowContextMenu()

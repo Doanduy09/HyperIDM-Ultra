@@ -694,8 +694,19 @@ const server = http.createServer(async (req, res) => {
       if (!body.url || typeof body.url !== 'string' || !/^https?:\/\//i.test(body.url.trim())) {
         return sendJson(res, 400, { error: 'URL không hợp lệ (cần http:// hoặc https://)' }, req);
       }
+      const rawUrl = body.url.trim();
+
+      // Smart Deduplication: If exact completed file exists on disk, return instantly without re-downloading
+      if (!body.forceNew) {
+        for (const existingJob of jobs.values()) {
+          if (existingJob.url === rawUrl && existingJob.status === 'completed' && existingJob.filePath && fs.existsSync(existingJob.filePath)) {
+            return sendJson(res, 200, { ...existingJob.toJSON(), deduplicated: true }, req);
+          }
+        }
+      }
+
       // Check if URL contains a batch pattern like file[01-10].zip
-      const expanded = idmFeatures.expandBatchPattern(body.url);
+      const expanded = idmFeatures.expandBatchPattern(rawUrl);
       if (expanded.length > 1) {
         const created = batchQueue.add(expanded, body);
         return sendJson(res, 201, { batchCount: created.length, jobs: created.map(j => j.toJSON()) }, req);
