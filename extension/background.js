@@ -136,6 +136,72 @@ function notify(title, message) {
   } catch (_) {}
 }
 
+const completedJobNotifs = new Map();
+const notifiedJobIds = new Set();
+
+chrome.notifications.onClicked.addListener(async (notifId) => {
+  const jobId = completedJobNotifs.get(notifId);
+  if (jobId) {
+    try {
+      const token = await getApiToken().catch(() => '');
+      await fetch(`${API_BASE}/api/jobs/${encodeURIComponent(jobId)}/open-folder`, {
+        method: 'POST',
+        headers: token ? { 'X-Duytai-Token': token } : {}
+      });
+    } catch (_) {}
+    try { chrome.notifications.clear(notifId); } catch (_) {}
+    completedJobNotifs.delete(notifId);
+  }
+});
+
+async function checkCompletedJobs() {
+  try {
+    const token = await getApiToken().catch(() => '');
+    const res = await fetchWithTimeout(API_JOBS, {
+      headers: token ? { 'X-Duytai-Token': token } : {}
+    }, 2000);
+    if (!res.ok) return;
+    const data = await res.json();
+    if (!data || !Array.isArray(data.jobs)) return;
+
+    for (const job of data.jobs) {
+      if (job.status === 'completed' && !notifiedJobIds.has(job.id)) {
+        notifiedJobIds.add(job.id);
+        if (job.endTime && (Date.now() - job.endTime < 45000)) {
+          const notifId = `duytai-done-${job.id}`;
+          completedJobNotifs.set(notifId, job.id);
+          chrome.notifications.create(notifId, {
+            type: 'basic',
+            iconUrl: chrome.runtime.getURL('icons/icon48.png'),
+            title: '⚡ Tải xong bằng Duytai (64-Bit)',
+            message: `${job.fileName || 'Tệp'}\n👉 Bấm vào đây để mở thư mục chứa tệp`,
+            requireInteraction: true
+          });
+        }
+      }
+    }
+  } catch (_) {}
+}
+
+// Khởi tạo danh sách tệp đã tải trước đó để tránh bắn thông báo trùng lặp
+async function initCompletedJobs() {
+  try {
+    const token = await getApiToken().catch(() => '');
+    const res = await fetchWithTimeout(API_JOBS, {
+      headers: token ? { 'X-Duytai-Token': token } : {}
+    }, 2000);
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data && Array.isArray(data.jobs)) {
+      for (const j of data.jobs) {
+        if (j.status === 'completed') notifiedJobIds.add(j.id);
+      }
+    }
+  } catch (_) {}
+}
+initCompletedJobs();
+setInterval(checkCompletedJobs, 3000);
+
 async function handoff(url, opts) {
   try {
     await sendToDuytai(url, opts);

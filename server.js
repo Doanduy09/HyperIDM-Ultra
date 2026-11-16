@@ -57,7 +57,10 @@ function validateSaveDir(rawDir, fallbackDir) {
 
 function sanitizeOptionalFileName(rawName) {
   if (!rawName || typeof rawName !== 'string') return '';
-  const clean = path.basename(rawName.replace(/\0/g, '').trim()).replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').trim();
+  let clean = path.basename(rawName.replace(/\0/g, '').trim()).replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').trim();
+  clean = clean.replace(/^(?:y2mate\.com|y2mate\.is|yt1s\.com|savefrom\.net|ssyoutube\.com|snapsave\.app|tikmate\.online)\s*[-_–]\s*/i, '');
+  clean = clean.replace(/_hash[a-zA-Z0-9]{4,16}(?=\.[a-z0-9]+$)/i, '');
+  clean = clean.replace(/\s*[-_]\s*(?:1080p|720p|480p|360p|2160p|x264|x265|aac|h264|hevc)(?=\.[a-z0-9]+$)/i, '');
   if (!clean || clean === '.' || clean === '..') return '';
   return clean;
 }
@@ -1007,7 +1010,7 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
-  const actionMatch = /^\/api\/jobs\/([^/]+)\/(pause|resume|restart|open-folder|open-file|refresh-url|antivirus-scan)$/.exec(pathname);
+  const actionMatch = /^\/api\/jobs\/([^/]+)\/(pause|resume|restart|open-folder|open-file|refresh-url|antivirus-scan|checksum)$/.exec(pathname);
   if (actionMatch && req.method === 'POST') {
     const id = decodeURIComponent(actionMatch[1]);
     const action = actionMatch[2];
@@ -1122,6 +1125,28 @@ const server = http.createServer(async (req, res) => {
         }
       }
       return sendJson(res, 200, { ok: true }, req);
+    }
+    if (action === 'checksum') {
+      if (!job.filePath || !fs.existsSync(job.filePath)) {
+        return sendJson(res, 400, { error: 'Tệp chưa hoàn thành hoặc không tồn tại' }, req);
+      }
+      try {
+        const hashSha256 = crypto.createHash('sha256');
+        const hashMd5 = crypto.createHash('md5');
+        const stream = fs.createReadStream(job.filePath);
+        stream.on('data', d => { hashSha256.update(d); hashMd5.update(d); });
+        stream.on('end', () => {
+          const sha256 = hashSha256.digest('hex');
+          const md5 = hashMd5.digest('hex');
+          job.idm = job.idm || {};
+          job.idm.checksum = sha256;
+          return sendJson(res, 200, { ok: true, sha256, md5, size: fs.statSync(job.filePath).size }, req);
+        });
+        stream.on('error', err => sendJson(res, 500, { error: err.message }, req));
+        return;
+      } catch (e) {
+        return sendJson(res, 500, { error: e.message }, req);
+      }
     }
   }
 
