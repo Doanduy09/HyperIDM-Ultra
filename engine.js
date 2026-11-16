@@ -70,6 +70,83 @@ function findBinary(name) {
   return exeName;
 }
 
+const GENERIC_FILENAME_RE = /^(?:download|downloading|uc|export|file|attachment|index|videoplayback)(?:\.[a-z0-9]{1,5})?$/i;
+
+function isGenericFileName(name) {
+  if (!name || typeof name !== 'string') return true;
+  const base = path.basename(name.trim());
+  if (!base || base === '.' || base === '/') return true;
+  return GENERIC_FILENAME_RE.test(base);
+}
+
+function extractGoogleDriveFileId(urlStr) {
+  if (!urlStr || typeof urlStr !== 'string') return '';
+  const m1 = /drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]{20,})/i.exec(urlStr);
+  if (m1) return m1[1];
+  const m2 = /drive\.google\.com\/(?:open|uc)\?(?:[^&]+&)*id=([a-zA-Z0-9_-]{20,})/i.exec(urlStr);
+  if (m2) return m2[1];
+  const m3 = /drive\.usercontent\.google\.com\/download\?(?:[^&]+&)*id=([a-zA-Z0-9_-]{20,})/i.exec(urlStr);
+  if (m3) return m3[1];
+  return '';
+}
+
+function decodeRfc2047(str) {
+  if (!str || typeof str !== 'string' || !str.includes('=?')) return str;
+  return str.replace(/=\?([^?]+)\?([BQbq])\?([^?]+)\?=/g, (_, charset, encoding, text) => {
+    try {
+      if (encoding.toUpperCase() === 'B') {
+        return Buffer.from(text, 'base64').toString(charset.toLowerCase().includes('utf-8') ? 'utf8' : 'latin1');
+      } else if (encoding.toUpperCase() === 'Q') {
+        return text.replace(/_/g, ' ').replace(/=([0-9A-Fa-f]{2})/g, (__, hex) => String.fromCharCode(parseInt(hex, 16)));
+      }
+    } catch {}
+    return text;
+  });
+}
+
+async function parseGoogleDriveFolder(folderUrl) {
+  try {
+    const parsed = new URL(folderUrl);
+    if (!parsed.hostname.includes('drive.google.com') || !parsed.pathname.includes('/folders/')) return [];
+    return new Promise((resolve) => {
+      const transport = parsed.protocol === 'https:' ? https : http;
+      const req = transport.get(folderUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+        },
+        timeout: 10000
+      }, res => {
+        let html = '';
+        res.on('data', d => { if (html.length < 2000000) html += d; });
+        res.on('end', () => {
+          const regex = /aria-label="([^"]+?)\s+(?:Unknown|Binary|Archive|Document|Spreadsheet|Video|Audio|PDF|Presentation|Shared|Google|Compressed)[^"]*"[^>]+ssk='[0-9]+:[^:]+:([a-zA-Z0-9_-]{25,45})/g;
+          const results = [];
+          let m;
+          const seen = new Set();
+          while ((m = regex.exec(html)) !== null) {
+            const fileName = m[1].trim();
+            const fileId = m[2].split('-')[0].trim();
+            if (!seen.has(fileId)) {
+              seen.add(fileId);
+              results.push({
+                fileName,
+                fileId,
+                url: `https://drive.usercontent.google.com/download?id=${fileId}&export=download`
+              });
+            }
+          }
+          resolve(results);
+        });
+      });
+      req.on('error', () => resolve([]));
+      req.on('timeout', () => { req.destroy(); resolve([]); });
+    });
+  } catch {
+    return [];
+  }
+}
+
 const YT_QUALITY_FORMATS = {
   best: 'bestvideo[protocol=https]+bestaudio[ext=m4a][protocol=https]/bestvideo[protocol=https]+bestaudio[protocol=https]/best[protocol=https]/best',
   '12k': 'bestvideo[height<=8640][protocol=https]+bestaudio[ext=m4a][protocol=https]/bestvideo[height<=8640][protocol=https]+bestaudio[protocol=https]/best[height<=8640][protocol=https]/best',
@@ -375,6 +452,13 @@ class DownloadJob extends EventEmitter {
         }
       }
 
+      // 3. Check if URL is a Google Drive link (e.g. file/d/.../view, open?id=..., uc?id=...)
+      const gdriveFileId = extractGoogleDriveFileId(this.finalUrl || this.url);
+      if (gdriveFileId) {
+        this.resolverType = 'gdrive';
+        this.finalUrl = `https://drive.usercontent.google.com/download?id=${gdriveFileId}&export=download`;
+      }
+
       this.status = 'probing';
       this.emit('update', this.toJSON());
 
@@ -388,8 +472,15 @@ class DownloadJob extends EventEmitter {
         this.mimeType = meta.mimeType;
         this.serverHeader = meta.serverHeader;
 
-        if (!this.fileName) {
-          this.fileName = meta.fileName || this._inferFileName(this.finalUrl);
+        const isCurrentGeneric = isGenericFileName(this.fileName);
+        if (!this.fileName || isCurrentGeneric) {
+          if (meta.fileName && !isGenericFileName(meta.fileName)) {
+            this.fileName = meta.fileName;
+          } else if (!this.fileName || isCurrentGeneric) {
+            this.fileName = meta.fileName || this._inferFileName(this.finalUrl);
+          }
+        } else if (meta.fileName && !isGenericFileName(meta.fileName) && !path.extname(this.fileName) && path.extname(meta.fileName)) {
+          this.fileName = `${this.fileName}${path.extname(meta.fileName)}`;
         }
         if (this._skipUniqueResolve && this.filePath) {
           RESERVED_TARGET_PATHS.set(this.filePath.toLowerCase(), this.id);
@@ -963,7 +1054,70 @@ class DownloadJob extends EventEmitter {
         if ([301, 302, 303, 307, 308].includes(code) && res.headers.location) {
           res.resume();
           const nextUrl = new URL(res.headers.location, targetUrl).toString();
+          const setCookie = res.headers['set-cookie'];
+          if (setCookie && Array.isArray(setCookie)) {
+            const newCookies = setCookie.map(c => c.split(';')[0]).join('; ');
+            this.headers = this.headers || {};
+            this.headers.Cookie = this.headers.Cookie ? `${this.headers.Cookie}; ${newCookies}` : newCookies;
+          }
           this._probeUrl(nextUrl, redirectCount + 1).then(resolve).catch(reject);
+          return;
+        }
+
+        const contentType = (res.headers['content-type'] || '').toLowerCase();
+        const isHtml = contentType.includes('text/html');
+        const isGDrive = /drive\.(?:usercontent\.)?google\.com/i.test(targetUrl);
+        if (code === 200 && isHtml && isGDrive && redirectCount < 8) {
+          let bodyBuf = '';
+          res.on('data', chunk => {
+            if (bodyBuf.length < 32768) bodyBuf += chunk.toString();
+          });
+          res.on('end', () => {
+            let confirmUrl = '';
+            const linkMatch = /href="([^"]*(?:confirm=[a-zA-Z0-9_-]+|uuid=[a-zA-Z0-9_-]+)[^"]*)"/i.exec(bodyBuf) ||
+                              /action="([^"]+)"/i.exec(bodyBuf);
+            if (linkMatch) {
+              let rawLink = linkMatch[1].replace(/&amp;/g, '&');
+              if (rawLink.startsWith('/')) {
+                const u = new URL(targetUrl);
+                confirmUrl = `${u.protocol}//${u.host}${rawLink}`;
+              } else if (/^https?:\/\//i.test(rawLink)) {
+                confirmUrl = rawLink;
+              }
+              const idM = /name="id"\s+value="([^"]+)"/i.exec(bodyBuf);
+              const exportM = /name="export"\s+value="([^"]+)"/i.exec(bodyBuf);
+              const confirmM = /name="confirm"\s+value="([^"]+)"/i.exec(bodyBuf);
+              const uuidM = /name="uuid"\s+value="([^"]+)"/i.exec(bodyBuf);
+              if (idM && confirmM) {
+                const u = new URL(confirmUrl || 'https://drive.usercontent.google.com/download');
+                u.searchParams.set('id', idM[1]);
+                u.searchParams.set('export', exportM ? exportM[1] : 'download');
+                u.searchParams.set('confirm', confirmM[1]);
+                if (uuidM) u.searchParams.set('uuid', uuidM[1]);
+                confirmUrl = u.toString();
+              }
+            }
+            if (confirmUrl) {
+              const setCookie = res.headers['set-cookie'];
+              if (setCookie && Array.isArray(setCookie)) {
+                const newCookies = setCookie.map(c => c.split(';')[0]).join('; ');
+                this.headers = this.headers || {};
+                this.headers.Cookie = this.headers.Cookie ? `${this.headers.Cookie}; ${newCookies}` : newCookies;
+              }
+              this._probeUrl(confirmUrl, redirectCount + 1).then(resolve).catch(reject);
+              return;
+            }
+            resolve({
+              finalUrl: targetUrl,
+              totalBytes: 0,
+              acceptRanges: false,
+              etag: res.headers['etag'] || '',
+              lastModified: res.headers['last-modified'] || '',
+              mimeType: contentType,
+              serverHeader: res.headers['server'] || 'Google',
+              fileName: ''
+            });
+          });
           return;
         }
 
@@ -987,13 +1141,14 @@ class DownloadJob extends EventEmitter {
 
         const cd = res.headers['content-disposition'] || '';
         let fileName = '';
-        const fnStar = /filename\*=UTF-8''([^;\r\n]+)/i.exec(cd);
+        const fnStar = /filename\*=(?:UTF-8|utf-8|ISO-8859-1|US-ASCII)?''"?([^";\r\n]+)"?/i.exec(cd);
         const fnPlain = /filename="?([^";\r\n]+)"?/i.exec(cd);
         if (fnStar) {
           try { fileName = decodeURIComponent(fnStar[1]); } catch { fileName = fnStar[1]; }
         } else if (fnPlain) {
           fileName = fnPlain[1].trim();
         }
+        fileName = decodeRfc2047(fileName).replace(/^["']|["']$/g, '').trim();
 
         try { res.destroy(); } catch {}
         try { req.destroy(); } catch {}
@@ -2277,7 +2432,7 @@ class DownloadJob extends EventEmitter {
     try {
       const u = new URL(urlStr);
       const base = decodeURIComponent(path.basename(u.pathname));
-      if (base && base !== '/' && base !== '.' && base !== 'videoplayback') {
+      if (base && base !== '/' && base !== '.' && !isGenericFileName(base)) {
         return this._sanitizeFileName(base);
       }
     } catch {}
@@ -2423,4 +2578,10 @@ function netIsIp(host) {
   return net.isIP(host) !== 0;
 }
 
-module.exports = { DownloadJob };
+module.exports = {
+  DownloadJob,
+  isGenericFileName,
+  extractGoogleDriveFileId,
+  decodeRfc2047,
+  parseGoogleDriveFolder
+};

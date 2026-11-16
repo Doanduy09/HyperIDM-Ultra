@@ -88,11 +88,16 @@ async function buildHeaders(url, referrer, cookieStoreId) {
   return headers;
 }
 
+function isGenericName(name) {
+  if (!name || typeof name !== 'string') return true;
+  return /^(?:download|downloading|uc|export|file|attachment|index|videoplayback)(?:\.[a-z0-9]{1,5})?$/i.test(name.trim());
+}
+
 async function sendToDuytai(url, { referrer, fileName, source = 'Browser Extension', direct = false, cookieStoreId, videoQuality = '' } = {}) {
   const headers = await buildHeaders(url, referrer, cookieStoreId);
   const endpoint = direct ? API_JOBS : API_INTERCEPT;
   const body = { url, maxConnections: 64, headers, source };
-  if (fileName) body.fileName = fileName;
+  if (fileName && !isGenericName(fileName)) body.fileName = fileName;
   if (videoQuality) body.videoQuality = videoQuality;
 
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -290,7 +295,8 @@ chrome.downloads.onCreated.addListener(async item => {
   }
 
   const fname = item.filename ? item.filename.split(/[\\/]/).pop() : '';
-  const r = await handoff(url, { referrer: item.referrer, fileName: fname, source: 'Tự động bắt link Trình duyệt' });
+  const cleanFname = isGenericName(fname) ? '' : fname;
+  const r = await handoff(url, { referrer: item.referrer, fileName: cleanFname, source: 'Tự động bắt link Trình duyệt' });
   if (r.ok) {
     markRecentlyHandled(url);
     chrome.downloads.cancel(item.id, () => chrome.downloads.erase({ id: item.id }));
@@ -307,7 +313,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg && msg.type === 'download' && msg.url) {
     handoff(msg.url, {
       referrer: msg.referrer || (sender.tab && sender.tab.url),
-      fileName: msg.fileName,
+      fileName: isGenericName(msg.fileName) ? '' : msg.fileName,
       cookieStoreId: sender.tab && sender.tab.cookieStoreId,
       videoQuality: msg.videoQuality || '',
       source: msg.source || 'Thanh nổi Bắt Video/Link Duytai'
