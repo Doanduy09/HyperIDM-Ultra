@@ -65,6 +65,26 @@ function sanitizeOptionalFileName(rawName) {
   return clean;
 }
 
+async function resolveFreshUrlForJob(targetJob) {
+  if (!targetJob) return null;
+  try {
+    if (targetJob.resolverType === 'youtube' || (targetJob._isYouTubeOrMediaUrl && targetJob._isYouTubeOrMediaUrl(targetJob.url))) {
+      const ytInfo = await DownloadJob.probeYoutubeInfo(targetJob.url, 12000).catch(() => null);
+      if (ytInfo && Array.isArray(ytInfo.formats) && ytInfo.formats.length > 0) {
+        const best = ytInfo.formats.find(f => f.url && f.protocol?.startsWith('http')) || ytInfo.formats[0];
+        if (best && best.url) return best.url;
+      }
+    }
+    if (targetJob.resolverType === 'ipsw' || (targetJob._isIpswMeUrl && targetJob._isIpswMeUrl(targetJob.url))) {
+      const freshIpsw = await targetJob._resolveIpswMeUrl(targetJob.url).catch(() => null);
+      if (freshIpsw && freshIpsw.url) return freshIpsw.url;
+    }
+  } catch (err) {
+    console.error(`[AutoHeal] Failed to resolve fresh URL for job ${targetJob.id}:`, err.message);
+  }
+  return null;
+}
+
 function createAndRegisterJob(opts, startImmediately = true) {
   const fileName = sanitizeOptionalFileName(opts.fileName || '');
   const autoCategory = opts.autoCategory !== false && !opts.saveDir;
@@ -91,7 +111,8 @@ function createAndRegisterJob(opts, startImmediately = true) {
     autoCategory,
     verify: true,
     expectedHash: opts.expectedHash || '',
-    alwaysHash: Boolean(opts.alwaysHash)
+    alwaysHash: Boolean(opts.alwaysHash),
+    resolveFreshUrl: resolveFreshUrlForJob
   });
 
   jobs.set(job.id, job);
@@ -1072,9 +1093,14 @@ const server = http.createServer(async (req, res) => {
     }
     if (action === 'refresh-url') {
       try {
-        const body = await readJsonBody(req);
-        const result = await idmFeatures.refreshJobUrl(job, body.url, { force: Boolean(body.force), resume: true });
-        return sendJson(res, 200, { ok: true, ...result, job: job.toJSON() }, req);
+        const body = await readJsonBody(req).catch(() => ({}));
+        let targetUrl = body.url;
+        if (!targetUrl) {
+          targetUrl = await resolveFreshUrlForJob(job);
+          if (!targetUrl) throw new Error('Không thể tự động giải quyết URL mới, vui lòng cung cấp body.url');
+        }
+        const result = await idmFeatures.refreshJobUrl(job, targetUrl, { force: Boolean(body.force), resume: true });
+        return sendJson(res, 200, { ok: true, autoResolved: !body.url, ...result, job: job.toJSON() }, req);
       } catch (e) {
         return sendJson(res, 400, { error: e.message }, req);
       }
