@@ -89,8 +89,10 @@
   } catch (_) {}
 
   function removeWidget() {
-    const existing = document.getElementById(WIDGET_ID) || document.getElementById('duytai-float-btn');
+    const existing = document.getElementById(WIDGET_ID);
     if (existing) existing.remove();
+    const old = document.getElementById('duytai-float-btn');
+    if (old) old.remove();
   }
 
   function isDismissed() {
@@ -121,17 +123,25 @@
   }
 
   function update() {
+    // 1. Always purge legacy static bottom-right button if present
+    const oldBtn = document.getElementById('duytai-float-btn');
+    if (oldBtn) oldBtn.remove();
+
+    // 2. Check if disabled or dismissed by user
     if (document.hidden || !document.body || !showFloatBtn || isDismissed()) {
       if (!showFloatBtn || isDismissed()) removeWidget();
       return;
     }
-    const existing = document.getElementById(WIDGET_ID) || document.getElementById('duytai-float-btn');
+
+    // 3. Check page context
+    const existing = document.getElementById(WIDGET_ID);
     if (!detectDownloadablePage()) {
       if (existing) existing.remove();
       return;
     }
     if (existing) return;
 
+    // 4. Create movable & dismissible widget
     const widget = document.createElement('div');
     widget.id = WIDGET_ID;
 
@@ -147,47 +157,95 @@
       savedPos ? `left:${savedPos.left}px` : 'right:20px',
       'z-index:2147483647',
       'display:inline-flex', 'align-items:center',
-      'padding:3px 6px 3px 14px',
+      'padding:4px 8px 4px 12px',
       'border:1px solid rgba(255,255,255,0.3)', 'border-radius:999px',
       'font:600 13px/1 Segoe UI,system-ui,sans-serif', 'color:#fff',
       'background:linear-gradient(135deg,#0d9488,#0284c7)',
       'box-shadow:0 8px 24px rgba(2,132,199,.45)',
-      'user-select:none', 'cursor:grab',
+      'user-select:none', 'cursor:grab', 'touch-action:none',
       'transition:box-shadow .2s, transform .15s'
     ].join(';');
 
+    // Drag handle icon
+    const grip = document.createElement('span');
+    grip.textContent = '⋮⋮';
+    grip.title = 'Giữ và kéo để di chuyển nút';
+    grip.style.cssText = 'opacity:0.65;margin-right:6px;cursor:grab;font-size:13px;display:inline-flex;align-items:center;';
+
+    // Download action button
     const btn = document.createElement('span');
     btn.textContent = '⚡ Tải video bằng Duytai';
+    btn.title = 'Bấm để tải video qua Duytai 64-Bit';
     btn.style.cssText = 'cursor:pointer;padding:6px 0;display:inline-flex;align-items:center;';
 
+    // Close / Dismiss button (x)
     const closeBtn = document.createElement('button');
     closeBtn.textContent = '×';
-    closeBtn.title = 'Ẩn nút này';
+    closeBtn.title = 'Ẩn nút này (Không hiện lại trên trang này)';
     closeBtn.style.cssText = [
       'cursor:pointer', 'border:none', 'outline:none',
-      'background:rgba(0,0,0,0.2)', 'color:rgba(255,255,255,0.85)',
+      'background:rgba(255,255,255,0.22)', 'color:#ffffff',
       'width:20px', 'height:20px', 'border-radius:50%', 'margin-left:8px',
       'display:inline-flex', 'align-items:center', 'justify-content:center',
-      'font:700 14px/1 sans-serif', 'padding:0', 'transition:background .15s'
+      'font:700 15px/1 sans-serif', 'padding:0', 'flex-shrink:0',
+      'transition:background .15s, transform .15s'
     ].join(';');
 
-    closeBtn.onmouseenter = () => (closeBtn.style.background = 'rgba(239,68,68,0.85)');
-    closeBtn.onmouseleave = () => (closeBtn.style.background = 'rgba(0,0,0,0.2)');
+    closeBtn.onmouseenter = () => {
+      closeBtn.style.background = '#ef4444';
+      closeBtn.style.transform = 'scale(1.15)';
+    };
+    closeBtn.onmouseleave = () => {
+      closeBtn.style.background = 'rgba(255,255,255,0.22)';
+      closeBtn.style.transform = 'scale(1)';
+    };
     closeBtn.onclick = (e) => {
       e.stopPropagation();
       e.preventDefault();
       try { sessionStorage.setItem('duytai_float_dismissed', '1'); } catch (_) {}
-      widget.remove();
+      removeWidget();
     };
 
-    // Drag support
+    // Smooth dragging with pointer events attached to window
     let isDragging = false;
     let startX = 0, startY = 0;
     let origTop = 0, origLeft = 0;
     let moved = false;
 
-    widget.onpointerdown = (e) => {
-      if (e.target === closeBtn) return;
+    const onPointerMove = (me) => {
+      if (!isDragging) return;
+      const dx = me.clientX - startX;
+      const dy = me.clientY - startY;
+      if (Math.hypot(dx, dy) > 3) moved = true;
+      const maxTop = window.innerHeight - widget.offsetHeight - 10;
+      const maxLeft = window.innerWidth - widget.offsetWidth - 10;
+      const newTop = Math.max(10, Math.min(maxTop, origTop + dy));
+      const newLeft = Math.max(10, Math.min(maxLeft, origLeft + dx));
+      widget.style.top = newTop + 'px';
+      widget.style.left = newLeft + 'px';
+      widget.style.right = 'auto';
+      widget.style.bottom = 'auto';
+    };
+
+    const onPointerUp = () => {
+      if (!isDragging) return;
+      isDragging = false;
+      widget.style.cursor = 'grab';
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerUp);
+      if (moved) {
+        try {
+          const rect = widget.getBoundingClientRect();
+          localStorage.setItem('duytai_float_pos', JSON.stringify({
+            top: Math.round(rect.top),
+            left: Math.round(rect.left)
+          }));
+        } catch (_) {}
+      }
+    };
+
+    widget.addEventListener('pointerdown', (e) => {
+      if (e.target === closeBtn || closeBtn.contains(e.target)) return;
       isDragging = true;
       moved = false;
       startX = e.clientX;
@@ -195,35 +253,10 @@
       const rect = widget.getBoundingClientRect();
       origTop = rect.top;
       origLeft = rect.left;
-      widget.setPointerCapture(e.pointerId);
       widget.style.cursor = 'grabbing';
-    };
-
-    widget.onpointermove = (e) => {
-      if (!isDragging) return;
-      const dx = e.clientX - startX;
-      const dy = e.clientY - startY;
-      if (Math.hypot(dx, dy) > 4) moved = true;
-      const newTop = Math.max(10, Math.min(window.innerHeight - 50, origTop + dy));
-      const newLeft = Math.max(10, Math.min(window.innerWidth - widget.offsetWidth - 10, origLeft + dx));
-      widget.style.top = newTop + 'px';
-      widget.style.left = newLeft + 'px';
-      widget.style.right = 'auto';
-      widget.style.bottom = 'auto';
-    };
-
-    widget.onpointerup = (e) => {
-      if (!isDragging) return;
-      isDragging = false;
-      widget.style.cursor = 'grab';
-      try { widget.releasePointerCapture(e.pointerId); } catch (_) {}
-      if (moved) {
-        try {
-          const rect = widget.getBoundingClientRect();
-          localStorage.setItem('duytai_float_pos', JSON.stringify({ top: Math.round(rect.top), left: Math.round(rect.left) }));
-        } catch (_) {}
-      }
-    };
+      window.addEventListener('pointermove', onPointerMove);
+      window.addEventListener('pointerup', onPointerUp);
+    });
 
     btn.onclick = (e) => {
       if (moved) return;
@@ -236,6 +269,7 @@
       });
     };
 
+    widget.appendChild(grip);
     widget.appendChild(btn);
     widget.appendChild(closeBtn);
     document.body.appendChild(widget);
