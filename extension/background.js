@@ -64,22 +64,36 @@ async function enabled() {
 }
 
 async function buildHeaders(url, referrer, cookieStoreId) {
-  const headers = { 'User-Agent': navigator.userAgent };
-  if (referrer) headers.Referer = referrer;
+  const headers = {
+    'User-Agent': navigator.userAgent,
+    'Accept': '*/*',
+    'Accept-Language': navigator.language || 'vi,en-US;q=0.9,en;q=0.8'
+  };
+  if (referrer) {
+    headers.Referer = referrer;
+    try { headers.Origin = new URL(referrer).origin; } catch (_) {}
+  } else {
+    try {
+      const p = new URL(url);
+      headers.Referer = `${p.protocol}//${p.host}/`;
+      headers.Origin = `${p.protocol}//${p.host}`;
+    } catch (_) {}
+  }
   try {
     const query = { url };
     if (cookieStoreId) query.storeId = cookieStoreId;
     const cookies = await chrome.cookies.getAll(query);
-    if (cookies.length) headers.Cookie = cookies.map(c => `${c.name}=${c.value}`).join('; ');
+    if (cookies && cookies.length) headers.Cookie = cookies.map(c => `${c.name}=${c.value}`).join('; ');
   } catch (_) {}
   return headers;
 }
 
-async function sendToDuytai(url, { referrer, fileName, source = 'Browser Extension', direct = false, cookieStoreId } = {}) {
+async function sendToDuytai(url, { referrer, fileName, source = 'Browser Extension', direct = false, cookieStoreId, videoQuality = '' } = {}) {
   const headers = await buildHeaders(url, referrer, cookieStoreId);
   const endpoint = direct ? API_JOBS : API_INTERCEPT;
   const body = { url, maxConnections: 64, headers, source };
   if (fileName) body.fileName = fileName;
+  if (videoQuality) body.videoQuality = videoQuality;
 
   for (let attempt = 0; attempt < 2; attempt++) {
     const token = await getApiToken(attempt > 0);
@@ -229,6 +243,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       referrer: msg.referrer || (sender.tab && sender.tab.url),
       fileName: msg.fileName,
       cookieStoreId: sender.tab && sender.tab.cookieStoreId,
+      videoQuality: msg.videoQuality || '',
       source: msg.source || 'Thanh nổi Bắt Video/Link Duytai'
     }).then(r => {
       if (r.ok) {

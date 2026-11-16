@@ -72,6 +72,7 @@
   if (window !== window.top) return;
 
   const WIDGET_ID = 'duytai-float-widget';
+  const BUBBLE_ID = 'duytai-float-bubble';
   let showFloatBtn = true;
 
   try {
@@ -89,8 +90,10 @@
   } catch (_) {}
 
   function removeWidget() {
-    const existing = document.getElementById(WIDGET_ID);
-    if (existing) existing.remove();
+    const w = document.getElementById(WIDGET_ID);
+    if (w) w.remove();
+    const b = document.getElementById(BUBBLE_ID);
+    if (b) b.remove();
     const old = document.getElementById('duytai-float-btn');
     if (old) old.remove();
   }
@@ -98,6 +101,14 @@
   function isDismissed() {
     try {
       return sessionStorage.getItem('duytai_float_dismissed') === '1';
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function isMinimized() {
+    try {
+      return sessionStorage.getItem('duytai_float_minimized') === '1';
     } catch (_) {
       return false;
     }
@@ -122,6 +133,53 @@
     return location.href;
   }
 
+  function showMiniBubble(topPx) {
+    if (document.getElementById(BUBBLE_ID)) return;
+    const w = document.getElementById(WIDGET_ID);
+    if (w) w.remove();
+
+    const bubble = document.createElement('div');
+    bubble.id = BUBBLE_ID;
+    bubble.title = '⚡ Duytai: Bấm hoặc di chuột để mở thanh tải';
+    bubble.textContent = '⚡';
+    bubble.style.cssText = [
+      'position:fixed', `top:${topPx || 80}px`, 'right:8px',
+      'width:34px', 'height:34px', 'border-radius:50%', 'z-index:2147483647',
+      'display:flex', 'align-items:center', 'justify-content:center',
+      'background:linear-gradient(135deg,#0d9488,#0284c7)',
+      'box-shadow:0 4px 16px rgba(2,132,199,0.5)',
+      'border:2px solid rgba(255,255,255,0.4)',
+      'color:#fff', 'font:700 16px system-ui,sans-serif',
+      'cursor:pointer', 'user-select:none', 'transition:transform .15s, box-shadow .15s'
+    ].join(';');
+
+    bubble.onmouseenter = () => (bubble.style.transform = 'scale(1.15)');
+    bubble.onmouseleave = () => (bubble.style.transform = 'scale(1)');
+    bubble.onclick = (e) => {
+      e.stopPropagation();
+      try { sessionStorage.removeItem('duytai_float_minimized'); } catch (_) {}
+      bubble.remove();
+      update();
+    };
+    document.body.appendChild(bubble);
+  }
+
+  function triggerDownload(quality, btnElement, defaultLabel) {
+    btnElement.textContent = '⏳ Đang gửi...';
+    const targetUrl = resolveTargetUrl();
+    chrome.runtime.sendMessage({
+      type: 'download',
+      url: targetUrl,
+      referrer: location.href,
+      origin: location.origin,
+      videoQuality: quality || 'best',
+      source: quality === 'audio' ? 'Thanh nổi Duytai (Chỉ Audio)' : 'Thanh nổi Duytai (Video)'
+    }, r => {
+      btnElement.textContent = r && r.ok ? '✅ Đã mở Duytai!' : '❌ Duytai chưa chạy';
+      setTimeout(() => (btnElement.textContent = defaultLabel), 2200);
+    });
+  }
+
   function update() {
     // 1. Always purge legacy static bottom-right button if present
     const oldBtn = document.getElementById('duytai-float-btn');
@@ -134,22 +192,31 @@
     }
 
     // 3. Check page context
-    const existing = document.getElementById(WIDGET_ID);
     if (!detectDownloadablePage()) {
-      if (existing) existing.remove();
+      removeWidget();
       return;
     }
-    if (existing) return;
 
-    // 4. Create movable & dismissible widget
-    const widget = document.createElement('div');
-    widget.id = WIDGET_ID;
-
-    // Restore user dragged position or default to safe top-right (avoiding bottom chat windows)
+    // 4. Restore user dragged position
     let savedPos = null;
     try {
       savedPos = JSON.parse(localStorage.getItem('duytai_float_pos') || 'null');
     } catch (_) {}
+    const topCoord = savedPos ? savedPos.top : 80;
+
+    // 5. Handle Minimized Dock State
+    if (isMinimized()) {
+      showMiniBubble(topCoord);
+      return;
+    }
+
+    if (document.getElementById(WIDGET_ID)) return;
+    const existingBubble = document.getElementById(BUBBLE_ID);
+    if (existingBubble) existingBubble.remove();
+
+    // 6. Create movable, minimizable & dismissible widget
+    const widget = document.createElement('div');
+    widget.id = WIDGET_ID;
 
     widget.style.cssText = [
       'position:fixed',
@@ -157,7 +224,7 @@
       savedPos ? `left:${savedPos.left}px` : 'right:20px',
       'z-index:2147483647',
       'display:inline-flex', 'align-items:center',
-      'padding:4px 8px 4px 12px',
+      'padding:3px 8px 3px 12px',
       'border:1px solid rgba(255,255,255,0.3)', 'border-radius:999px',
       'font:600 13px/1 Segoe UI,system-ui,sans-serif', 'color:#fff',
       'background:linear-gradient(135deg,#0d9488,#0284c7)',
@@ -172,20 +239,66 @@
     grip.title = 'Giữ và kéo để di chuyển nút';
     grip.style.cssText = 'opacity:0.65;margin-right:6px;cursor:grab;font-size:13px;display:inline-flex;align-items:center;';
 
-    // Download action button
+    // Download action button (Video)
     const btn = document.createElement('span');
     btn.textContent = '⚡ Tải video bằng Duytai';
-    btn.title = 'Bấm để tải video qua Duytai 64-Bit';
-    btn.style.cssText = 'cursor:pointer;padding:6px 0;display:inline-flex;align-items:center;';
+    btn.title = 'Bấm để tải video chất lượng cao nhất qua Duytai 64-Bit';
+    btn.style.cssText = 'cursor:pointer;padding:6px 2px;display:inline-flex;align-items:center;';
 
-    // Close / Dismiss button (x)
+    // Secondary Audio-only button for video platforms
+    const isVideoSite = PLATFORM_VIDEO_HOST_RE.test(location.hostname) || !!document.querySelector('video');
+    let audioBtn = null;
+    let divider = null;
+    if (isVideoSite) {
+      divider = document.createElement('span');
+      divider.textContent = '|';
+      divider.style.cssText = 'opacity:0.35;margin:0 6px;font-size:12px;user-select:none;';
+
+      audioBtn = document.createElement('span');
+      audioBtn.textContent = '🎵 Nhạc MP3';
+      audioBtn.title = 'Chỉ tải âm thanh MP3/M4A 320kbps siêu nhẹ';
+      audioBtn.style.cssText = 'cursor:pointer;padding:6px 2px;opacity:0.92;display:inline-flex;align-items:center;font-size:12px;';
+      audioBtn.onmouseenter = () => (audioBtn.style.opacity = '1');
+      audioBtn.onmouseleave = () => (audioBtn.style.opacity = '0.92');
+    }
+
+    // Minimize button (—) -> shrinks into Mini-Dock Bubble
+    const minBtn = document.createElement('button');
+    minBtn.textContent = '—';
+    minBtn.title = 'Thu nhỏ thành chấm tròn (Mini Dock)';
+    minBtn.style.cssText = [
+      'cursor:pointer', 'border:none', 'outline:none',
+      'background:rgba(255,255,255,0.22)', 'color:#ffffff',
+      'width:20px', 'height:20px', 'border-radius:50%', 'margin-left:8px',
+      'display:inline-flex', 'align-items:center', 'justify-content:center',
+      'font:700 11px/1 sans-serif', 'padding:0', 'flex-shrink:0',
+      'transition:background .15s, transform .15s'
+    ].join(';');
+    minBtn.onmouseenter = () => {
+      minBtn.style.background = 'rgba(255,255,255,0.45)';
+      minBtn.style.transform = 'scale(1.15)';
+    };
+    minBtn.onmouseleave = () => {
+      minBtn.style.background = 'rgba(255,255,255,0.22)';
+      minBtn.style.transform = 'scale(1)';
+    };
+    minBtn.onclick = (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      try { sessionStorage.setItem('duytai_float_minimized', '1'); } catch (_) {}
+      const rect = widget.getBoundingClientRect();
+      widget.remove();
+      showMiniBubble(Math.round(rect.top));
+    };
+
+    // Close / Dismiss button (×)
     const closeBtn = document.createElement('button');
     closeBtn.textContent = '×';
     closeBtn.title = 'Ẩn nút này (Không hiện lại trên trang này)';
     closeBtn.style.cssText = [
       'cursor:pointer', 'border:none', 'outline:none',
       'background:rgba(255,255,255,0.22)', 'color:#ffffff',
-      'width:20px', 'height:20px', 'border-radius:50%', 'margin-left:8px',
+      'width:20px', 'height:20px', 'border-radius:50%', 'margin-left:6px',
       'display:inline-flex', 'align-items:center', 'justify-content:center',
       'font:700 15px/1 sans-serif', 'padding:0', 'flex-shrink:0',
       'transition:background .15s, transform .15s'
@@ -245,7 +358,7 @@
     };
 
     widget.addEventListener('pointerdown', (e) => {
-      if (e.target === closeBtn || closeBtn.contains(e.target)) return;
+      if (e.target === closeBtn || closeBtn.contains(e.target) || e.target === minBtn || minBtn.contains(e.target)) return;
       isDragging = true;
       moved = false;
       startX = e.clientX;
@@ -261,16 +374,24 @@
     btn.onclick = (e) => {
       if (moved) return;
       e.stopPropagation();
-      btn.textContent = '⏳ Đang gửi sang Duytai...';
-      const targetUrl = resolveTargetUrl();
-      chrome.runtime.sendMessage({ type: 'download', url: targetUrl, referrer: location.href, source: 'Thanh nổi Video Duytai' }, r => {
-        btn.textContent = r && r.ok ? '✅ Đã bật hộp thoại Duytai!' : '❌ Duytai chưa chạy';
-        setTimeout(() => (btn.textContent = '⚡ Tải video bằng Duytai'), 2500);
-      });
+      triggerDownload('best', btn, '⚡ Tải video bằng Duytai');
     };
+
+    if (audioBtn) {
+      audioBtn.onclick = (e) => {
+        if (moved) return;
+        e.stopPropagation();
+        triggerDownload('audio', audioBtn, '🎵 Nhạc MP3');
+      };
+    }
 
     widget.appendChild(grip);
     widget.appendChild(btn);
+    if (divider && audioBtn) {
+      widget.appendChild(divider);
+      widget.appendChild(audioBtn);
+    }
+    widget.appendChild(minBtn);
     widget.appendChild(closeBtn);
     document.body.appendChild(widget);
   }

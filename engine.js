@@ -937,17 +937,25 @@ class DownloadJob extends EventEmitter {
     const isHttps = parsed.protocol === 'https:';
     const transport = isHttps ? https : http;
 
+    const probeHeaders = {
+      'User-Agent': this.userAgent,
+      'Accept': '*/*',
+      'Range': 'bytes=0-0',
+      'Connection': 'close',
+      ...this.headers
+    };
+    if (!probeHeaders.Referer && !probeHeaders.referer) {
+      try { const p = new URL(targetUrl); probeHeaders['Referer'] = `${p.protocol}//${p.host}/`; } catch (_) {}
+    }
+    if (!probeHeaders.Origin && !probeHeaders.origin) {
+      try { const p = new URL(targetUrl); probeHeaders['Origin'] = `${p.protocol}//${p.host}`; } catch (_) {}
+    }
+
     return new Promise((resolve, reject) => {
       const req = transport.request(targetUrl, {
         method: 'GET',
         agent: false,
-        headers: {
-          'User-Agent': this.userAgent,
-          'Accept': '*/*',
-          'Range': 'bytes=0-0',
-          'Connection': 'close',
-          ...this.headers
-        },
+        headers: probeHeaders,
         timeout: 15000,
         rejectUnauthorized: !this.allowInsecureTls
       }, (res) => {
@@ -1327,6 +1335,12 @@ class DownloadJob extends EventEmitter {
       'Connection': 'keep-alive',
       ...this.headers
     };
+    if (!headers.Referer && !headers.referer) {
+      try { headers['Referer'] = `${parsed.protocol}//${parsed.host}/`; } catch (_) {}
+    }
+    if (!headers.Origin && !headers.origin) {
+      try { headers['Origin'] = `${parsed.protocol}//${parsed.host}`; } catch (_) {}
+    }
     if (this.acceptRanges && seg.end >= rangeStart) {
       headers['Range'] = `bytes=${rangeStart}-${seg.end}`;
     }
