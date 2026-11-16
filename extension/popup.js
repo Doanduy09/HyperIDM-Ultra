@@ -1,10 +1,14 @@
 const API = 'http://127.0.0.1:17890/api/jobs';
 const $ = id => document.getElementById(id);
 
-chrome.storage.local.get('autoCapture').then(({ autoCapture = true }) => {
+chrome.storage.local.get(['autoCapture', 'showFloatBtn']).then(({ autoCapture = true, showFloatBtn = true }) => {
   $('auto').checked = autoCapture;
+  if ($('floatBtn')) $('floatBtn').checked = showFloatBtn;
 });
 $('auto').onchange = e => chrome.storage.local.set({ autoCapture: e.target.checked });
+if ($('floatBtn')) {
+  $('floatBtn').onchange = e => chrome.storage.local.set({ showFloatBtn: e.target.checked });
+}
 
 let cachedToken = '';
 let inFlight = false;

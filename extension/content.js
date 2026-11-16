@@ -71,9 +71,42 @@
 
   if (window !== window.top) return;
 
-  const ID = 'duytai-float-btn';
+  const WIDGET_ID = 'duytai-float-widget';
+  let showFloatBtn = true;
+
+  try {
+    chrome.storage.local.get('showFloatBtn', res => {
+      if (res && typeof res.showFloatBtn === 'boolean') showFloatBtn = res.showFloatBtn;
+      if (!showFloatBtn) removeWidget();
+    });
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area === 'local' && changes.showFloatBtn) {
+        showFloatBtn = changes.showFloatBtn.newValue !== false;
+        if (!showFloatBtn) removeWidget();
+        else update();
+      }
+    });
+  } catch (_) {}
+
+  function removeWidget() {
+    const existing = document.getElementById(WIDGET_ID) || document.getElementById('duytai-float-btn');
+    if (existing) existing.remove();
+  }
+
+  function isDismissed() {
+    try {
+      return sessionStorage.getItem('duytai_float_dismissed') === '1';
+    } catch (_) {
+      return false;
+    }
+  }
+
   const detectDownloadablePage = () => {
     const { hostname, pathname } = location;
+    // Facebook / Messenger: NEVER show on news feed, home or chat dock; ONLY on dedicated video/watch/reel pages
+    if (/(?:^|\.)facebook\.com$/.test(hostname) || /(?:^|\.)messenger\.com$/.test(hostname)) {
+      return pathname.startsWith('/watch') || pathname.startsWith('/reel') || pathname.includes('/videos/') || pathname.includes('/video/') || location.search.includes('v=');
+    }
     if (/youtube\.com$/.test(hostname)) return pathname === '/watch' || pathname.startsWith('/shorts/');
     if (/youtu\.be$|tiktok\.com$|vimeo\.com$|bilibili\.com$|dailymotion\.com$|ipsw\.me$|sourceforge\.net$|mediafire\.com$/.test(hostname)) return true;
     const v = document.querySelector('video[src], video source[src], audio[src]');
@@ -88,32 +121,124 @@
   }
 
   function update() {
-    if (document.hidden || !document.body) return;
-    const existing = document.getElementById(ID);
-    if (!detectDownloadablePage()) { if (existing) existing.remove(); return; }
+    if (document.hidden || !document.body || !showFloatBtn || isDismissed()) {
+      if (!showFloatBtn || isDismissed()) removeWidget();
+      return;
+    }
+    const existing = document.getElementById(WIDGET_ID) || document.getElementById('duytai-float-btn');
+    if (!detectDownloadablePage()) {
+      if (existing) existing.remove();
+      return;
+    }
     if (existing) return;
 
-    const btn = document.createElement('button');
-    btn.id = ID;
-    btn.textContent = '⚡ Tải video/tệp này bằng Duytai';
-    btn.style.cssText = [
-      'position:fixed', 'right:20px', 'bottom:24px', 'z-index:2147483647',
-      'padding:10px 18px', 'border:1px solid rgba(255,255,255,0.25)', 'border-radius:999px', 'cursor:pointer',
+    const widget = document.createElement('div');
+    widget.id = WIDGET_ID;
+
+    // Restore user dragged position or default to safe top-right (avoiding bottom chat windows)
+    let savedPos = null;
+    try {
+      savedPos = JSON.parse(localStorage.getItem('duytai_float_pos') || 'null');
+    } catch (_) {}
+
+    widget.style.cssText = [
+      'position:fixed',
+      savedPos ? `top:${savedPos.top}px` : 'top:80px',
+      savedPos ? `left:${savedPos.left}px` : 'right:20px',
+      'z-index:2147483647',
+      'display:inline-flex', 'align-items:center',
+      'padding:3px 6px 3px 14px',
+      'border:1px solid rgba(255,255,255,0.3)', 'border-radius:999px',
       'font:600 13px/1 Segoe UI,system-ui,sans-serif', 'color:#fff',
       'background:linear-gradient(135deg,#0d9488,#0284c7)',
-      'box-shadow:0 8px 24px rgba(2,132,199,.45)', 'transition:transform .15s'
+      'box-shadow:0 8px 24px rgba(2,132,199,.45)',
+      'user-select:none', 'cursor:grab',
+      'transition:box-shadow .2s, transform .15s'
     ].join(';');
-    btn.onmouseenter = () => (btn.style.transform = 'scale(1.05)');
-    btn.onmouseleave = () => (btn.style.transform = '');
-    btn.onclick = () => {
+
+    const btn = document.createElement('span');
+    btn.textContent = '⚡ Tải video bằng Duytai';
+    btn.style.cssText = 'cursor:pointer;padding:6px 0;display:inline-flex;align-items:center;';
+
+    const closeBtn = document.createElement('button');
+    closeBtn.textContent = '×';
+    closeBtn.title = 'Ẩn nút này';
+    closeBtn.style.cssText = [
+      'cursor:pointer', 'border:none', 'outline:none',
+      'background:rgba(0,0,0,0.2)', 'color:rgba(255,255,255,0.85)',
+      'width:20px', 'height:20px', 'border-radius:50%', 'margin-left:8px',
+      'display:inline-flex', 'align-items:center', 'justify-content:center',
+      'font:700 14px/1 sans-serif', 'padding:0', 'transition:background .15s'
+    ].join(';');
+
+    closeBtn.onmouseenter = () => (closeBtn.style.background = 'rgba(239,68,68,0.85)');
+    closeBtn.onmouseleave = () => (closeBtn.style.background = 'rgba(0,0,0,0.2)');
+    closeBtn.onclick = (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      try { sessionStorage.setItem('duytai_float_dismissed', '1'); } catch (_) {}
+      widget.remove();
+    };
+
+    // Drag support
+    let isDragging = false;
+    let startX = 0, startY = 0;
+    let origTop = 0, origLeft = 0;
+    let moved = false;
+
+    widget.onpointerdown = (e) => {
+      if (e.target === closeBtn) return;
+      isDragging = true;
+      moved = false;
+      startX = e.clientX;
+      startY = e.clientY;
+      const rect = widget.getBoundingClientRect();
+      origTop = rect.top;
+      origLeft = rect.left;
+      widget.setPointerCapture(e.pointerId);
+      widget.style.cursor = 'grabbing';
+    };
+
+    widget.onpointermove = (e) => {
+      if (!isDragging) return;
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      if (Math.hypot(dx, dy) > 4) moved = true;
+      const newTop = Math.max(10, Math.min(window.innerHeight - 50, origTop + dy));
+      const newLeft = Math.max(10, Math.min(window.innerWidth - widget.offsetWidth - 10, origLeft + dx));
+      widget.style.top = newTop + 'px';
+      widget.style.left = newLeft + 'px';
+      widget.style.right = 'auto';
+      widget.style.bottom = 'auto';
+    };
+
+    widget.onpointerup = (e) => {
+      if (!isDragging) return;
+      isDragging = false;
+      widget.style.cursor = 'grab';
+      try { widget.releasePointerCapture(e.pointerId); } catch (_) {}
+      if (moved) {
+        try {
+          const rect = widget.getBoundingClientRect();
+          localStorage.setItem('duytai_float_pos', JSON.stringify({ top: Math.round(rect.top), left: Math.round(rect.left) }));
+        } catch (_) {}
+      }
+    };
+
+    btn.onclick = (e) => {
+      if (moved) return;
+      e.stopPropagation();
       btn.textContent = '⏳ Đang gửi sang Duytai...';
       const targetUrl = resolveTargetUrl();
       chrome.runtime.sendMessage({ type: 'download', url: targetUrl, referrer: location.href, source: 'Thanh nổi Video Duytai' }, r => {
         btn.textContent = r && r.ok ? '✅ Đã bật hộp thoại Duytai!' : '❌ Duytai chưa chạy';
-        setTimeout(() => (btn.textContent = '⚡ Tải video/tệp này bằng Duytai'), 2500);
+        setTimeout(() => (btn.textContent = '⚡ Tải video bằng Duytai'), 2500);
       });
     };
-    document.body.appendChild(btn);
+
+    widget.appendChild(btn);
+    widget.appendChild(closeBtn);
+    document.body.appendChild(widget);
   }
 
   if (document.readyState === 'loading') {
@@ -122,5 +247,5 @@
     update();
   }
   window.addEventListener('yt-navigate-finish', update);
-  setInterval(update, 1800);
+  setInterval(update, 2000);
 })();
