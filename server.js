@@ -868,7 +868,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/limit' && req.method === 'POST') {
     try {
       const body = await readJsonBody(req);
-      const bps = parseInt(body.bps || 0, 10);
+      const bps = parseInt(body.bps !== undefined ? body.bps : (body.limitBps !== undefined ? body.limitBps : 0), 10);
       if (body.jobId) {
         speedLimiter.setJobLimit(body.jobId, bps);
       } else {
