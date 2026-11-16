@@ -147,6 +147,139 @@ async function parseGoogleDriveFolder(folderUrl) {
   }
 }
 
+class CloudResolver {
+  static resolveGoogle(urlStr) {
+    if (!urlStr || typeof urlStr !== 'string') return null;
+    const m1 = /drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]{20,})/i.exec(urlStr);
+    if (m1) return { type: 'gdrive', url: `https://drive.usercontent.google.com/download?id=${m1[1]}&export=download` };
+    const m2 = /drive\.google\.com\/(?:open|uc)\?(?:[^&]+&)*id=([a-zA-Z0-9_-]{20,})/i.exec(urlStr);
+    if (m2) return { type: 'gdrive', url: `https://drive.usercontent.google.com/download?id=${m2[1]}&export=download` };
+    const docM = /docs\.google\.com\/document\/d\/([a-zA-Z0-9_-]{20,})/i.exec(urlStr);
+    if (docM) return { type: 'gdoc', url: `https://docs.google.com/document/d/${docM[1]}/export?format=docx` };
+    const sheetM = /docs\.google\.com\/spreadsheets\/d\/([a-zA-Z0-9_-]{20,})/i.exec(urlStr);
+    if (sheetM) return { type: 'gsheet', url: `https://docs.google.com/spreadsheets/d/${sheetM[1]}/export?format=xlsx` };
+    const slideM = /docs\.google\.com\/presentation\/d\/([a-zA-Z0-9_-]{20,})/i.exec(urlStr);
+    if (slideM) return { type: 'gslide', url: `https://docs.google.com/presentation/d/${slideM[1]}/export/pptx` };
+    return null;
+  }
+
+  static resolveDropbox(urlStr) {
+    if (!urlStr || typeof urlStr !== 'string') return null;
+    if (/^https?:\/\/(?:www\.)?dropbox\.com\/(?:s|scl\/fi)\//i.test(urlStr)) {
+      try {
+        const u = new URL(urlStr);
+        u.searchParams.set('dl', '1');
+        return { type: 'dropbox', url: u.toString() };
+      } catch {}
+    }
+    return null;
+  }
+
+  static resolveGit(urlStr) {
+    if (!urlStr || typeof urlStr !== 'string') return null;
+    const ghM = /^https?:\/\/github\.com\/([^/]+)\/([^/]+)\/blob\/([^/]+)\/(.+)$/i.exec(urlStr);
+    if (ghM) return { type: 'github-raw', url: `https://raw.githubusercontent.com/${ghM[1]}/${ghM[2]}/${ghM[3]}/${ghM[4]}` };
+    const glM = /^https?:\/\/gitlab\.com\/([^/]+)\/([^/]+)\/-\/blob\/([^/]+)\/(.+)$/i.exec(urlStr);
+    if (glM) return { type: 'gitlab-raw', url: `https://gitlab.com/${glM[1]}/${glM[2]}/-/raw/${glM[3]}/${glM[4]}` };
+    return null;
+  }
+
+  static resolveHuggingFace(urlStr) {
+    if (!urlStr || typeof urlStr !== 'string') return null;
+    const hfM = /^https?:\/\/huggingface\.co\/((?:[^/]+\/)?[^/]+)\/blob\/([^/]+)\/(.+)$/i.exec(urlStr);
+    if (hfM) return { type: 'huggingface', url: `https://huggingface.co/${hfM[1]}/resolve/${hfM[2]}/${hfM[3]}?download=true` };
+    return null;
+  }
+
+  static resolveOneDrive(urlStr) {
+    if (!urlStr || typeof urlStr !== 'string') return null;
+    if (/onedrive\.live\.com/i.test(urlStr)) {
+      try {
+        const u = new URL(urlStr);
+        const cid = u.searchParams.get('cid');
+        const resid = u.searchParams.get('resid') || u.searchParams.get('id');
+        const authkey = u.searchParams.get('authkey');
+        if (cid && resid) {
+          let dlUrl = `https://onedrive.live.com/download?cid=${cid}&resid=${encodeURIComponent(resid)}`;
+          if (authkey) dlUrl += `&authkey=${authkey}`;
+          return { type: 'onedrive', url: dlUrl };
+        }
+        if (u.pathname.includes('view.aspx')) {
+          u.pathname = u.pathname.replace('view.aspx', 'download.aspx');
+          return { type: 'onedrive', url: u.toString() };
+        }
+      } catch {}
+    }
+    return null;
+  }
+
+  static resolveArchiveOrg(urlStr) {
+    if (!urlStr || typeof urlStr !== 'string') return null;
+    const arcM = /^https?:\/\/archive\.org\/details\/([^/?#]+)(?:\/(.+))?$/i.exec(urlStr);
+    if (arcM) {
+      const filePart = arcM[2] ? `/${arcM[2]}` : '';
+      return { type: 'archiveorg', url: `https://archive.org/download/${arcM[1]}${filePart}` };
+    }
+    return null;
+  }
+
+  static async resolveMediaFire(urlStr) {
+    if (!urlStr || typeof urlStr !== 'string' || !/mediafire\.com\/file\//i.test(urlStr)) return null;
+    try {
+      return new Promise((resolve) => {
+        const req = https.get(urlStr, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+          },
+          timeout: 8000
+        }, res => {
+          let html = '';
+          res.on('data', d => { if (html.length < 500000) html += d; });
+          res.on('end', () => {
+            const dlMatch = /href="((?:https?:)?\/\/(?:download\d*\.mediafire\.com|www\.mediafire\.com\/file_download\/)[^"]+)"/i.exec(html) ||
+                            /id="downloadButton"[^>]*href="([^"]+)"/i.exec(html) ||
+                            /aria-label="Download file"[^>]*href="([^"]+)"/i.exec(html);
+            if (dlMatch) {
+              let target = dlMatch[1];
+              if (target.startsWith('//')) target = 'https:' + target;
+              resolve({ type: 'mediafire', url: target });
+              return;
+            }
+            resolve(null);
+          });
+        });
+        req.on('error', () => resolve(null));
+        req.on('timeout', () => { req.destroy(); resolve(null); });
+      });
+    } catch {
+      return null;
+    }
+  }
+
+  static resolveSync(urlStr) {
+    if (!urlStr || typeof urlStr !== 'string' || !/^https?:\/\//i.test(urlStr)) return null;
+    return CloudResolver.resolveGoogle(urlStr) ||
+           CloudResolver.resolveDropbox(urlStr) ||
+           CloudResolver.resolveGit(urlStr) ||
+           CloudResolver.resolveHuggingFace(urlStr) ||
+           CloudResolver.resolveOneDrive(urlStr) ||
+           CloudResolver.resolveArchiveOrg(urlStr) ||
+           null;
+  }
+
+  static async resolve(urlStr) {
+    if (!urlStr || typeof urlStr !== 'string' || !/^https?:\/\//i.test(urlStr)) return null;
+    const syncRes = CloudResolver.resolveSync(urlStr);
+    if (syncRes) return syncRes;
+    if (/mediafire\.com\/file\//i.test(urlStr)) {
+      const mf = await CloudResolver.resolveMediaFire(urlStr);
+      if (mf) return mf;
+    }
+    return null;
+  }
+}
+
 const YT_QUALITY_FORMATS = {
   best: 'bestvideo[protocol=https]+bestaudio[ext=m4a][protocol=https]/bestvideo[protocol=https]+bestaudio[protocol=https]/best[protocol=https]/best',
   '12k': 'bestvideo[height<=8640][protocol=https]+bestaudio[ext=m4a][protocol=https]/bestvideo[height<=8640][protocol=https]+bestaudio[protocol=https]/best[height<=8640][protocol=https]/best',
@@ -452,11 +585,11 @@ class DownloadJob extends EventEmitter {
         }
       }
 
-      // 3. Check if URL is a Google Drive link (e.g. file/d/.../view, open?id=..., uc?id=...)
-      const gdriveFileId = extractGoogleDriveFileId(this.finalUrl || this.url);
-      if (gdriveFileId) {
-        this.resolverType = 'gdrive';
-        this.finalUrl = `https://drive.usercontent.google.com/download?id=${gdriveFileId}&export=download`;
+      // 3. Check if URL is a Cloud storage link (Google Drive, Dropbox, OneDrive, MediaFire, GitHub, GitLab, Hugging Face, Archive.org)
+      const cloud = await CloudResolver.resolve(this.finalUrl || this.url);
+      if (cloud && cloud.url) {
+        this.resolverType = cloud.type;
+        this.finalUrl = cloud.url;
       }
 
       this.status = 'probing';
@@ -1066,47 +1199,68 @@ class DownloadJob extends EventEmitter {
 
         const contentType = (res.headers['content-type'] || '').toLowerCase();
         const isHtml = contentType.includes('text/html');
-        const isGDrive = /drive\.(?:usercontent\.)?google\.com/i.test(targetUrl);
-        if (code === 200 && isHtml && isGDrive && redirectCount < 8) {
+        if (code === 200 && isHtml && redirectCount < 8) {
           let bodyBuf = '';
           res.on('data', chunk => {
-            if (bodyBuf.length < 32768) bodyBuf += chunk.toString();
+            if (bodyBuf.length < 65536) bodyBuf += chunk.toString();
           });
           res.on('end', () => {
-            let confirmUrl = '';
-            const linkMatch = /href="([^"]*(?:confirm=[a-zA-Z0-9_-]+|uuid=[a-zA-Z0-9_-]+)[^"]*)"/i.exec(bodyBuf) ||
-                              /action="([^"]+)"/i.exec(bodyBuf);
-            if (linkMatch) {
-              let rawLink = linkMatch[1].replace(/&amp;/g, '&');
-              if (rawLink.startsWith('/')) {
-                const u = new URL(targetUrl);
-                confirmUrl = `${u.protocol}//${u.host}${rawLink}`;
-              } else if (/^https?:\/\//i.test(rawLink)) {
-                confirmUrl = rawLink;
-              }
-              const idM = /name="id"\s+value="([^"]+)"/i.exec(bodyBuf);
-              const exportM = /name="export"\s+value="([^"]+)"/i.exec(bodyBuf);
-              const confirmM = /name="confirm"\s+value="([^"]+)"/i.exec(bodyBuf);
-              const uuidM = /name="uuid"\s+value="([^"]+)"/i.exec(bodyBuf);
-              if (idM && confirmM) {
-                const u = new URL(confirmUrl || 'https://drive.usercontent.google.com/download');
-                u.searchParams.set('id', idM[1]);
-                u.searchParams.set('export', exportM ? exportM[1] : 'download');
-                u.searchParams.set('confirm', confirmM[1]);
-                if (uuidM) u.searchParams.set('uuid', uuidM[1]);
-                confirmUrl = u.toString();
+            let nextTargetUrl = '';
+
+            // A) Google Drive virus warning confirmation
+            if (/drive\.(?:usercontent\.)?google\.com/i.test(targetUrl)) {
+              const linkMatch = /href="([^"]*(?:confirm=[a-zA-Z0-9_-]+|uuid=[a-zA-Z0-9_-]+)[^"]*)"/i.exec(bodyBuf) ||
+                                /action="([^"]+)"/i.exec(bodyBuf);
+              if (linkMatch) {
+                let rawLink = linkMatch[1].replace(/&amp;/g, '&');
+                if (rawLink.startsWith('/')) {
+                  const u = new URL(targetUrl);
+                  nextTargetUrl = `${u.protocol}//${u.host}${rawLink}`;
+                } else if (/^https?:\/\//i.test(rawLink)) {
+                  nextTargetUrl = rawLink;
+                }
+                const idM = /name="id"\s+value="([^"]+)"/i.exec(bodyBuf);
+                const exportM = /name="export"\s+value="([^"]+)"/i.exec(bodyBuf);
+                const confirmM = /name="confirm"\s+value="([^"]+)"/i.exec(bodyBuf);
+                const uuidM = /name="uuid"\s+value="([^"]+)"/i.exec(bodyBuf);
+                if (idM && confirmM) {
+                  const u = new URL(nextTargetUrl || 'https://drive.usercontent.google.com/download');
+                  u.searchParams.set('id', idM[1]);
+                  u.searchParams.set('export', exportM ? exportM[1] : 'download');
+                  u.searchParams.set('confirm', confirmM[1]);
+                  if (uuidM) u.searchParams.set('uuid', uuidM[1]);
+                  nextTargetUrl = u.toString();
+                }
               }
             }
-            if (confirmUrl) {
+
+            // B) Universal HTML Landing Page File Link Extractor (Meta refresh or Direct Download button)
+            if (!nextTargetUrl) {
+              const metaRefresh = /<meta[^>]+http-equiv=["']?refresh["']?[^>]+content=["']?[^;]+;\s*url=([^"'>\s]+)["']?/i.exec(bodyBuf);
+              if (metaRefresh && /^https?:\/\//i.test(metaRefresh[1])) {
+                nextTargetUrl = metaRefresh[1];
+              }
+            }
+            if (!nextTargetUrl) {
+              const buttonMatch = /id=["']downloadButton["'][^>]*href=["']([^"']+)["']/i.exec(bodyBuf) ||
+                                  /class=["'][^"']*(?:btn-download|download-btn|download_button)[^"']*["'][^>]*href=["']([^"']+)["']/i.exec(bodyBuf) ||
+                                  /href=["'](https?:\/\/[^"']+\.(?:zip|rar|7z|bin|iso|exe|msi|dmg|pkg|apk|pdf|docx|xlsx|tar|gz|ubi|ipsw|mp4|mkv|webm)(?:\?[^"']*)?)["']/i.exec(bodyBuf);
+              if (buttonMatch && /^https?:\/\//i.test(buttonMatch[1])) {
+                nextTargetUrl = buttonMatch[1];
+              }
+            }
+
+            if (nextTargetUrl) {
               const setCookie = res.headers['set-cookie'];
               if (setCookie && Array.isArray(setCookie)) {
                 const newCookies = setCookie.map(c => c.split(';')[0]).join('; ');
                 this.headers = this.headers || {};
                 this.headers.Cookie = this.headers.Cookie ? `${this.headers.Cookie}; ${newCookies}` : newCookies;
               }
-              this._probeUrl(confirmUrl, redirectCount + 1).then(resolve).catch(reject);
+              this._probeUrl(nextTargetUrl, redirectCount + 1).then(resolve).catch(reject);
               return;
             }
+
             resolve({
               finalUrl: targetUrl,
               totalBytes: 0,
@@ -1114,7 +1268,7 @@ class DownloadJob extends EventEmitter {
               etag: res.headers['etag'] || '',
               lastModified: res.headers['last-modified'] || '',
               mimeType: contentType,
-              serverHeader: res.headers['server'] || 'Google',
+              serverHeader: res.headers['server'] || 'Web',
               fileName: ''
             });
           });
@@ -2583,5 +2737,6 @@ module.exports = {
   isGenericFileName,
   extractGoogleDriveFileId,
   decodeRfc2047,
-  parseGoogleDriveFolder
+  parseGoogleDriveFolder,
+  CloudResolver
 };

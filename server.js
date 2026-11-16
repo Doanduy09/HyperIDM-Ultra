@@ -6,7 +6,7 @@ const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const crypto = require('crypto');
-const { DownloadJob, isGenericFileName, extractGoogleDriveFileId, parseGoogleDriveFolder } = require('./engine');
+const { DownloadJob, isGenericFileName, extractGoogleDriveFileId, parseGoogleDriveFolder, CloudResolver } = require('./engine');
 const idmFeatures = require('./idm-features');
 
 const PORT = parseInt(process.env.HYPER_IDM_PORT || '17890', 10);
@@ -79,9 +79,9 @@ async function resolveFreshUrlForJob(targetJob) {
       const freshIpsw = await targetJob._resolveIpswMeUrl(targetJob.url).catch(() => null);
       if (freshIpsw && freshIpsw.url) return freshIpsw.url;
     }
-    const gDriveId = extractGoogleDriveFileId(targetJob.url);
-    if (gDriveId) {
-      return `https://drive.usercontent.google.com/download?id=${gDriveId}&export=download`;
+    const freshCloud = await CloudResolver.resolve(targetJob.url);
+    if (freshCloud && freshCloud.url) {
+      return freshCloud.url;
     }
   } catch (err) {
     console.error(`[AutoHeal] Failed to resolve fresh URL for job ${targetJob.id}:`, err.message);
@@ -93,9 +93,9 @@ function createAndRegisterJob(opts, startImmediately = true) {
   let fileName = sanitizeOptionalFileName(opts.fileName || '');
   if (isGenericFileName(fileName)) fileName = '';
   let targetUrl = opts.url.trim();
-  const gDriveId = extractGoogleDriveFileId(targetUrl);
-  if (gDriveId && !targetUrl.includes('drive.usercontent.google.com')) {
-    targetUrl = `https://drive.usercontent.google.com/download?id=${gDriveId}&export=download`;
+  const syncCloud = CloudResolver.resolveSync(targetUrl);
+  if (syncCloud && syncCloud.url) {
+    targetUrl = syncCloud.url;
   }
   const autoCategory = opts.autoCategory !== false && !opts.saveDir;
   const saveDir = opts.saveDir
@@ -785,10 +785,10 @@ const server = http.createServer(async (req, res) => {
         const ipsw = await tmpJob._resolveIpswMeUrl(rawUrl);
         targetUrl = ipsw.url;
         resolvedName = ipsw.fileName || '';
-      } else if (extractGoogleDriveFileId(rawUrl)) {
-        const gDriveId = extractGoogleDriveFileId(rawUrl);
-        if (!targetUrl.includes('drive.usercontent.google.com')) {
-          targetUrl = `https://drive.usercontent.google.com/download?id=${gDriveId}&export=download`;
+      } else if (await CloudResolver.resolve(rawUrl)) {
+        const cloud = await CloudResolver.resolve(rawUrl);
+        if (cloud && cloud.url) {
+          targetUrl = cloud.url;
         }
       } else if (/(?:youtube\.com\/(?:watch\?v=|shorts\/)|youtu\.be\/)/i.test(rawUrl)) {
         const cat = 'Video';
@@ -970,9 +970,9 @@ const server = http.createServer(async (req, res) => {
       let cleanFn = sanitizeOptionalFileName(body.fileName || '');
       if (isGenericFileName(cleanFn)) cleanFn = '';
       let targetCleanUrl = cleanUrl;
-      const gDriveId = extractGoogleDriveFileId(targetCleanUrl);
-      if (gDriveId && !targetCleanUrl.includes('drive.usercontent.google.com')) {
-        targetCleanUrl = `https://drive.usercontent.google.com/download?id=${gDriveId}&export=download`;
+      const cloud = await CloudResolver.resolve(targetCleanUrl);
+      if (cloud && cloud.url) {
+        targetCleanUrl = cloud.url;
       }
       const cat = idmFeatures.categorize({ fileName: cleanFn, url: targetCleanUrl });
       const item = {
