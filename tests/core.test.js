@@ -9,7 +9,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { spawn } = require('node:child_process');
 
-const { DownloadJob } = require('../engine');
+const { DownloadJob, CloudResolver } = require('../engine');
 const idmFeatures = require('../idm-features');
 
 function makeTempDir(prefix) {
@@ -158,7 +158,7 @@ test('DownloadJob completes 206 multi-segment download with exact SHA-256 and re
     assert.equal(fs.existsSync(path.join(dir, 'multi.bin.hyper.json')), false);
   } finally {
     await srv.close();
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   }
 });
 
@@ -186,7 +186,7 @@ test('DownloadJob cleanly handles HTTP 200 on Range-ignoring server without corr
     assert.equal(actualSha, expectedSha);
   } finally {
     await srv.close();
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   }
 });
 
@@ -258,7 +258,7 @@ test('DownloadJob rejects mid-segment HTTP 200 and resumes strictly from committ
     assert.equal(actualSha, expectedSha);
   } finally {
     await srv.close();
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   }
 });
 
@@ -338,7 +338,7 @@ test('idm-features blocks SSRF URLs, expands batch patterns, categorizes files, 
     assert.deepEqual(trashed.sort(), ['video.mp4', 'video.mp4.audio.tmp', 'video.mp4.video.tmp']);
     assert.equal(fs.existsSync(`${baseFile}.video.tmp.hyper.json`), false);
   } finally {
-    fs.rmSync(cancelDir, { recursive: true, force: true });
+    fs.rmSync(cancelDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   }
 });
 
@@ -433,6 +433,40 @@ test('server.js enforces token auth, Host/Origin checks, safe zip-preview, singl
     assert.equal(fs.existsSync(tokenFile), false);
   } finally {
     if (proc.exitCode === null) proc.kill();
-    fs.rmSync(dataDir, { recursive: true, force: true });
+    fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   }
+});
+
+test('CloudResolver resolves Google Drive, Docs, Dropbox, GitHub, GitLab, Hugging Face, OneDrive, and Archive.org', async () => {
+  const g1 = CloudResolver.resolveSync('https://drive.google.com/file/d/18xuxRBUnxstFx_PaCOlJadHIUMR51a8G/view');
+  assert.equal(g1.type, 'gdrive');
+  assert.ok(g1.url.includes('drive.usercontent.google.com'));
+
+  const gdoc = CloudResolver.resolveSync('https://docs.google.com/document/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit');
+  assert.equal(gdoc.type, 'gdoc');
+  assert.ok(gdoc.url.includes('export?format=docx'));
+
+  const drop = CloudResolver.resolveSync('https://www.dropbox.com/scl/fi/abc123xyz/sample.zip?rlkey=key123&dl=0');
+  assert.equal(drop.type, 'dropbox');
+  assert.ok(drop.url.includes('dl=1'));
+
+  const gh = CloudResolver.resolveSync('https://github.com/torvalds/linux/blob/master/Makefile');
+  assert.equal(gh.type, 'github-raw');
+  assert.equal(gh.url, 'https://raw.githubusercontent.com/torvalds/linux/master/Makefile');
+
+  const gl = CloudResolver.resolveSync('https://gitlab.com/gitlab-org/gitlab/-/blob/master/README.md');
+  assert.equal(gl.type, 'gitlab-raw');
+  assert.equal(gl.url, 'https://gitlab.com/gitlab-org/gitlab/-/raw/master/README.md');
+
+  const hf = CloudResolver.resolveSync('https://huggingface.co/bert-base-uncased/blob/main/config.json');
+  assert.equal(hf.type, 'huggingface');
+  assert.ok(hf.url.includes('/resolve/main/config.json?download=true'));
+
+  const one = CloudResolver.resolveSync('https://onedrive.live.com/?cid=1234567890ABCDEF&resid=1234567890ABCDEF%21105&authkey=Key123');
+  assert.equal(one.type, 'onedrive');
+  assert.ok(one.url.includes('/download?cid='));
+
+  const arc = CloudResolver.resolveSync('https://archive.org/details/msdos_Oregon_Trail_The_1990/Oregon_Trail_1990.zip');
+  assert.equal(arc.type, 'archiveorg');
+  assert.equal(arc.url, 'https://archive.org/download/msdos_Oregon_Trail_The_1990/Oregon_Trail_1990.zip');
 });
