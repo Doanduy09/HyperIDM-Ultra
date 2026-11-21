@@ -31,6 +31,7 @@ const TRUSTED_CHROME_EXT_ORIGIN = 'chrome-extension://knpgakkbngbpcijjehpjflnflc
 const jobs = new Map();
 const sseClients = new Set();
 const interceptQueue = [];
+const recentInterceptedUrls = new Map();
 const speedLimiter = new idmFeatures.SpeedLimiter(() => jobs.values());
 
 const BENCHMARK_CHUNK = Buffer.alloc(1024 * 1024, 0x48);
@@ -963,6 +964,9 @@ const server = http.createServer(async (req, res) => {
       }
       const cleanUrl = String(body.url).trim();
       const now = Date.now();
+      for (const [k, ts] of recentInterceptedUrls) {
+        if (now - ts > 30000) recentInterceptedUrls.delete(k);
+      }
       const dupIdx = interceptQueue.findIndex(x => x.url === cleanUrl && (now - x.timestamp) < 2500);
       if (dupIdx >= 0) {
         return sendJson(res, 200, { ok: true, deduplicated: true, item: interceptQueue[dupIdx] }, req);
@@ -974,6 +978,8 @@ const server = http.createServer(async (req, res) => {
       if (cloud && cloud.url) {
         targetCleanUrl = cloud.url;
       }
+      recentInterceptedUrls.set(cleanUrl, now);
+      recentInterceptedUrls.set(targetCleanUrl, now);
       const cat = idmFeatures.categorize({ fileName: cleanFn, url: targetCleanUrl });
       const item = {
         id: 'int-' + now + '-' + Math.random().toString(36).slice(2, 6),
@@ -1365,13 +1371,24 @@ function startBrowserSqliteDownloadWatcher() {
           b.maxId = row ? Number(row.m) : 0;
         } else {
           const rows = db.prepare(
-            'SELECT d.id, d.target_path, d.total_bytes, d.tab_url, (SELECT c.url FROM downloads_url_chains c WHERE c.id = d.id ORDER BY c.chain_index DESC LIMIT 1) AS url FROM downloads d WHERE d.id > ? ORDER BY d.id ASC'
+            'SELECT d.id, d.target_path, d.state, CAST(d.start_time AS TEXT) AS start_time_str, d.tab_url, (SELECT c.url FROM downloads_url_chains c WHERE c.id = d.id ORDER BY c.chain_index DESC LIMIT 1) AS url FROM downloads d WHERE d.id > ? ORDER BY d.id ASC'
           ).all(b.maxId);
+          const nowMs = Date.now();
           for (const r of rows) {
             b.maxId = Math.max(b.maxId, Number(r.id));
+            if (Number(r.state) !== 0) continue;
+            const stUs = Number(r.start_time_str || 0);
+            if (stUs > 0) {
+              const startedUnixMs = (stUs / 1000) - 11644473600000;
+              if (!Number.isFinite(startedUnixMs) || Math.abs(nowMs - startedUnixMs) > 12000) continue;
+            }
             const dlUrl = String(r.url || '').trim();
             if (!dlUrl || !/^https?:\/\//i.test(dlUrl)) continue;
             if (/^https?:\/\/(127\.0\.0\.1|localhost)/i.test(dlUrl)) continue;
+            const recentTs = recentInterceptedUrls.get(dlUrl);
+            if (recentTs && (nowMs - recentTs) < 20000) continue;
+            if (interceptQueue.some(x => x.url === dlUrl && (nowMs - x.timestamp) < 15000)) continue;
+            recentInterceptedUrls.set(dlUrl, nowMs);
             const fn = r.target_path ? sanitizeOptionalFileName(path.basename(String(r.target_path)).replace(/\.crdownload$|\.opdownload$|\.part$/i, '')) : '';
             const cat = idmFeatures.categorize({ fileName: fn, url: dlUrl });
             const item = {

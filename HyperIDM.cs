@@ -819,6 +819,7 @@ namespace HyperIDM
 
             try
             {
+                lastClipboardSeq = GetClipboardSequenceNumber();
                 if (Clipboard.ContainsText())
                 {
                     lastClipboardText = Clipboard.GetText() ?? "";
@@ -1517,7 +1518,7 @@ namespace HyperIDM
             DateTime lastShown;
             if (recentPromptedUrls.TryGetValue(url, out lastShown))
             {
-                if ((DateTime.UtcNow - lastShown).TotalSeconds < 1.5) return false;
+                if ((DateTime.UtcNow - lastShown).TotalSeconds < 6.0) return false;
             }
             return true;
         }
@@ -1803,7 +1804,7 @@ namespace HyperIDM
                 if (!string.IsNullOrEmpty(normalized))
                 {
                     activeDialogUrls.Remove(normalized);
-                    recentPromptedUrls.Remove(normalized);
+                    recentPromptedUrls[normalized] = DateTime.UtcNow;
                 }
             };
             form.Show();

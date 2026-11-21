@@ -280,6 +280,12 @@ function consumeBypassFallback(url) {
 
 // Tier-2 Bắt link động / Meta-refresh: Pause ngay lập tức, chuyển sang Duytai rồi Cancel + Erase sạch khỏi lịch sử Chrome.
 chrome.downloads.onCreated.addListener(async item => {
+  if (!item || (item.state && item.state !== 'in_progress')) return;
+  if (item.startTime) {
+    const startedMs = Date.parse(item.startTime);
+    if (Number.isFinite(startedMs) && Math.abs(Date.now() - startedMs) > 12000) return;
+  }
+  if (item.totalBytes > 0 && item.bytesReceived >= item.totalBytes) return;
   if (!(await enabled())) return;
   const url = item.finalUrl || item.url;
   if (!/^https?:/i.test(url)) return;
