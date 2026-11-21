@@ -1330,6 +1330,11 @@ class DownloadJob extends EventEmitter {
   async _resolveCdnPool(targetUrl) {
     try {
       const parsed = new URL(targetUrl);
+      const cleanHost = parsed.hostname.replace(/^\[|\]$/g, '');
+      if (netIsIp(cleanHost) || cleanHost.toLowerCase() === 'localhost') {
+        this.cdnIps = [cleanHost];
+        return;
+      }
       const port = Number(parsed.port) || (parsed.protocol === 'https:' ? 443 : 80);
       const cacheKey = `${parsed.hostname}:${port}`;
       const cached = DNS_POOL_CACHE.get(cacheKey);
