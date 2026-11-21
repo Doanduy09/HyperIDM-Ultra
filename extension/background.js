@@ -5,6 +5,7 @@ const API_HANDSHAKE = `${API_BASE}/api/auth/handshake`;
 const EXT_RE = /\.(3gp|7z|aac|ace|aif|aiff|apk|apks|xapk|aab|ipa|arj|asf|avi|bin|bz2|tbz2|cab|crx|xpi|csv|dat|db|sqlite|deb|dmg|doc|docx|dwg|dxf|epub|mobi|azw3|esd|wim|swm|exe|f4v|ffu|flac|flv|fw|gz|gzip|tgz|hex|uf2|img|ipsw|iso|jar|war|jpg|jpeg|png|gif|webp|svg|avif|ico|bmp|json|xml|yaml|yml|lzh|lha|lz|lzma|tlz|m2ts|mts|m3u8|mpd|m4a|m4b|m4p|m4r|m4v|mkv|mov|mp2|mp3|mp4|mpa|mpe|mpeg|mpg|msi|msix|msu|nupkg|whl|odt|ods|odp|oga|ogg|ogv|opus|ota|ova|ovf|pak|par2|pdf|pkg|plj|pps|ppt|pptx|psd|ai|qcow2|qt|r\d{2,3}|ra|ram|rar|rm|rmvb|rom|rpm|appimage|rtf|s7z|sea|sit|sitx|sql|srt|ass|vtt|stl|tar|tif|tiff|torrent|ts|tsv|txt|vhd|vhdx|vmdk|vdi|vob|wav|webm|wma|wmv|xls|xlsx|xps|xz|txz|z|zip|zst|\d{3})(?:$|[?#])/i;
 const MENU_ID = 'duytai-download';
 const MENU_GRABBER_ID = 'duytai-grabber';
+const safeErr = () => { const _ = chrome.runtime.lastError; };
 
 let cachedApiToken = '';
 
@@ -137,7 +138,7 @@ function notify(title, message) {
       type: 'basic',
       iconUrl: chrome.runtime.getURL('icons/icon48.png'),
       title, message
-    });
+    }, safeErr);
   } catch (_) {}
 }
 
@@ -154,7 +155,7 @@ chrome.notifications.onClicked.addListener(async (notifId) => {
         headers: token ? { 'X-Duytai-Token': token } : {}
       });
     } catch (_) {}
-    try { chrome.notifications.clear(notifId); } catch (_) {}
+    try { chrome.notifications.clear(notifId, safeErr); } catch (_) {}
     completedJobNotifs.delete(notifId);
   }
 });
@@ -181,7 +182,7 @@ async function checkCompletedJobs() {
             title: '⚡ Tải xong bằng Duytai (64-Bit)',
             message: `${job.fileName || 'Tệp'}\n👉 Bấm vào đây để mở thư mục chứa tệp`,
             requireInteraction: true
-          });
+          }, safeErr);
         }
       }
     }
@@ -219,16 +220,17 @@ async function handoff(url, opts) {
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.removeAll(() => {
+    safeErr();
     chrome.contextMenus.create({
       id: MENU_ID,
       title: '⚡ Tải xuống bằng Duytai (64/128 Luồng)',
       contexts: ['link', 'video', 'audio', 'image', 'page']
-    });
+    }, safeErr);
     chrome.contextMenus.create({
       id: MENU_GRABBER_ID,
       title: '🕷️ Tải tất cả liên kết trên trang với Duytai',
       contexts: ['page']
-    });
+    }, safeErr);
   });
 });
 
@@ -239,7 +241,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     if (url) handoff(url, { referrer: tab && tab.url, cookieStoreId, source: 'Menu chuột phải Trình duyệt' });
   } else if (info.menuItemId === MENU_GRABBER_ID && tab && tab.url) {
     await getApiToken().catch(() => '');
-    chrome.tabs.create({ url: `${API_BASE}/?grab=${encodeURIComponent(tab.url)}` });
+    chrome.tabs.create({ url: `${API_BASE}/?grab=${encodeURIComponent(tab.url)}` }, safeErr);
   }
 });
 
@@ -287,10 +289,13 @@ chrome.downloads.onCreated.addListener(async item => {
   if (isHtmlOnly) return;
 
   // Pause socket Chrome ngay lập tức để không tải song song tốn băng thông
-  try { chrome.downloads.pause(item.id, () => {}); } catch (_) {}
+  try { chrome.downloads.pause(item.id, safeErr); } catch (_) {}
 
   if (isRecentlyHandled(url)) {
-    chrome.downloads.cancel(item.id, () => chrome.downloads.erase({ id: item.id }));
+    chrome.downloads.cancel(item.id, () => {
+      safeErr();
+      chrome.downloads.erase({ id: item.id }, safeErr);
+    });
     return;
   }
 
@@ -299,9 +304,12 @@ chrome.downloads.onCreated.addListener(async item => {
   const r = await handoff(url, { referrer: item.referrer, fileName: cleanFname, source: 'Tự động bắt link Trình duyệt' });
   if (r.ok) {
     markRecentlyHandled(url);
-    chrome.downloads.cancel(item.id, () => chrome.downloads.erase({ id: item.id }));
+    chrome.downloads.cancel(item.id, () => {
+      safeErr();
+      chrome.downloads.erase({ id: item.id }, safeErr);
+    });
   } else {
-    try { chrome.downloads.resume(item.id, () => {}); } catch (_) {}
+    try { chrome.downloads.resume(item.id, safeErr); } catch (_) {}
   }
 });
 

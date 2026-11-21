@@ -10,6 +10,7 @@
   let autoCaptureEnabled = true;
   try {
     chrome.storage.local.get('autoCapture', res => {
+      const _ = chrome.runtime.lastError;
       if (res && typeof res.autoCapture === 'boolean') autoCaptureEnabled = res.autoCapture;
     });
     chrome.storage.onChanged.addListener((changes, area) => {
@@ -77,6 +78,7 @@
 
   try {
     chrome.storage.local.get('showFloatBtn', res => {
+      const _ = chrome.runtime.lastError;
       if (res && typeof res.showFloatBtn === 'boolean') showFloatBtn = res.showFloatBtn;
       if (!showFloatBtn) removeWidget();
     });
@@ -175,6 +177,7 @@
       videoQuality: quality || 'best',
       source: quality === 'audio' ? 'Thanh nổi Duytai (Chỉ Audio)' : 'Thanh nổi Duytai (Video)'
     }, r => {
+      const _ = chrome.runtime.lastError;
       btnElement.textContent = r && r.ok ? '✅ Đã mở Duytai!' : '❌ Duytai chưa chạy';
       setTimeout(() => (btnElement.textContent = defaultLabel), 2200);
     });
