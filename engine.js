@@ -1,4 +1,4 @@
-process.env.UV_THREADPOOL_SIZE = process.env.UV_THREADPOOL_SIZE || '16';
+process.env.UV_THREADPOOL_SIZE = process.env.UV_THREADPOOL_SIZE || '32';
 const http = require('http');
 const https = require('https');
 const net = require('net');
@@ -15,7 +15,7 @@ const DNS_POOL_CACHE = new Map();
 const DNS_POOL_TTL_MS = 30000;
 const RESERVED_TARGET_PATHS = new Map(); // normalizedPath -> jobId (prevents concurrent filename collisions)
 
-function probeTcpLatency(ip, port, timeoutMs = 850) {
+function probeTcpLatency(ip, port, timeoutMs = 350) {
   return new Promise((resolve) => {
     const start = Date.now();
     let settled = false;
@@ -33,21 +33,24 @@ function probeTcpLatency(ip, port, timeoutMs = 850) {
   });
 }
 
-// Persistent Keep-Alive Connection Pools (0ms TLS/TCP reuse during Work-Stealing)
+// Persistent Keep-Alive Connection Pools (0ms TLS/TCP reuse during Work-Stealing, LIFO picks warmest high-cwnd socket)
 const sharedHttpAgent = new http.Agent({
   keepAlive: true,
   keepAliveMsecs: 30000,
-  maxSockets: 256,
-  maxFreeSockets: 128,
-  scheduling: 'fifo'
+  maxSockets: 512,
+  maxFreeSockets: 256,
+  scheduling: 'lifo',
+  noDelay: true
 });
 
 const sharedHttpsAgent = new https.Agent({
   keepAlive: true,
   keepAliveMsecs: 30000,
-  maxSockets: 256,
-  maxFreeSockets: 128,
-  scheduling: 'fifo'
+  maxSockets: 512,
+  maxFreeSockets: 256,
+  scheduling: 'lifo',
+  noDelay: true,
+  maxCachedSessions: 256
 });
 
 function findBinary(name) {
@@ -453,11 +456,11 @@ class DownloadJob extends EventEmitter {
     this._activeHedges = 0;
     this._lastTickBytes = 0;
     this._lastTickTime = 0;
-    this._minSplitSize = 1024 * 1024; // 1 MB minimum steal size
+    this._minSplitSize = 512 * 1024; // 512 KB minimum steal size for aggressive tail parallelism
     this._writeBufferSize = 1024 * 1024; // 1 MB write coalescing buffer
     this._globalPendingWriteBytes = 0;
-    this._maxGlobalPendingWriteBytes = 48 * 1024 * 1024; // 48 MB per-job write-queue RAM cap
-    this._maxWorkerPendingWriteBytes = 4 * 1024 * 1024; // 4 MB per-worker write-queue cap
+    this._maxGlobalPendingWriteBytes = 128 * 1024 * 1024; // 128 MB per-job write-queue RAM cap (prevents TCP ZeroWindow on 10Gbps)
+    this._maxWorkerPendingWriteBytes = 8 * 1024 * 1024; // 8 MB per-worker write-queue cap
     this._savingState = false;
     this._stateSaveQueued = false;
     this._journalLoaded = false;
@@ -596,8 +599,17 @@ class DownloadJob extends EventEmitter {
       this.emit('update', this.toJSON());
 
       if (!this.filePath || this.segments.length === 0) {
-        const meta = await this._probeUrl(this.finalUrl);
+        const preProbeUrl = this.finalUrl;
+        const [meta] = await Promise.all([
+          this._probeUrl(preProbeUrl),
+          this._resolveCdnPool(preProbeUrl)
+        ]);
         this.finalUrl = meta.finalUrl;
+        try {
+          if (new URL(this.finalUrl).hostname !== new URL(preProbeUrl).hostname) {
+            await this._resolveCdnPool(this.finalUrl);
+          }
+        } catch {}
         this.totalBytes = this.maxBytesLimit > 0 ? Math.min(meta.totalBytes, this.maxBytesLimit) : meta.totalBytes;
         this.acceptRanges = meta.acceptRanges;
         this.etag = meta.etag;
@@ -622,8 +634,6 @@ class DownloadJob extends EventEmitter {
         }
         this.fileName = path.basename(this.filePath);
         this.stateFilePath = `${this.filePath}.hyper.json`;
-
-        await this._resolveCdnPool(this.finalUrl);
 
         const resumed = await this._tryLoadStateJournal();
         if (!resumed) {
@@ -1357,10 +1367,10 @@ class DownloadJob extends EventEmitter {
 
       let pool = unique.size > 0 ? Array.from(unique) : [parsed.hostname];
       if (pool.length > 1) {
-        const probeTargets = pool.slice(0, 6);
+        const probeTargets = pool.slice(0, 8);
         const latResults = await Promise.all(probeTargets.map(async (ip) => ({
           ip,
-          rtt: await probeTcpLatency(ip, port, 850)
+          rtt: await probeTcpLatency(ip, port, 350)
         })));
         latResults.sort((a, b) => a.rtt - b.rtt);
         const sortedSet = new Set(latResults.map(r => r.ip));
@@ -1440,16 +1450,16 @@ class DownloadJob extends EventEmitter {
 
     // Smart Auto-Scaling theo dung lượng file để tối ưu TLS handshake vs max throughput
     let smartCap = this.maxConnections;
-    if (this.totalBytes < 512 * 1024) smartCap = 1;
-    else if (this.totalBytes < 4 * 1024 * 1024) smartCap = Math.min(this.maxConnections, 8);
-    else if (this.totalBytes < 32 * 1024 * 1024) smartCap = Math.min(this.maxConnections, 32);
+    if (this.totalBytes < 256 * 1024) smartCap = 1;
+    else if (this.totalBytes < 2 * 1024 * 1024) smartCap = Math.min(this.maxConnections, 16);
+    else if (this.totalBytes < 16 * 1024 * 1024) smartCap = Math.min(this.maxConnections, 32);
     this._targetMaxConnections = Math.max(1, smartCap);
     this.effectiveMaxConnections = this._targetMaxConnections;
 
-    // For googlevideo.com, slice into bounded range chunks (4MB..16MB) to bypass YouTube per-connection throttling without segment bloat
+    // For googlevideo.com, slice into bounded range chunks (2MB..8MB) to bypass YouTube per-connection throttling without segment bloat
     const isGoogleVideo = this.finalUrl.includes('googlevideo.com');
-    if (isGoogleVideo && this.totalBytes > 4 * 1024 * 1024) {
-      const microSize = Math.max(4 * 1024 * 1024, Math.min(16 * 1024 * 1024, Math.ceil(this.totalBytes / 1024)));
+    if (isGoogleVideo && this.totalBytes > 2 * 1024 * 1024) {
+      const microSize = Math.max(2 * 1024 * 1024, Math.min(8 * 1024 * 1024, Math.ceil(this.totalBytes / 1024)));
       const numChunks = Math.ceil(this.totalBytes / microSize);
       this._firstPendingIdx = 0;
       for (let i = 0; i < numChunks; i++) {
@@ -1506,9 +1516,18 @@ class DownloadJob extends EventEmitter {
 
     if (!exists && this.totalBytes > 0) {
       if (process.platform === 'win32') {
-        try {
-          execFile('fsutil', ['sparse', 'setflag', this.filePath], () => {});
-        } catch {}
+        await new Promise((resolve) => {
+          const t = setTimeout(resolve, 250);
+          try {
+            execFile('fsutil', ['sparse', 'setflag', this.filePath], () => {
+              clearTimeout(t);
+              resolve();
+            });
+          } catch {
+            clearTimeout(t);
+            resolve();
+          }
+        });
       }
       try {
         await this.fileHandle.truncate(this.totalBytes);
@@ -1532,7 +1551,7 @@ class DownloadJob extends EventEmitter {
 
     const connLimit = this.effectiveMaxConnections || this.maxConnections;
     let spawnedThisWave = 0;
-    const waveBatch = 16;
+    const waveBatch = 64;
     let hasMorePending = false;
 
     for (const seg of this.segments) {
@@ -1549,10 +1568,10 @@ class DownloadJob extends EventEmitter {
     if (hasMorePending && this.status === 'downloading') {
       setTimeout(() => {
         if (this.status === 'downloading') this._scheduleWorkers();
-      }, 40).unref?.();
+      }, 15).unref?.();
     }
 
-    while (this.acceptRanges && this.activeWorkers.size < connLimit) {
+    while (!hasMorePending && this.acceptRanges && this.activeWorkers.size < connLimit) {
       const stolenSeg = this._tryStealFromLargestSegment();
       if (!stolenSeg) break;
       this._spawnWorker(stolenSeg);
@@ -1583,32 +1602,38 @@ class DownloadJob extends EventEmitter {
   }
 
   _tryStealFromLargestSegment() {
-    let largest = null;
-    let maxRemaining = 0;
-
-    for (const seg of this.segments) {
-      if (seg.status === 'downloading' && seg.end > seg.current) {
-        const remaining = seg.end - seg.current + 1;
-        if (remaining > maxRemaining) {
-          maxRemaining = remaining;
-          largest = seg;
-        }
-      }
-    }
-
-    const isTailPhase = this.totalBytes > 0 && (this.downloadedBytes / this.totalBytes) > 0.80;
-    const isFinalPhase = this.totalBytes > 0 && (this.downloadedBytes / this.totalBytes) > 0.96;
-    const isEndSprint = this.totalBytes > 0 && (this.downloadedBytes / this.totalBytes) > 0.99;
+    const isTailPhase = this.totalBytes > 0 && (this.downloadedBytes / this.totalBytes) > 0.75;
+    const isFinalPhase = this.totalBytes > 0 && (this.downloadedBytes / this.totalBytes) > 0.92;
+    const isEndSprint = this.totalBytes > 0 && (this.downloadedBytes / this.totalBytes) > 0.98;
     const isHugeFile = this.totalBytes > 2 * 1024 * 1024 * 1024;
     if (this.segments.length >= 1024) {
       this._compactCompletedSegments();
       if (this.segments.length >= 1024) return null;
     }
     const minSplit = isEndSprint
-      ? (128 * 1024)
+      ? (64 * 1024)
       : (isHugeFile
-        ? (isFinalPhase ? (256 * 1024) : (isTailPhase ? (1024 * 1024) : (4 * 1024 * 1024)))
+        ? (isFinalPhase ? (256 * 1024) : (isTailPhase ? (1024 * 1024) : (2 * 1024 * 1024)))
         : (isFinalPhase ? (128 * 1024) : (isTailPhase ? (256 * 1024) : this._minSplitSize)));
+
+    let largest = null;
+    let maxRemaining = 0;
+    let maxScore = -1;
+
+    for (const seg of this.segments) {
+      if (seg.status === 'downloading' && seg.end > seg.current) {
+        const remaining = seg.end - seg.current + 1;
+        if (remaining < minSplit * 2) continue;
+        // Prioritize slow bottleneck segments with high estimated remaining time (ETA-weighted work-stealing)
+        const effSpeed = (seg.speedBps && seg.speedBps > 0) ? Math.max(32 * 1024, seg.speedBps) : (512 * 1024);
+        const score = isTailPhase ? (remaining / effSpeed) : remaining;
+        if (score > maxScore) {
+          maxScore = score;
+          maxRemaining = remaining;
+          largest = seg;
+        }
+      }
+    }
 
     if (!largest || maxRemaining < minSplit * 2) {
       return null;
@@ -2000,7 +2025,7 @@ class DownloadJob extends EventEmitter {
   // Google "The Tail at Scale" Hedged Race: phóng request song song trên CDN IP khác nếu 1 kết nối kẹt
   _spawnHedgedRace(seg) {
     if (this.status !== 'downloading' || seg.status !== 'downloading' || !this.acceptRanges || seg._hedging) return;
-    if (this._activeHedges >= 4) return;
+    if (this._activeHedges >= 8) return;
     if (seg.end >= 0 && seg.current >= seg.end) return;
 
     seg._hedging = true;
@@ -2307,16 +2332,17 @@ class DownloadJob extends EventEmitter {
         const idleMs = now - (seg.lastDataTime || now);
         const rem = seg.end - seg.current + 1;
 
-        // 0) Google "The Tail at Scale" Hedged Request (bounded <=4 concurrent hedges)
+        // 0) Google "The Tail at Scale" Hedged Request (bounded <=8 concurrent hedges in tail zone)
         const avgSegSpeed = (activeSegs.length >= 2 && this.currentSpeedBps > 512 * 1024)
           ? (this.currentSpeedBps / activeSegs.length)
           : 0;
-        const inTailZone = this.totalBytes > 0 && (this.downloadedBytes / this.totalBytes) >= 0.96;
-        const hedgeTrigger = (idleMs > 1800 && rem > 128 * 1024) ||
-          (inTailZone && rem > 128 * 1024 && avgSegSpeed > 0 && seg.speedBps < Math.max(64 * 1024, avgSegSpeed * 0.25));
+        const inTailZone = this.totalBytes > 0 && (this.downloadedBytes / this.totalBytes) >= 0.92;
+        const maxHedgesAllowed = inTailZone ? 8 : 4;
+        const hedgeTrigger = (idleMs > 1500 && rem > 64 * 1024) ||
+          (inTailZone && rem > 64 * 1024 && avgSegSpeed > 0 && seg.speedBps < Math.max(64 * 1024, avgSegSpeed * 0.35));
 
         if (this.acceptRanges && !seg._hedging && hedgeTrigger &&
-            this._activeHedges < 4 && (this.activeWorkers.size < connLimit || this.cdnIps.length > 1)) {
+            this._activeHedges < maxHedgesAllowed && (this.activeWorkers.size < connLimit || this.cdnIps.length > 1 || inTailZone)) {
           this._spawnHedgedRace(seg);
         }
 

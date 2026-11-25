@@ -1,4 +1,4 @@
-process.env.UV_THREADPOOL_SIZE = process.env.UV_THREADPOOL_SIZE || '16';
+process.env.UV_THREADPOOL_SIZE = process.env.UV_THREADPOOL_SIZE || '32';
 const http = require('http');
 const fs = require('fs');
 const fsp = require('fs').promises;
