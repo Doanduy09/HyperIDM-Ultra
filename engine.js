@@ -184,6 +184,34 @@ class CloudResolver {
     if (ghM) return { type: 'github-raw', url: `https://raw.githubusercontent.com/${ghM[1]}/${ghM[2]}/${ghM[3]}/${ghM[4]}` };
     const glM = /^https?:\/\/gitlab\.com\/([^/]+)\/([^/]+)\/-\/blob\/([^/]+)\/(.+)$/i.exec(urlStr);
     if (glM) return { type: 'gitlab-raw', url: `https://gitlab.com/${glM[1]}/${glM[2]}/-/raw/${glM[3]}/${glM[4]}` };
+    const bbM = /^https?:\/\/bitbucket\.org\/([^/]+)\/([^/]+)\/src\/([^/]+)\/(.+)$/i.exec(urlStr);
+    if (bbM) return { type: 'bitbucket-raw', url: `https://bitbucket.org/${bbM[1]}/${bbM[2]}/raw/${bbM[3]}/${bbM[4]}` };
+    return null;
+  }
+
+  static resolvePixeldrain(urlStr) {
+    if (!urlStr || typeof urlStr !== 'string') return null;
+    const pdM = /^https?:\/\/(?:www\.)?pixeldrain\.com\/u\/([a-zA-Z0-9_-]+)(?:[/?#]|$)/i.exec(urlStr);
+    if (pdM) return { type: 'pixeldrain', url: `https://pixeldrain.com/api/file/${pdM[1]}?download` };
+    return null;
+  }
+
+  static resolveSourceForge(urlStr) {
+    if (!urlStr || typeof urlStr !== 'string') return null;
+    const sfM = /^https?:\/\/(?:www\.)?sourceforge\.net\/projects\/([^/]+)\/files\/(.+?)\/download(?:[?#]|$)/i.exec(urlStr);
+    if (sfM) return { type: 'sourceforge', url: `https://downloads.sourceforge.net/project/${sfM[1]}/${sfM[2]}?use_mirror=autoselect` };
+    return null;
+  }
+
+  static resolveSharePoint(urlStr) {
+    if (!urlStr || typeof urlStr !== 'string') return null;
+    if (/^https?:\/\/[^/]+\.sharepoint\.com\/:[ubxwp]:\/[a-z]\//i.test(urlStr)) {
+      try {
+        const u = new URL(urlStr);
+        u.searchParams.set('download', '1');
+        return { type: 'sharepoint', url: u.toString() };
+      } catch {}
+    }
     return null;
   }
 
@@ -267,6 +295,9 @@ class CloudResolver {
            CloudResolver.resolveGit(urlStr) ||
            CloudResolver.resolveHuggingFace(urlStr) ||
            CloudResolver.resolveOneDrive(urlStr) ||
+           CloudResolver.resolveSharePoint(urlStr) ||
+           CloudResolver.resolvePixeldrain(urlStr) ||
+           CloudResolver.resolveSourceForge(urlStr) ||
            CloudResolver.resolveArchiveOrg(urlStr) ||
            null;
   }
@@ -569,7 +600,15 @@ class DownloadJob extends EventEmitter {
     try {
       await fsp.mkdir(this.saveDir, { recursive: true });
 
-      // 1. Check if URL is a YouTube / Streaming Video URL
+      // 1. Check if URL is a Native HLS (.m3u8) Streaming Playlist
+      if (this._isHlsManifestUrl(this.url)) {
+        this.resolverType = 'hls';
+        this.finalUrl = this.url;
+        await this._executeHlsMultiSegmentPipeline();
+        return;
+      }
+
+      // 2. Check if URL is a YouTube / Social Video Platform URL
       if (this._isYouTubeOrMediaUrl(this.url)) {
         await this._abortYoutubeSubJobs(false);
         this.resolverType = 'youtube';
@@ -616,6 +655,12 @@ class DownloadJob extends EventEmitter {
         this.lastModified = meta.lastModified;
         this.mimeType = meta.mimeType;
         this.serverHeader = meta.serverHeader;
+
+        if (this._isHlsManifestUrl(this.finalUrl) || /mpegurl/i.test(this.mimeType || '')) {
+          this.resolverType = 'hls';
+          await this._executeHlsMultiSegmentPipeline();
+          return;
+        }
 
         const isCurrentGeneric = isGenericFileName(this.fileName);
         if (!this.fileName || isCurrentGeneric) {
@@ -713,8 +758,317 @@ class DownloadJob extends EventEmitter {
     });
   }
 
+  _isHlsManifestUrl(u) {
+    return /^https?:\/\/[^?#]+\.m3u8(?:$|[?#])/i.test(String(u || ''));
+  }
+
   _isYouTubeOrMediaUrl(u) {
-    return /^https?:\/\/(www\.|m\.)?(youtube\.com\/(watch|shorts)|youtu\.be\/)/i.test(u);
+    return /^https?:\/\/(?:www\.|m\.|vt\.|vm\.)?(?:youtube\.com\/(?:watch|shorts|live)|youtu\.be\/|tiktok\.com\/.+|facebook\.com\/(?:watch|reel|[^/]+\/videos\/)|fb\.watch\/|vimeo\.com\/\d+|bilibili\.com\/video\/|dailymotion\.com\/video\/|twitch\.tv\/videos\/)/i.test(String(u || ''));
+  }
+
+  _fetchBuffer(targetUrl, timeoutMs = 15000, redirectCount = 0) {
+    if (redirectCount > 8) return Promise.reject(new Error('Too many redirects in HLS fetch'));
+    const parsed = new URL(targetUrl);
+    const isHttps = parsed.protocol === 'https:';
+    const transport = isHttps ? https : http;
+    const headers = {
+      'User-Agent': this.userAgent,
+      'Accept': '*/*',
+      'Connection': 'keep-alive',
+      ...this.headers
+    };
+    if (!headers.Referer && !headers.referer) {
+      headers['Referer'] = `${parsed.protocol}//${parsed.host}/`;
+    }
+    return new Promise((resolve, reject) => {
+      const req = transport.request(targetUrl, {
+        method: 'GET',
+        agent: isHttps ? sharedHttpsAgent : sharedHttpAgent,
+        headers,
+        timeout: timeoutMs,
+        rejectUnauthorized: !this.allowInsecureTls
+      }, (res) => {
+        const code = res.statusCode || 0;
+        if ([301, 302, 303, 307, 308].includes(code) && res.headers.location) {
+          res.resume();
+          const nextUrl = new URL(res.headers.location, targetUrl).toString();
+          return this._fetchBuffer(nextUrl, timeoutMs, redirectCount + 1).then(resolve).catch(reject);
+        }
+        if (code < 200 || code >= 300) {
+          res.resume();
+          return reject(new Error(`HTTP ${code}`));
+        }
+        const chunks = [];
+        res.on('data', c => chunks.push(c));
+        res.on('end', () => resolve(Buffer.concat(chunks)));
+        res.on('error', reject);
+      });
+      req.on('error', reject);
+      req.on('timeout', () => req.destroy(new Error('HLS segment timeout')));
+      req.end();
+    });
+  }
+
+  async _executeHlsMultiSegmentPipeline() {
+    this.status = 'probing';
+    this.serverHeader = 'Duytai Native HLS 64-Thread Engine';
+    this.emit('update', this.toJSON());
+
+    let manifestUrl = this.finalUrl || this.url;
+    let manifestText = (await this._fetchBuffer(manifestUrl)).toString('utf8');
+
+    // 1. Resolve Master Playlist (#EXT-X-STREAM-INF) -> pick highest BANDWIDTH variant
+    if (manifestText.includes('#EXT-X-STREAM-INF')) {
+      const lines = manifestText.split(/\r?\n/);
+      let bestBw = -1;
+      let bestVariant = '';
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (line.startsWith('#EXT-X-STREAM-INF:')) {
+          const bwM = /BANDWIDTH=(\d+)/i.exec(line);
+          const bw = bwM ? parseInt(bwM[1], 10) : 0;
+          for (let j = i + 1; j < lines.length; j++) {
+            const nextLine = lines[j].trim();
+            if (!nextLine) continue;
+            if (!nextLine.startsWith('#')) {
+              if (bw >= bestBw) {
+                bestBw = bw;
+                bestVariant = new URL(nextLine, manifestUrl).toString();
+              }
+            }
+            break;
+          }
+        }
+      }
+      if (bestVariant) {
+        manifestUrl = bestVariant;
+        this.finalUrl = bestVariant;
+        manifestText = (await this._fetchBuffer(manifestUrl)).toString('utf8');
+      }
+    }
+
+    // 2. Parse Media Playlist segments, fMP4 init map, and AES-128 encryption keys
+    const lines = manifestText.split(/\r?\n/);
+    const segItems = [];
+    let currentKey = null;
+    let mediaSequence = 0;
+    const seqM = /#EXT-X-MEDIA-SEQUENCE:(\d+)/i.exec(manifestText);
+    if (seqM) mediaSequence = parseInt(seqM[1], 10);
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (!line) continue;
+      if (line.startsWith('#EXT-X-KEY:')) {
+        const methodM = /METHOD=([^,\s]+)/i.exec(line);
+        const uriM = /URI="([^"]+)"/i.exec(line);
+        const ivM = /IV=0x([0-9a-fA-F]+)/i.exec(line);
+        const method = methodM ? methodM[1].toUpperCase() : 'NONE';
+        if (method === 'AES-128' && uriM) {
+          const keyUrl = new URL(uriM[1], manifestUrl).toString();
+          const keyBuf = await this._fetchBuffer(keyUrl);
+          const ivBuf = ivM ? Buffer.from(ivM[1].padStart(32, '0'), 'hex') : null;
+          currentKey = { keyBuf, ivBuf };
+        } else {
+          currentKey = null;
+        }
+        continue;
+      }
+      if (line.startsWith('#EXT-X-MAP:')) {
+        const mapUriM = /URI="([^"]+)"/i.exec(line);
+        if (mapUriM) {
+          segItems.push({
+            index: segItems.length,
+            seq: mediaSequence + segItems.length,
+            url: new URL(mapUriM[1], manifestUrl).toString(),
+            key: currentKey
+          });
+        }
+        continue;
+      }
+      if (line.startsWith('#')) continue;
+      segItems.push({
+        index: segItems.length,
+        seq: mediaSequence + segItems.length,
+        url: new URL(line, manifestUrl).toString(),
+        key: currentKey
+      });
+    }
+
+    if (segItems.length === 0) {
+      throw new Error('HLS playlist contains no downloadable media segments');
+    }
+
+    if (!this.fileName || isGenericFileName(this.fileName) || /\.m3u8$/i.test(this.fileName)) {
+      const base = this._inferFileName(manifestUrl).replace(/\.m3u8$/i, '') || `hls_stream_${Date.now()}`;
+      this.fileName = `${base}.mp4`;
+    }
+    if (!this.filePath) {
+      this.filePath = await this._resolveUniqueFilePath(path.join(this.saveDir, this.fileName));
+    }
+    this.fileName = path.basename(this.filePath);
+    const rawTsPath = `${this.filePath}.hls.tmp`;
+
+    this.acceptRanges = true;
+    this.status = 'downloading';
+    this.startTime = Date.now();
+    this._lastTickTime = Date.now();
+    this._lastTickBytes = 0;
+    this.downloadedBytes = 0;
+    this.totalBytes = 0;
+
+    const rawSegments = segItems.map((it, idx) => ({
+      id: idx,
+      start: idx * 100,
+      current: idx * 100,
+      end: idx * 100 + 99,
+      status: 'pending',
+      speedBps: 0,
+      ip: '',
+      retries: 0,
+      bytesInWindow: 0
+    }));
+    const updateHlsProgress = () => {
+      this.segments = summarizeSegments(rawSegments, 64, 0);
+    };
+    updateHlsProgress();
+    this.emit('update', this.toJSON());
+
+    const outHandle = await fsp.open(rawTsPath, 'w');
+    const reorderBuffer = new Map();
+    let nextWriteIndex = 0;
+    let completedCount = 0;
+    let cursor = 0;
+    let fatalErr = null;
+    const concurrency = Math.min(this.maxConnections || 64, 64, segItems.length);
+
+    const decryptIfNeeded = (buf, item) => {
+      if (!item.key || !item.key.keyBuf || item.key.keyBuf.length !== 16) return buf;
+      let iv = item.key.ivBuf;
+      if (!iv) {
+        iv = Buffer.alloc(16, 0);
+        iv.writeUInt32BE(item.seq >>> 0, 12);
+      }
+      const decipher = crypto.createDecipheriv('aes-128-cbc', item.key.keyBuf, iv);
+      return Buffer.concat([decipher.update(buf), decipher.final()]);
+    };
+
+    let flushingOrder = false;
+    const flushOrderedChunks = async () => {
+      if (flushingOrder) return;
+      flushingOrder = true;
+      try {
+        while (reorderBuffer.has(nextWriteIndex)) {
+          const chunk = reorderBuffer.get(nextWriteIndex);
+          reorderBuffer.delete(nextWriteIndex);
+          await outHandle.write(chunk);
+          nextWriteIndex++;
+        }
+      } finally {
+        flushingOrder = false;
+      }
+    };
+
+    const hlsSpeedTimer = setInterval(() => {
+      if (this.status !== 'downloading') return;
+      const now = Date.now();
+      const dt = Math.max(0.1, (now - this._lastTickTime) / 1000);
+      const dBytes = Math.max(0, this.downloadedBytes - this._lastTickBytes);
+      this.currentSpeedBps = Math.round(dBytes / dt);
+      if (this.currentSpeedBps > this.peakSpeedBps) this.peakSpeedBps = this.currentSpeedBps;
+      this._lastTickTime = now;
+      this._lastTickBytes = this.downloadedBytes;
+      if (completedCount > 0) {
+        const avgSegSize = this.downloadedBytes / completedCount;
+        this.totalBytes = Math.round(avgSegSize * segItems.length);
+        if (this.currentSpeedBps > 0) {
+          this.etaSeconds = Math.ceil(Math.max(0, this.totalBytes - this.downloadedBytes) / this.currentSpeedBps);
+        }
+      }
+      updateHlsProgress();
+      this.emit('update', this.toJSON());
+    }, 500);
+
+    try {
+      const workers = Array.from({ length: concurrency }, async () => {
+        while (!fatalErr && this.status === 'downloading') {
+          const idx = cursor++;
+          if (idx >= segItems.length) break;
+          const item = segItems[idx];
+          const segState = rawSegments[idx];
+          segState.status = 'downloading';
+
+          // Backpressure guard: if out-of-order buffer holds > 96 segments, pause worker briefly
+          while (idx - nextWriteIndex > 96 && !fatalErr && this.status === 'downloading') {
+            await new Promise(r => setTimeout(r, 40));
+          }
+
+          let success = false;
+          for (let attempt = 0; attempt < 6; attempt++) {
+            if (fatalErr || this.status !== 'downloading') break;
+            try {
+              const rawBuf = await this._fetchBuffer(item.url, 15000);
+              const plainBuf = decryptIfNeeded(rawBuf, item);
+              reorderBuffer.set(idx, plainBuf);
+              await flushOrderedChunks();
+              this.downloadedBytes += plainBuf.length;
+              completedCount++;
+              segState.current = segState.end + 1;
+              segState.status = 'completed';
+              success = true;
+              break;
+            } catch (e) {
+              if (attempt === 5) fatalErr = e;
+              else await new Promise(r => setTimeout(r, 150 * (attempt + 1)));
+            }
+          }
+          if (!success && !fatalErr) fatalErr = new Error(`Failed HLS segment #${idx}`);
+        }
+      });
+
+      await Promise.all(workers);
+      await flushOrderedChunks();
+    } finally {
+      clearInterval(hlsSpeedTimer);
+      await outHandle.close().catch(() => {});
+    }
+
+    if (this.status === 'paused' || this.status === 'canceled') return;
+    if (fatalErr) throw fatalErr;
+
+    // 3. Remux concatenated TS/fMP4 stream into clean MP4 container via FFmpeg -c copy if targeting .mp4
+    const ffmpeg = findBinary('ffmpeg.exe');
+    if (this.filePath.toLowerCase().endsWith('.mp4')) {
+      this.status = 'muxing';
+      this.currentSpeedBps = 0;
+      this.emit('update', this.toJSON());
+      const muxedOk = await new Promise((resolve) => {
+        execFile(ffmpeg, ['-y', '-loglevel', 'error', '-i', rawTsPath, '-c', 'copy', '-bsf:a', 'aac_adtstoasc', this.filePath], {
+          maxBuffer: 16 * 1024 * 1024,
+          timeout: 120000
+        }, (err) => resolve(!err && fs.existsSync(this.filePath)));
+      });
+      if (muxedOk) {
+        await fsp.unlink(rawTsPath).catch(() => {});
+      } else {
+        await fsp.rename(rawTsPath, this.filePath).catch(() => {});
+      }
+    } else {
+      await fsp.rename(rawTsPath, this.filePath).catch(() => {});
+    }
+
+    const st = await fsp.stat(this.filePath).catch(() => null);
+    if (st) {
+      this.totalBytes = st.size;
+      this.downloadedBytes = st.size;
+    }
+    updateHlsProgress();
+    this.status = 'completed';
+    this.endTime = Date.now();
+    this.elapsedMs = this.endTime - this.startTime;
+    this.currentSpeedBps = 0;
+    this.etaSeconds = 0;
+    this.emit('update', this.toJSON());
+    this.emit('completed', this.toJSON());
   }
 
   async _abortYoutubeSubJobs(deleteFiles = false) {
@@ -1175,7 +1529,7 @@ class DownloadJob extends EventEmitter {
       'User-Agent': this.userAgent,
       'Accept': '*/*',
       'Range': 'bytes=0-0',
-      'Connection': 'close',
+      'Connection': 'keep-alive',
       ...this.headers
     };
     if (!probeHeaders.Referer && !probeHeaders.referer) {
@@ -1188,7 +1542,7 @@ class DownloadJob extends EventEmitter {
     return new Promise((resolve, reject) => {
       const req = transport.request(targetUrl, {
         method: 'GET',
-        agent: false,
+        agent: isHttps ? sharedHttpsAgent : sharedHttpAgent,
         headers: probeHeaders,
         timeout: 15000,
         rejectUnauthorized: !this.allowInsecureTls
@@ -1314,8 +1668,13 @@ class DownloadJob extends EventEmitter {
         }
         fileName = decodeRfc2047(fileName).replace(/^["']|["']$/g, '').trim();
 
-        try { res.destroy(); } catch {}
-        try { req.destroy(); } catch {}
+        // Zero-RTT Warm Socket Reuse: for 1-byte HTTP 206 probe, drain 1 byte so Keep-Alive Agent parks the warm TLS socket in LIFO pool for Worker #0
+        if (code === 206) {
+          try { res.resume(); } catch {}
+        } else {
+          try { res.destroy(); } catch {}
+          try { req.destroy(); } catch {}
+        }
 
         resolve({
           finalUrl: targetUrl,
@@ -2202,7 +2561,9 @@ class DownloadJob extends EventEmitter {
     const expStep = Math.min(seg.retries, 14);
     const backoffMs = isRateLimited
       ? Math.min(12000, (err && err.retryAfterMs) || Math.round(800 * Math.pow(1.2, expStep)))
-      : Math.min(1500, Math.round(150 * Math.pow(1.15, expStep)));
+      : (seg.retries === 1 && this.cdnIps.length > 1
+        ? 25 // Fast 25ms Multi-IP Edge Failover on first transient socket error
+        : Math.min(1500, Math.round(150 * Math.pow(1.15, expStep))));
     const retryTimer = setTimeout(() => {
       this._retryTimers.delete(retryTimer);
       if (this.status === 'downloading') {

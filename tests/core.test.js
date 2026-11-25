@@ -469,4 +469,65 @@ test('CloudResolver resolves Google Drive, Docs, Dropbox, GitHub, GitLab, Huggin
   const arc = CloudResolver.resolveSync('https://archive.org/details/msdos_Oregon_Trail_The_1990/Oregon_Trail_1990.zip');
   assert.equal(arc.type, 'archiveorg');
   assert.equal(arc.url, 'https://archive.org/download/msdos_Oregon_Trail_The_1990/Oregon_Trail_1990.zip');
+
+  const pd = CloudResolver.resolveSync('https://pixeldrain.com/u/AbCdEf123');
+  assert.equal(pd.type, 'pixeldrain');
+  assert.equal(pd.url, 'https://pixeldrain.com/api/file/AbCdEf123?download');
+
+  const bb = CloudResolver.resolveSync('https://bitbucket.org/owner/repo/src/main/firmware.bin');
+  assert.equal(bb.type, 'bitbucket-raw');
+  assert.equal(bb.url, 'https://bitbucket.org/owner/repo/raw/main/firmware.bin');
+
+  const sf = CloudResolver.resolveSync('https://sourceforge.net/projects/sevenzip/files/7-Zip/24.08/7z2408-x64.exe/download');
+  assert.equal(sf.type, 'sourceforge');
+  assert.ok(sf.url.includes('downloads.sourceforge.net/project/sevenzip/7-Zip/24.08/7z2408-x64.exe'));
+
+  const sp = CloudResolver.resolveSync('https://contoso.sharepoint.com/:u:/s/eng/Eabc123');
+  assert.equal(sp.type, 'sharepoint');
+  assert.ok(sp.url.includes('download=1'));
+});
+
+test('DownloadJob Native HLS (.m3u8) 64-Thread Engine downloads master/media playlist and reorders segments sequentially', async () => {
+  const dir = makeTempDir('duytai-hls-');
+  const seg0 = Buffer.from('SEGMENT_ZERO_PAYLOAD_');
+  const seg1 = Buffer.from('SEGMENT_ONE_PAYLOAD_');
+  const seg2 = Buffer.from('SEGMENT_TWO_PAYLOAD');
+  const expected = Buffer.concat([seg0, seg1, seg2]);
+
+  const srv = http.createServer((req, res) => {
+    if (req.url === '/master.m3u8') {
+      res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl' });
+      return res.end('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=800000\nlow.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=4500000\nhigh.m3u8\n');
+    }
+    if (req.url === '/high.m3u8') {
+      res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl' });
+      return res.end('#EXTM3U\n#EXT-X-TARGETDURATION:4\nseg0.ts\nseg1.ts\nseg2.ts\n#EXT-X-ENDLIST\n');
+    }
+    if (req.url === '/seg0.ts') return res.end(seg0);
+    if (req.url === '/seg1.ts') return res.end(seg1);
+    if (req.url === '/seg2.ts') return res.end(seg2);
+    res.writeHead(404);
+    res.end();
+  });
+
+  await new Promise(r => srv.listen(0, '127.0.0.1', r));
+  const port = srv.address().port;
+
+  try {
+    const job = new DownloadJob({
+      url: `http://127.0.0.1:${port}/master.m3u8`,
+      saveDir: dir,
+      fileName: 'stream.ts',
+      maxConnections: 16
+    });
+    const terminal = waitForJobTerminal(job);
+    job.start();
+    const st = await terminal;
+    assert.equal(st, 'completed');
+    const actual = await fsp.readFile(path.join(dir, 'stream.ts'));
+    assert.deepEqual(actual, expected);
+  } finally {
+    await new Promise(r => srv.close(r));
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  }
 });

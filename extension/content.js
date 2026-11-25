@@ -116,6 +116,20 @@
     }
   }
 
+  function detectLiveMediaStreamUrl() {
+    try {
+      const entries = performance.getEntriesByType('resource');
+      for (let i = entries.length - 1; i >= 0; i--) {
+        const u = entries[i] && entries[i].name;
+        if (!u || !/^https?:\/\//i.test(u)) continue;
+        if (/\.m3u8(?:$|[?#])/i.test(u) || /\.(?:mp4|m4v|webm|mkv)(?:$|[?#])/i.test(u)) {
+          return u;
+        }
+      }
+    } catch (_) {}
+    return '';
+  }
+
   const detectDownloadablePage = () => {
     const { hostname, pathname } = location;
     // Facebook / Messenger: NEVER show on news feed, home or chat dock; ONLY on dedicated video/watch/reel pages
@@ -123,15 +137,19 @@
       return pathname.startsWith('/watch') || pathname.startsWith('/reel') || pathname.includes('/videos/') || pathname.includes('/video/') || location.search.includes('v=');
     }
     if (/youtube\.com$/.test(hostname)) return pathname === '/watch' || pathname.startsWith('/shorts/');
-    if (/youtu\.be$|tiktok\.com$|vimeo\.com$|bilibili\.com$|dailymotion\.com$|ipsw\.me$|sourceforge\.net$|mediafire\.com$/.test(hostname)) return true;
+    if (/youtu\.be$|tiktok\.com$|vimeo\.com$|bilibili\.com$|dailymotion\.com$|ipsw\.me$|sourceforge\.net$|mediafire\.com$|pixeldrain\.com$/.test(hostname)) return true;
     const v = document.querySelector('video[src], video source[src], audio[src]');
-    return !!v;
+    if (v) return true;
+    if (document.querySelector('video') && detectLiveMediaStreamUrl()) return true;
+    return false;
   };
 
   function resolveTargetUrl() {
     if (PLATFORM_VIDEO_HOST_RE.test(location.hostname)) return location.href;
     const v = document.querySelector('video[src], video source[src]');
     if (v && v.src && /^https?:/i.test(v.src)) return v.src;
+    const streamUrl = detectLiveMediaStreamUrl();
+    if (streamUrl) return streamUrl;
     return location.href;
   }
 
