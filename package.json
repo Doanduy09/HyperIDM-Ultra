@@ -1,6 +1,6 @@
 {
   "name": "duytai-downloader",
-  "version": "7.6.0",
+  "version": "7.6.1",
   "description": "Duytai 64-Bit — Multi-segment 64/128-thread download accelerator for Windows, macOS, and Android",
   "main": "server.js",
   "bin": {

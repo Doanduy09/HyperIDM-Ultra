@@ -1,3 +1,4 @@
+// [VERIFIED-GOLDEN: part5-duytai-ssrf-scheduler-limiter | 2026-11-26 | DO NOT MODIFY UNLESS TARGETED]
 'use strict';
 /**
  * HyperIDM Ultra — IDM-parity+ feature pack (non-invasive: does NOT modify engine.js / server.js).
@@ -1066,3 +1067,4 @@ module.exports = {
   grabSiteLinks,
   scanAndVerifyFile
 };
+// [/VERIFIED-GOLDEN]

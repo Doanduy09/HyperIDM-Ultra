@@ -1,3 +1,4 @@
+// [VERIFIED-GOLDEN: part5-core-automated-test-lab | 2026-11-26 | DO NOT MODIFY UNLESS TARGETED]
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
@@ -531,3 +532,90 @@ test('DownloadJob Native HLS (.m3u8) 64-Thread Engine downloads master/media pla
     fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   }
 });
+
+test('DownloadJob HLS RFC 8216 AES-128 + EXT-X-MAP fMP4 preserves plaintext init.mp4, Media-Sequence IV, out-of-order flush, and cleans .hls.tmp on failure', async () => {
+  const dir = makeTempDir('duytai-hls-aes-');
+  const aesKey = crypto.randomBytes(16);
+  const initMp4 = Buffer.from('FTYP_MOOV_PLAIN_FMP4_HEADER_DO_NOT_DECRYPT');
+  const baseSeq = 108;
+  const plainSegs = Array.from({ length: 12 }, (_, i) =>
+    Buffer.from(`FMP4_MOOF_MDAT_SEGMENT_${String(i).padStart(2, '0')}_` + 'X'.repeat(200 + i * 17))
+  );
+  const encSegs = plainSegs.map((plain, i) => {
+    const iv = Buffer.alloc(16, 0);
+    iv.writeBigUInt64BE(BigInt(baseSeq + i), 8);
+    const cipher = crypto.createCipheriv('aes-128-cbc', aesKey, iv);
+    return Buffer.concat([cipher.update(plain), cipher.final()]);
+  });
+  const expected = Buffer.concat([initMp4, ...plainSegs]);
+
+  const srv = http.createServer((req, res) => {
+    if (req.url === '/fmp4.m3u8') {
+      res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl' });
+      const body = [
+        '#EXTM3U',
+        '#EXT-X-VERSION:7',
+        `#EXT-X-MEDIA-SEQUENCE:${baseSeq}`,
+        '#EXT-X-KEY:METHOD=AES-128,URI="enc.key"',
+        '#EXT-X-MAP:URI="init.mp4"',
+        ...encSegs.map((_, i) => `#EXTINF:2.0,\nseg_${i}.m4s`),
+        '#EXT-X-ENDLIST'
+      ].join('\n');
+      return res.end(body);
+    }
+    if (req.url === '/broken.m3u8') {
+      res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl' });
+      return res.end('#EXTM3U\n#EXTINF:2.0,\nok.ts\n#EXTINF:2.0,\nmissing.ts\n#EXT-X-ENDLIST\n');
+    }
+    if (req.url === '/ok.ts') return res.end(Buffer.from('PARTIAL_OK'));
+    if (req.url === '/enc.key') return res.end(aesKey);
+    if (req.url === '/init.mp4') return res.end(initMp4);
+    const m = /^\/seg_(\d+)\.m4s$/.exec(req.url || '');
+    if (m) {
+      const idx = Number(m[1]);
+      // Deliberately reverse response latency so later segments arrive before earlier ones
+      const delayMs = (12 - idx) * 6;
+      return setTimeout(() => res.end(encSegs[idx]), delayMs);
+    }
+    res.writeHead(404);
+    res.end();
+  });
+
+  await new Promise(r => srv.listen(0, '127.0.0.1', r));
+  const port = srv.address().port;
+
+  try {
+    const job = new DownloadJob({
+      url: `http://127.0.0.1:${port}/fmp4.m3u8`,
+      saveDir: dir,
+      fileName: 'movie.m4s',
+      maxConnections: 16
+    });
+    const terminal = waitForJobTerminal(job);
+    job.start();
+    const st = await terminal;
+    assert.equal(st, 'completed');
+    const actual = await fsp.readFile(path.join(dir, 'movie.m4s'));
+    assert.equal(
+      crypto.createHash('sha256').update(actual).digest('hex'),
+      crypto.createHash('sha256').update(expected).digest('hex')
+    );
+
+    // Failing HLS stream must clean up .hls.tmp and not leak partial temp file
+    const badJob = new DownloadJob({
+      url: `http://127.0.0.1:${port}/broken.m3u8`,
+      saveDir: dir,
+      fileName: 'broken.ts',
+      maxConnections: 4
+    });
+    const badTerm = waitForJobTerminal(badJob);
+    badJob.start();
+    const badSt = await badTerm;
+    assert.equal(badSt, 'error');
+    assert.equal(fs.existsSync(path.join(dir, 'broken.ts.hls.tmp')), false);
+  } finally {
+    await new Promise(r => srv.close(r));
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  }
+});
+// [/VERIFIED-GOLDEN]

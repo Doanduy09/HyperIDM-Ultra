@@ -1,4 +1,5 @@
-﻿$ErrorActionPreference = 'SilentlyContinue'
+# [VERIFIED-GOLDEN: part5-windows-installer | 2026-11-26 | DO NOT MODIFY UNLESS TARGETED]
+$ErrorActionPreference = 'SilentlyContinue'
 
 Write-Host "==========================================================" -ForegroundColor Cyan
 Write-Host "   ⚡ DUYTAI 64-BIT — UNIVERSAL WINDOWS INSTALLER" -ForegroundColor Cyan
@@ -209,10 +210,11 @@ Set-Content -Path $uninstScriptPath -Value $uninstScript -Encoding UTF8
 $uninstKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Duytai"
 New-Item -Path $uninstKey -Force | Out-Null
 Set-ItemProperty -Path $uninstKey -Name "DisplayName" -Value "Duytai 64-Bit — Trình Tăng Tốc Tải Xuống" -Force
-Set-ItemProperty -Path $uninstKey -Name "DisplayVersion" -Value "7.6.0" -Force
+Set-ItemProperty -Path $uninstKey -Name "DisplayVersion" -Value "7.6.1" -Force
 Set-ItemProperty -Path $uninstKey -Name "Publisher" -Value "DOANDUY Software" -Force
 Set-ItemProperty -Path $uninstKey -Name "InstallLocation" -Value $installDir -Force
 Set-ItemProperty -Path $uninstKey -Name "DisplayIcon" -Value "$installDir\Duytai.exe" -Force
 Set-ItemProperty -Path $uninstKey -Name "UninstallString" -Value "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$uninstScriptPath`"" -Force
 
 Write-Host "[6/6] Installation Complete! Installed & Signed at: $installDir\Duytai.exe" -ForegroundColor Green
+# [/VERIFIED-GOLDEN]

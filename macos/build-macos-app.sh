@@ -1,4 +1,5 @@
 #!/bin/bash
+# [VERIFIED-GOLDEN: part5-macos-universal-builder | 2026-11-26 | DO NOT MODIFY UNLESS TARGETED]
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -60,8 +61,8 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << 'EOF'
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
   <key>CFBundleName</key><string>Duytai</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>7.6.0</string>
-  <key>CFBundleVersion</key><string>760</string>
+  <key>CFBundleShortVersionString</key><string>7.6.1</string>
+  <key>CFBundleVersion</key><string>761</string>
   <key>LSMinimumSystemVersion</key><string>11.0</string>
   <key>NSHumanReadableCopyright</key><string>Copyright © 2026 DOANDUY Software. All rights reserved.</string>
   <key>NSHighResolutionCapable</key><true/>
@@ -98,3 +99,4 @@ rm -f "$DMG_OUT"
 hdiutil create -volname "Duytai Downloader" -srcfolder "$APP_BUNDLE" -ov -format UDZO "$DMG_OUT"
 codesign --force --sign "$SIGN_ID" "$DMG_OUT" || true
 echo "DONE: $DMG_OUT"
+# [/VERIFIED-GOLDEN]

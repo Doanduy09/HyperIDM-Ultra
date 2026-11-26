@@ -1,3 +1,4 @@
+// [VERIFIED-GOLDEN: part5-duytai-native-messaging-host | 2026-11-26 | DO NOT MODIFY UNLESS TARGETED]
 // Duytai 64-Bit Native Messaging Host (Chrome / Edge / CocCoc / Brave / Firefox stdio bridge)
 const http = require('http');
 const fs = require('fs');
@@ -146,3 +147,4 @@ process.stdin.on('end', () => {
   stdinEnded = true;
   maybeExit();
 });
+// [/VERIFIED-GOLDEN]

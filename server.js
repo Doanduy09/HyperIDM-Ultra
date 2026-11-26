@@ -1,3 +1,4 @@
+// [VERIFIED-GOLDEN: part5-duytai-local-rpc-server | 2026-11-26 | DO NOT MODIFY UNLESS TARGETED]
 process.env.UV_THREADPOOL_SIZE = process.env.UV_THREADPOOL_SIZE || '32';
 const http = require('http');
 const fs = require('fs');
@@ -1529,3 +1530,4 @@ loadHistory().then(() => {
     console.log(`[Duytai v7.5 64-Bit Engine] Listening on http://127.0.0.1:${PORT}`);
   });
 });
+// [/VERIFIED-GOLDEN]

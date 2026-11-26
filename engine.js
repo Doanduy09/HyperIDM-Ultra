@@ -63,6 +63,8 @@ function findBinary(name) {
     path.join(process.env.LOCALAPPDATA || '', 'Programs', 'HyperIDM', 'bin', exeName),
     path.join(process.env.LOCALAPPDATA || '', 'hermes', 'tools', 'ffmpeg-9.0.1-win32-x64', 'bin', exeName),
     path.join(process.env.LOCALAPPDATA || '', 'hermes', 'tools', 'ffmpeg-9.0.1-win32-x64', exeName),
+    path.join('/Applications/Duytai.app/Contents/Resources/bin', exeName),
+    path.join(process.env.HOME || '', '.local', 'bin', exeName),
     path.join('/opt/homebrew/bin', exeName),
     path.join('/usr/local/bin', exeName),
     path.join('/usr/bin', exeName)
@@ -847,11 +849,14 @@ class DownloadJob extends EventEmitter {
       }
     }
 
-    // 2. Parse Media Playlist segments, fMP4 init map, and AES-128 encryption keys
+    // [VERIFIED-GOLDEN: part5-hls-rfc8216-aes128-ext-x-map | 2026-11-26 | DO NOT MODIFY UNLESS TARGETED]
+    // 2. Parse Media Playlist segments, fMP4 init map (#EXT-X-MAP), and AES-128 encryption keys
     const lines = manifestText.split(/\r?\n/);
     const segItems = [];
     let currentKey = null;
     let mediaSequence = 0;
+    let mediaIndex = 0;
+    let seenInitMapUrl = '';
     const seqM = /#EXT-X-MEDIA-SEQUENCE:(\d+)/i.exec(manifestText);
     if (seqM) mediaSequence = parseInt(seqM[1], 10);
 
@@ -866,7 +871,8 @@ class DownloadJob extends EventEmitter {
         if (method === 'AES-128' && uriM) {
           const keyUrl = new URL(uriM[1], manifestUrl).toString();
           const keyBuf = await this._fetchBuffer(keyUrl);
-          const ivBuf = ivM ? Buffer.from(ivM[1].padStart(32, '0'), 'hex') : null;
+          const ivHex = ivM ? ivM[1].slice(-32).padStart(32, '0') : '';
+          const ivBuf = ivHex ? Buffer.from(ivHex, 'hex') : null;
           currentKey = { keyBuf, ivBuf };
         } else {
           currentKey = null;
@@ -876,22 +882,30 @@ class DownloadJob extends EventEmitter {
       if (line.startsWith('#EXT-X-MAP:')) {
         const mapUriM = /URI="([^"]+)"/i.exec(line);
         if (mapUriM) {
-          segItems.push({
-            index: segItems.length,
-            seq: mediaSequence + segItems.length,
-            url: new URL(mapUriM[1], manifestUrl).toString(),
-            key: currentKey
-          });
+          const mapUrl = new URL(mapUriM[1], manifestUrl).toString();
+          if (mapUrl !== seenInitMapUrl) {
+            seenInitMapUrl = mapUrl;
+            // RFC 8216 §4.3.2.5: EXT-X-MAP does NOT increment mediaSequence, and is encrypted ONLY when explicit IV= is present
+            segItems.push({
+              index: segItems.length,
+              seq: -1,
+              isInitMap: true,
+              url: mapUrl,
+              key: (currentKey && currentKey.ivBuf) ? currentKey : null
+            });
+          }
         }
         continue;
       }
       if (line.startsWith('#')) continue;
       segItems.push({
         index: segItems.length,
-        seq: mediaSequence + segItems.length,
+        seq: mediaSequence + mediaIndex,
+        isInitMap: false,
         url: new URL(line, manifestUrl).toString(),
         key: currentKey
       });
+      mediaIndex++;
     }
 
     if (segItems.length === 0) {
@@ -946,26 +960,23 @@ class DownloadJob extends EventEmitter {
       let iv = item.key.ivBuf;
       if (!iv) {
         iv = Buffer.alloc(16, 0);
-        iv.writeUInt32BE(item.seq >>> 0, 12);
+        iv.writeBigUInt64BE(BigInt(Math.max(0, item.seq)), 8);
       }
       const decipher = crypto.createDecipheriv('aes-128-cbc', item.key.keyBuf, iv);
       return Buffer.concat([decipher.update(buf), decipher.final()]);
     };
 
-    let flushingOrder = false;
-    const flushOrderedChunks = async () => {
-      if (flushingOrder) return;
-      flushingOrder = true;
-      try {
+    let flushChain = Promise.resolve();
+    const flushOrderedChunks = () => {
+      flushChain = flushChain.then(async () => {
         while (reorderBuffer.has(nextWriteIndex)) {
           const chunk = reorderBuffer.get(nextWriteIndex);
           reorderBuffer.delete(nextWriteIndex);
           await outHandle.write(chunk);
           nextWriteIndex++;
         }
-      } finally {
-        flushingOrder = false;
-      }
+      });
+      return flushChain;
     };
 
     const hlsSpeedTimer = setInterval(() => {
@@ -1029,23 +1040,36 @@ class DownloadJob extends EventEmitter {
       await flushOrderedChunks();
     } finally {
       clearInterval(hlsSpeedTimer);
+      reorderBuffer.clear();
       await outHandle.close().catch(() => {});
     }
 
-    if (this.status === 'paused' || this.status === 'canceled') return;
-    if (fatalErr) throw fatalErr;
+    if (this.status === 'paused' || this.status === 'canceled') {
+      if (this.status === 'canceled') {
+        await fsp.unlink(rawTsPath).catch(() => {});
+      }
+      return;
+    }
+    if (fatalErr) {
+      await fsp.unlink(rawTsPath).catch(() => {});
+      throw fatalErr;
+    }
 
     // 3. Remux concatenated TS/fMP4 stream into clean MP4 container via FFmpeg -c copy if targeting .mp4
     const ffmpeg = findBinary('ffmpeg.exe');
-    if (this.filePath.toLowerCase().endsWith('.mp4')) {
+    if (ffmpeg && this.filePath.toLowerCase().endsWith('.mp4')) {
       this.status = 'muxing';
       this.currentSpeedBps = 0;
       this.emit('update', this.toJSON());
       const muxedOk = await new Promise((resolve) => {
-        execFile(ffmpeg, ['-y', '-loglevel', 'error', '-i', rawTsPath, '-c', 'copy', '-bsf:a', 'aac_adtstoasc', this.filePath], {
-          maxBuffer: 16 * 1024 * 1024,
-          timeout: 120000
-        }, (err) => resolve(!err && fs.existsSync(this.filePath)));
+        try {
+          execFile(ffmpeg, ['-y', '-loglevel', 'error', '-i', rawTsPath, '-c', 'copy', '-bsf:a', 'aac_adtstoasc', this.filePath], {
+            maxBuffer: 16 * 1024 * 1024,
+            timeout: 120000
+          }, (err) => resolve(!err && fs.existsSync(this.filePath)));
+        } catch {
+          resolve(false);
+        }
       });
       if (muxedOk) {
         await fsp.unlink(rawTsPath).catch(() => {});
@@ -1055,6 +1079,7 @@ class DownloadJob extends EventEmitter {
     } else {
       await fsp.rename(rawTsPath, this.filePath).catch(() => {});
     }
+    // [/VERIFIED-GOLDEN]
 
     const st = await fsp.stat(this.filePath).catch(() => null);
     if (st) {

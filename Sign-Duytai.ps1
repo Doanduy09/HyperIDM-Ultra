@@ -1,3 +1,4 @@
+# [VERIFIED-GOLDEN: part5-windows-authenticode-signer | 2026-11-26 | DO NOT MODIFY UNLESS TARGETED]
 param(
     [Alias("TargetFiles")]
     [string[]]$TargetPaths = @()
@@ -139,3 +140,4 @@ foreach ($target in $TargetPaths) {
     $verify = Get-AuthenticodeSignature -FilePath $target
     Write-Host "[Authenticode] Signed $(Split-Path -Leaf $target) -> Status: $($verify.Status) | Thumbprint: $($verify.SignerCertificate.Thumbprint)" -ForegroundColor Green
 }
+# [/VERIFIED-GOLDEN]

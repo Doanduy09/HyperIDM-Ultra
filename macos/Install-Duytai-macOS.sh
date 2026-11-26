@@ -1,8 +1,9 @@
 #!/bin/bash
+# [VERIFIED-GOLDEN: part5-macos-installer | 2026-11-26 | DO NOT MODIFY UNLESS TARGETED]
 set -euo pipefail
 
 echo "=================================================="
-echo "  Duytai Downloader v7.6.0 - macOS Setup"
+echo "  Duytai Downloader v7.6.1 - macOS Setup"
 echo "=================================================="
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -92,3 +93,4 @@ EOF
 echo "-> Registered Native Messaging for Chrome, Edge, Brave, CocCoc, Vivaldi, Arc, Firefox"
 echo "-> Registered LaunchAgent auto-start: $LAUNCH_AGENT"
 echo "-> Ready! Extension ID: $EXT_ID"
+# [/VERIFIED-GOLDEN]

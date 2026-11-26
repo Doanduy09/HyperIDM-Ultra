@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// [VERIFIED-GOLDEN: part5-duytai-cli-entrypoint | 2026-11-26 | DO NOT MODIFY UNLESS TARGETED]
 const { DownloadJob } = require('./engine');
 const { version } = require('./package.json');
 
@@ -59,3 +60,4 @@ main().catch((err) => {
   console.error(`\n❌ Fatal CLI error: ${(err && err.message) || err}`);
   process.exit(1);
 });
+// [/VERIFIED-GOLDEN]

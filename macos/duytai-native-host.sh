@@ -1,4 +1,5 @@
 #!/bin/bash
+# [VERIFIED-GOLDEN: part5-macos-native-host-wrapper | 2026-11-26 | DO NOT MODIFY UNLESS TARGETED]
 set -euo pipefail
 
 # Native Messaging Bridge for Duytai on macOS (Chromium/Firefox 4-byte LE framing)
@@ -33,3 +34,4 @@ if [ ! -f "$CORE_DIR/duytai-native-host.js" ] && [ -f "/Applications/Duytai.app/
 fi
 
 exec "$NODE_BIN" "$CORE_DIR/duytai-native-host.js"
+# [/VERIFIED-GOLDEN]

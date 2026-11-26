@@ -11,9 +11,9 @@ using System.Windows.Forms;
 [assembly: AssemblyCompany("DOANDUY Software")]
 [assembly: AssemblyProduct("Duytai 64-Bit")]
 [assembly: AssemblyCopyright("Copyright © 2026 DOANDUY. All rights reserved.")]
-[assembly: AssemblyVersion("7.6.0.0")]
-[assembly: AssemblyFileVersion("7.6.0.0")]
-[assembly: AssemblyInformationalVersion("7.6.0")]
+[assembly: AssemblyVersion("7.6.1.0")]
+[assembly: AssemblyFileVersion("7.6.1.0")]
+[assembly: AssemblyInformationalVersion("7.6.1")]
 [assembly: ComVisible(false)]
 
 namespace HyperIDMSetup
