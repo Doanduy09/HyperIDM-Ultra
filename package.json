@@ -1,6 +1,6 @@
 {
   "name": "duytai-downloader",
-  "version": "7.5.0",
+  "version": "7.6.0",
   "description": "Duytai 64-Bit — Multi-segment 64/128-thread download accelerator for Windows, macOS, and Android",
   "main": "server.js",
   "bin": {
@@ -12,7 +12,8 @@
   "scripts": {
     "start": "node server.js",
     "test": "node --test tests/core.test.js",
-    "check": "node --check server.js && node --check engine.js && node --check idm-features.js && node --check duytai-native-host.js && node --check cli.js"
+    "version:sync": "node scripts/sync-version.js",
+    "check": "node --check server.js && node --check engine.js && node --check idm-features.js && node --check clipboard-batch.js && node --check duytai-native-host.js && node --check cli.js && node scripts/sync-version.js --check"
   },
   "license": "MIT"
 }

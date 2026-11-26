@@ -11,8 +11,8 @@ android {
         applicationId = "com.doanduy.duytai"
         minSdk = 26
         targetSdk = 35
-        versionCode = 750
-        versionName = "7.5.0"
+        versionCode = 760
+        versionName = "7.6.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

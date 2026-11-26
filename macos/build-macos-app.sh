@@ -26,7 +26,7 @@ chmod +x "$APP_BUNDLE/Contents/MacOS/Duytai"
 
 echo "[2/4] Bundling Duytai Cross-Platform Core + Extension..."
 cp "$ROOT_DIR/server.js" "$ROOT_DIR/engine.js" "$ROOT_DIR/idm-features.js" \
-   "$ROOT_DIR/duytai-native-host.js" \
+   "$ROOT_DIR/clipboard-batch.js" "$ROOT_DIR/cli.js" "$ROOT_DIR/duytai-native-host.js" \
    "$APP_BUNDLE/Contents/Resources/core/"
 if [ -f "$ROOT_DIR/package.json" ]; then cp "$ROOT_DIR/package.json" "$APP_BUNDLE/Contents/Resources/core/"; fi
 cp -R "$ROOT_DIR/public" "$ROOT_DIR/extension" "$APP_BUNDLE/Contents/Resources/core/"
@@ -60,8 +60,8 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << 'EOF'
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
   <key>CFBundleName</key><string>Duytai</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>7.5.0</string>
-  <key>CFBundleVersion</key><string>750</string>
+  <key>CFBundleShortVersionString</key><string>7.6.0</string>
+  <key>CFBundleVersion</key><string>760</string>
   <key>LSMinimumSystemVersion</key><string>11.0</string>
   <key>NSHumanReadableCopyright</key><string>Copyright © 2026 DOANDUY Software. All rights reserved.</string>
   <key>NSHighResolutionCapable</key><true/>

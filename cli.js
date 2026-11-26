@@ -1,16 +1,17 @@
 #!/usr/bin/env node
 const { DownloadJob } = require('./engine');
+const { version } = require('./package.json');
 
 async function main() {
   const url = process.argv[2];
-  const maxConnections = parseInt(process.argv[3] || '64', 10);
+  const maxConnections = Math.max(1, Math.min(128, parseInt(process.argv[3] || '64', 10) || 64));
 
   if (!url) {
     console.log('Usage: node cli.js <url> [maxConnections=64]');
     process.exit(1);
   }
 
-  console.log(`\n⚡ [Duytai v7.5 64-Bit] Starting download with ${maxConnections} parallel connections...`);
+  console.log(`\n⚡ [Duytai v${version} 64-Bit] Starting download with ${maxConnections} parallel connections...`);
   console.log(`🔗 URL: ${url}`);
 
   const job = new DownloadJob({ url, maxConnections });
@@ -41,7 +42,20 @@ async function main() {
     process.exit(0);
   });
 
+  job.on('failed', (state) => {
+    console.error(`\n\n❌ DOWNLOAD FAILED: ${(state && state.error) || 'Unknown error'}`);
+    process.exit(1);
+  });
+
+  job.on('error', (err) => {
+    console.error(`\n\n❌ ENGINE ERROR: ${(err && err.message) || err}`);
+    process.exit(1);
+  });
+
   await job.start();
 }
 
-main();
+main().catch((err) => {
+  console.error(`\n❌ Fatal CLI error: ${(err && err.message) || err}`);
+  process.exit(1);
+});

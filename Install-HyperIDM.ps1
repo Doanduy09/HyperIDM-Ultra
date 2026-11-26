@@ -155,9 +155,25 @@ foreach ($proto in @("duytai", "hyperidm")) {
     Set-ItemProperty -Path "HKCU:\Software\Classes\$proto\shell\open\command" -Name "(Default)" -Value "`"$installDir\Duytai.exe`" `"%1`"" -Force
 }
 
-$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-if ($userPath -notlike "*$installDir*") {
-    [Environment]::SetEnvironmentVariable("Path", "$userPath;$installDir", "User")
+$rawUserPath = [Environment]::GetEnvironmentVariable("Path", "User")
+$pathEntries = @()
+if ($rawUserPath) {
+    $pathEntries = $rawUserPath -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' }
+}
+$normInstall = $installDir.TrimEnd('\')
+$alreadyInPath = $false
+foreach ($entry in $pathEntries) {
+    if ($entry.TrimEnd('\').Equals($normInstall, [System.StringComparison]::OrdinalIgnoreCase)) {
+        $alreadyInPath = $true
+        break
+    }
+}
+if (-not $alreadyInPath) {
+    $pathEntries += $installDir
+    [Environment]::SetEnvironmentVariable("Path", ($pathEntries -join ';'), "User")
+}
+if (($env:Path -split ';' | ForEach-Object { $_.Trim().TrimEnd('\') }) -notcontains $normInstall) {
+    $env:Path = "$env:Path;$installDir"
 }
 
 New-Item -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Force | Out-Null
@@ -193,7 +209,7 @@ Set-Content -Path $uninstScriptPath -Value $uninstScript -Encoding UTF8
 $uninstKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Duytai"
 New-Item -Path $uninstKey -Force | Out-Null
 Set-ItemProperty -Path $uninstKey -Name "DisplayName" -Value "Duytai 64-Bit — Trình Tăng Tốc Tải Xuống" -Force
-Set-ItemProperty -Path $uninstKey -Name "DisplayVersion" -Value "7.5.0" -Force
+Set-ItemProperty -Path $uninstKey -Name "DisplayVersion" -Value "7.6.0" -Force
 Set-ItemProperty -Path $uninstKey -Name "Publisher" -Value "DOANDUY Software" -Force
 Set-ItemProperty -Path $uninstKey -Name "InstallLocation" -Value $installDir -Force
 Set-ItemProperty -Path $uninstKey -Name "DisplayIcon" -Value "$installDir\Duytai.exe" -Force
